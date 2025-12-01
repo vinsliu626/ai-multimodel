@@ -17,6 +17,8 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [model, setModel] = useState<"fast" | "quality">("fast");
+  const [mode, setMode] = useState<"single" | "team">("single");
+
 
 
   // ✅ 发送「带上下文」的请求
@@ -47,9 +49,11 @@ export default function ChatPage() {
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({
     messages: payloadMessages,
-    model, // 把当前选择的模式发给后端
+    model,
+    mode, // 新增：告诉后端是单模型还是“AI 团队”
   }),
 });
+
 
 
       const data = await res.json();
@@ -89,25 +93,45 @@ export default function ChatPage() {
   <div className="flex flex-col">
     <h1 className="font-semibold text-lg">多模型 AI 助手 · 聊天测试版</h1>
     <span className="text-xs text-gray-500">
-      当前模型：{model === "fast" ? "快速模式 · 8B" : "高质量模式 · 70B"}
+      模型：
+      {model === "fast" ? "快速 · 8B" : "（暂时同 8B，可以后换 70B）"}，
+      模式：{mode === "single" ? "单模型" : "AI 团队协作"}
     </span>
   </div>
 
-  {/* 模型选择下拉框 */}
-  <div className="flex items-center gap-2">
-    <label className="text-xs text-gray-500">模型选择</label>
-    <select
-      className="border rounded-md text-xs px-2 py-1"
-      value={model}
-      onChange={(e) =>
-        setModel(e.target.value === "quality" ? "quality" : "fast")
-      }
-    >
-      <option value="fast">⚡ 快速 · llama-3.1-8b-instant</option>
-      <option value="quality">🎯 高质量 · llama-3.1-70b-versatile</option>
-    </select>
+  <div className="flex flex-col items-end gap-1 text-xs">
+    {/* 模型选择 */}
+    <div className="flex items-center gap-2">
+      <span className="text-gray-500">模型</span>
+      <select
+        className="border rounded-md px-2 py-1"
+        value={model}
+        onChange={(e) =>
+          setModel(e.target.value === "quality" ? "quality" : "fast")
+        }
+      >
+        <option value="fast">⚡ 快速 · llama-3.1-8b-instant</option>
+        <option value="quality">（暂用同上，预留高质量）</option>
+      </select>
+    </div>
+
+    {/* 协作模式选择 */}
+    <div className="flex items-center gap-2">
+      <span className="text-gray-500">模式</span>
+      <select
+        className="border rounded-md px-2 py-1"
+        value={mode}
+        onChange={(e) =>
+          setMode(e.target.value === "team" ? "team" : "single")
+        }
+      >
+        <option value="single">🧩 单模型</option>
+        <option value="team">🧠 AI 团队协作</option>
+      </select>
+    </div>
   </div>
 </header>
+
 
 
         {/* 消息区域 */}
