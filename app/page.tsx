@@ -1,198 +1,214 @@
+"use client";
+
+import Link from "next/link";
+
 export default function Home() {
   return (
-    <main className="min-h-screen bg-gray-50">
-      {/* Hero Section */}
-      <section className="px-6 pt-20 pb-32 bg-gradient-to-b from-white to-gray-100">
-        <div className="max-w-5xl mx-auto text-center">
-          <h1 className="text-5xl font-bold leading-tight text-gray-900">
-            多模型 AI 工作台
-            <span className="text-blue-600"> · 你的全能 AI 助手</span>
-          </h1>
+    <main className="relative min-h-screen bg-slate-950 text-white overflow-hidden">
+      {/* 背景光晕 */}
+      <div className="pointer-events-none absolute -top-40 -left-20 w-80 h-80 bg-blue-500/30 blur-3xl rounded-full animate-pulse" />
+      <div className="pointer-events-none absolute -bottom-40 -right-10 w-96 h-96 bg-purple-500/25 blur-3xl rounded-full animate-pulse" />
 
-          <p className="mt-6 text-lg text-gray-600 leading-relaxed">
-            支持 Groq、DeepSeek、Kimi、多智能体协作的下一代 AI 平台。
-            <br />
-            写作 · 分析 · 编程 · 教学 · 商业 · 训练营构建 —— 全部一站式完成。
-          </p>
+      {/* Hero 区域 */}
+      <section className="relative px-6 pt-24 pb-24">
+        <div className="max-w-6xl mx-auto flex flex-col lg:flex-row items-center gap-12">
+          {/* 左侧文字 */}
+          <div className="flex-1 text-center lg:text-left">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] mb-4">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              多模型协作 · Groq + DeepSeek + Kimi
+            </div>
 
-          <div className="mt-10 flex justify-center gap-4">
-            <a
-              href="/chat"
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition transform hover:-translate-y-0.5"
-            >
-              立即体验聊天
-            </a>
-            <a
-              href="#features"
-              className="px-6 py-3 bg-white border rounded-lg shadow-sm hover:bg-gray-50 transition transform hover:-translate-y-0.5"
-            >
-              查看功能
-            </a>
+            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold leading-tight">
+              <span className="bg-gradient-to-r from-blue-400 via-cyan-300 to-purple-400 bg-clip-text text-transparent">
+                多模型 AI 工作台
+              </span>
+              <span className="block mt-2 text-slate-100 text-2xl sm:text-3xl">
+                让多个 AI 一起，帮你完成一件事
+              </span>
+            </h1>
+
+            <p className="mt-6 text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl mx-auto lg:mx-0">
+              一个平台接入 Groq、DeepSeek、Kimi，多智能体协作完成写作、分析、
+              代码、课程设计、训练营方案等复杂任务。
+              <br />
+              你只需要提需求，后面的讨论和分工都交给 AI 团队。
+            </p>
+
+            <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
+              <Link
+                href="/chat"
+                className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 shadow-lg shadow-blue-500/30 hover:scale-105 transition transform text-sm font-medium text-white text-center"
+              >
+                立即体验聊天（多模型协作）
+              </Link>
+              <a
+                href="#features"
+                className="px-6 py-3 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-sm text-slate-100 text-center"
+              >
+                查看平台功能
+              </a>
+            </div>
+
+            {/* 模型标签条 */}
+            <div className="mt-8 flex flex-wrap gap-2 justify-center lg:justify-start text-[11px] text-slate-300">
+              <span className="px-3 py-1 rounded-full bg-blue-500/10 border border-blue-400/40">
+                ⚡ Groq · 极速推理
+              </span>
+              <span className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-400/40">
+                🧩 DeepSeek R1 · 深度拆解
+              </span>
+              <span className="px-3 py-1 rounded-full bg-pink-500/10 border border-pink-400/40">
+                🎨 Kimi K2 · 中文表达优化
+              </span>
+              <span className="px-3 py-1 rounded-full bg-purple-500/10 border border-purple-400/40">
+                🤝 多智能体讨论模式
+              </span>
+            </div>
+          </div>
+
+          {/* 右侧：多模型协作动效卡片 */}
+          <div className="flex-1 flex justify-center lg:justify-end">
+            <div className="relative w-full max-w-md">
+              {/* 背景发光卡 */}
+              <div className="absolute inset-0 bg-gradient-to-tr from-blue-500/20 via-cyan-400/10 to-purple-500/20 blur-3xl rounded-3xl" />
+              <div className="relative rounded-3xl border border-white/10 bg-slate-900/70 backdrop-blur-xl p-6 shadow-2xl">
+                <div className="text-xs text-slate-300 mb-4 flex items-center justify-between">
+                  <span>多智能体协作流程</span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    在线
+                  </span>
+                </div>
+
+                {/* 三模型节点 + 动态连线只是视觉（用渐变线） */}
+                <div className="space-y-4">
+                  {/* 用户需求 */}
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-[10px]">
+                      你
+                    </div>
+                    <div className="flex-1 px-3 py-2 rounded-2xl bg-slate-800/80 text-[11px] text-slate-200">
+                      “帮我设计一个 AI 兼职赚钱训练营…”
+                    </div>
+                  </div>
+
+                  {/* 流程线 */}
+                  <div className="h-6 flex items-center justify-center">
+                    <div className="w-1/2 h-px bg-gradient-to-r from-slate-500/0 via-slate-400/70 to-slate-500/0 animate-pulse" />
+                  </div>
+
+                  {/* DeepSeek */}
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-400/60 flex items-center justify-center text-[10px]">
+                      A
+                    </div>
+                    <div className="flex-1 px-3 py-2 rounded-2xl bg-slate-800/80 text-[11px]">
+                      <div className="text-emerald-300 mb-1">DeepSeek · 结构规划</div>
+                      <div className="text-slate-200">
+                        拆解课程模块，设计阶段、节次、作业和目标。
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Kimi */}
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-full bg-pink-500/20 border border-pink-400/60 flex items-center justify-center text-[10px]">
+                      B
+                    </div>
+                    <div className="flex-1 px-3 py-2 rounded-2xl bg-slate-800/80 text-[11px]">
+                      <div className="text-pink-300 mb-1">Kimi · 文案表达</div>
+                      <div className="text-slate-200">
+                        把课程方案写成好懂、好卖、适合小红书/朋友圈的文案。
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Groq */}
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-full bg-blue-500/20 border border-blue-400/60 flex items-center justify-center text-[10px]">
+                      C
+                    </div>
+                    <div className="flex-1 px-3 py-2 rounded-2xl bg-slate-800/80 text-[11px]">
+                      <div className="text-blue-300 mb-1">Groq · 终稿合成</div>
+                      <div className="text-slate-200">
+                        综合 A+B 的优点，统一风格，给你一版可以直接使用的终稿。
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 最终输出 */}
+                  <div className="mt-3 px-3 py-2 rounded-2xl bg-gradient-to-r from-blue-600/60 to-purple-600/60 text-[11px] shadow-lg">
+                    <div className="text-xs font-semibold mb-1">✅ 最终输出</div>
+                    <div className="text-slate-50">
+                      一键生成完整训练营方案 + 招生文案，你只需要复制粘贴去卖。
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Features */}
-      <section id="features" className="py-24 px-6 bg-white">
+      {/* Features 区域 */}
+      <section id="features" className="py-20 px-6 bg-slate-950/95 border-t border-white/5">
         <div className="max-w-6xl mx-auto">
-          <h2 className="text-3xl font-bold text-center text-gray-900">
-            为什么选择我们的 AI 平台？
-          </h2>
-        </div>
-        <p className="text-center text-gray-600 mt-3">
-          在一个平台上使用多个模型，比单一模型更强、更智能、更高效。
-        </p>
-
-        <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8 mt-16">
-          <div className="p-8 bg-gray-50 rounded-xl shadow-sm hover:shadow-md transition transform hover:-translate-y-1">
-            <h3 className="text-xl font-semibold">🚀 超高速推理</h3>
-            <p className="mt-3 text-gray-600">
-              Groq 加速模型带来行业领先的响应速度，写作、分析几乎无等待。
-            </p>
-          </div>
-
-          <div className="p-8 bg-gray-50 rounded-xl shadow-sm hover:shadow-md transition transform hover:-translate-y-1">
-            <h3 className="text-xl font-semibold">🧠 多智能体协作</h3>
-            <p className="mt-3 text-gray-600">
-              DeepSeek 负责推理结构，Kimi 负责表达优化，Groq 负责综合输出。
-            </p>
-          </div>
-
-          <div className="p-8 bg-gray-50 rounded-xl shadow-sm hover:shadow-md transition transform hover:-translate-y-1">
-            <h3 className="text-xl font-semibold">📚 一站式创作工具</h3>
-            <p className="mt-3 text-gray-600">
-              写作、课程生成、PPT、大纲、文案、训练营设计…… 统统一个平台搞定。
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* Multi-model Section：加动效展示区 */}
-      <section className="py-24 px-6 bg-gray-900 relative overflow-hidden">
-        {/* 背景渐变光晕 */}
-        <div className="pointer-events-none absolute -top-32 -left-20 w-72 h-72 bg-blue-500/30 blur-3xl rounded-full animate-pulse" />
-        <div className="pointer-events-none absolute -bottom-40 -right-10 w-80 h-80 bg-purple-500/25 blur-3xl rounded-full animate-pulse" />
-
-        <div className="relative max-w-6xl mx-auto">
           <h2 className="text-3xl font-bold text-center text-white">
-            多模型支持 · 你想用的我们都有
+            为什么选择这个多模型 AI 平台？
           </h2>
-          <p className="text-center text-gray-300 mt-3">
-            不同模型各司其职，在后台默默协作，只把最好的答案给你。
+          <p className="text-center text-slate-400 mt-3 text-sm">
+            不只是“一个聊天框”，而是一套帮你真正做事的 AI 工作流。
           </p>
 
-          {/* 中间一条“模型协作线路图” */}
-          <div className="mt-16 hidden md:block">
-            <div className="relative flex items-center justify-between">
-              {/* 连接线 */}
-              <div className="absolute left-0 right-0 h-px bg-gradient-to-r from-blue-500/0 via-blue-500/60 to-purple-500/0" />
-
-              {/* Groq */}
-              <div className="relative z-10 flex flex-col items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-blue-400 animate-ping" />
-                <div className="px-4 py-3 rounded-2xl bg-white/10 backdrop-blur border border-blue-400/40 shadow-md">
-                  <div className="text-sm text-blue-300">⚡ Groq</div>
-                  <div className="text-xs text-gray-200 mt-1">
-                    极速响应 · 负责综合与输出
-                  </div>
-                </div>
-              </div>
-
-              {/* DeepSeek */}
-              <div className="relative z-10 flex flex-col items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-emerald-400 animate-pulse" />
-                <div className="px-4 py-3 rounded-2xl bg-white/10 backdrop-blur border border-emerald-400/40 shadow-md">
-                  <div className="text-sm text-emerald-300">🧩 DeepSeek R1</div>
-                  <div className="text-xs text-gray-200 mt-1">
-                    结构拆解 · 深度推理
-                  </div>
-                </div>
-              </div>
-
-              {/* Kimi */}
-              <div className="relative z-10 flex flex-col items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-pink-400 animate-pulse" />
-                <div className="px-4 py-3 rounded-2xl bg-white/10 backdrop-blur border border-pink-400/40 shadow-md">
-                  <div className="text-sm text-pink-300">🎨 Kimi K2</div>
-                  <div className="text-xs text-gray-200 mt-1">
-                    中文表达 · 语气优化
-                  </div>
-                </div>
-              </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-12">
+            <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-blue-400/70 hover:shadow-xl transition transform hover:-translate-y-1">
+              <h3 className="text-lg font-semibold">🚀 Groq 极速引擎</h3>
+              <p className="mt-3 text-slate-300 text-sm">
+                基于 Groq LPU 加速，响应速度远超普通云服务，适合高频写作与头脑风暴。
+              </p>
             </div>
 
-            <p className="mt-6 text-xs text-center text-gray-400">
-              模型在后台协作：先由 DeepSeek 拆解与推理，再由 Kimi 优化表达，最后由
-              Groq 综合输出结果。
-            </p>
-          </div>
-
-          {/* 下方卡片介绍（带 hover 动效） */}
-          <div className="mt-14 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="p-6 bg-white/5 rounded-xl shadow-sm border border-white/10 hover:border-blue-400/70 hover:shadow-xl transition transform hover:-translate-y-1">
-              <h3 className="font-semibold text-white">⚡ Groq（超快速 LLaMA）</h3>
-              <p className="text-gray-300 mt-2 text-sm">
-                极速响应 · 免费使用  
-                适合日常聊天、快速写作、代码问答。
+            <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-emerald-400/70 hover:shadow-xl transition transform hover:-translate-y-1">
+              <h3 className="text-lg font-semibold">🧠 多智能体协同决策</h3>
+              <p className="mt-3 text-slate-300 text-sm">
+                让不同模型扮演规划、执行、审稿等角色，适合做课程、项目、商业方案。
               </p>
-              <span className="inline-block mt-3 text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-200">
-                默认主力模型
-              </span>
             </div>
 
-            <div className="p-6 bg-white/5 rounded-xl shadow-sm border border-white/10 hover:border-emerald-400/70 hover:shadow-xl transition transform hover:-translate-y-1">
-              <h3 className="font-semibold text-white">🧩 DeepSeek R1</h3>
-              <p className="text-gray-300 mt-2 text-sm">
-                更强的推理能力，适合做拆解、分析、决策辅助。
+            <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-purple-400/70 hover:shadow-xl transition transform hover:-translate-y-1">
+              <h3 className="text-lg font-semibold">📦 一站式创作工作台</h3>
+              <p className="mt-3 text-slate-300 text-sm">
+                写文案、写课程、做训练营、写代码、做调研问卷……在一个页面完成。
               </p>
-              <span className="inline-block mt-3 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-200">
-                逻辑&思考专家
-              </span>
-            </div>
-
-            <div className="p-6 bg-white/5 rounded-xl shadow-sm border border-white/10 hover:border-pink-400/70 hover:shadow-xl transition transform hover:-translate-y-1">
-              <h3 className="font-semibold text-white">🎨 Kimi K2</h3>
-              <p className="text-gray-300 mt-2 text-sm">
-                中文风格自然，适合写文案、故事、课程介绍与脚本。
-              </p>
-              <span className="inline-block mt-3 text-[10px] px-2 py-0.5 rounded-full bg-pink-500/20 text-pink-200">
-                文案&表达助理
-              </span>
-            </div>
-
-            <div className="p-6 bg-white/5 rounded-xl shadow-sm border border-white/10 hover:border-purple-400/70 hover:shadow-xl transition transform hover:-translate-y-1">
-              <h3 className="font-semibold text-white">🤝 团队智能体模式</h3>
-              <p className="text-gray-300 mt-2 text-sm">
-                多模型同时思考、互相补充，再由一个“总编辑”给出最终答复。
-              </p>
-              <span className="inline-block mt-3 text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200">
-                多智能体协作
-              </span>
             </div>
           </div>
         </div>
       </section>
 
-      {/* CTA */}
-      <section className="py-24 px-6 bg-white text-center">
-        <h2 className="text-3xl font-bold text-gray-900">
-          准备好体验未来 AI 工作方式了吗？
-        </h2>
-        <p className="mt-4 text-gray-600 text-lg">
-          立即开始对话，体验多模型智能协作带来的生产力提升。
-        </p>
+      {/* CTA 区域 */}
+      <section className="py-20 px-6 bg-slate-950">
+        <div className="max-w-3xl mx-auto text-center">
+          <h2 className="text-3xl font-bold text-white">
+            想试试让一整个 AI 团队一起帮你干活吗？
+          </h2>
+          <p className="mt-4 text-slate-300 text-sm sm:text-base">
+            打开聊天页，切换到“团队协作模式”，直接给出你的需求，
+            剩下的拆解、写作、优化，全交给 AI。
+          </p>
 
-        <a
-          href="/chat"
-          className="inline-block mt-10 px-10 py-4 bg-blue-600 text-white rounded-xl shadow-md hover:bg-blue-700 transition transform hover:-translate-y-1"
-        >
-          进入 AI 工作台 →
-        </a>
+          <Link
+            href="/chat"
+            className="inline-block mt-8 px-10 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl shadow-lg shadow-blue-500/30 hover:scale-105 transition text-sm font-medium"
+          >
+            进入 AI 工作台 →
+          </Link>
+        </div>
       </section>
 
       {/* Footer */}
-      <footer className="py-8 text-center text-gray-500 text-sm">
-        © {new Date().getFullYear()} 多模型 AI 平台 — Made by vins
+      <footer className="py-6 text-center text-slate-500 text-xs bg-slate-950 border-t border-white/5">
+        © {new Date().getFullYear()} 多模型 AI 平台 · Made by vins
       </footer>
     </main>
   );
