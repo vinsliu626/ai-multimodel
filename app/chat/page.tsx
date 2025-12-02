@@ -171,7 +171,7 @@ export default function ChatPage() {
             : "bg-white text-gray-700"
         }`}
       >
-        Groq fast
+        GPT Fast
       </button>
       <button
         onClick={() => setSingleModelKey("groq_quality")}
@@ -181,7 +181,7 @@ export default function ChatPage() {
             : "bg-white text-gray-700"
         }`}
       >
-        Groq Pro
+        GPT Pro
       </button>
       <button
         onClick={() => setSingleModelKey("hf_deepseek")}
