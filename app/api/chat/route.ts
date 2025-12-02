@@ -7,10 +7,12 @@ type ChatMessage = {
 
 type Mode = "single" | "team";
 type ModelKind = "fast" | "quality";
+type SingleModelKey = "groq_fast" | "groq_quality" | "hf_deepseek" | "hf_kimi";
+
 
 const FAST_MODEL = "llama-3.1-8b-instant";
 // 预留：高质量模型，如果暂时没有合适的 70B，也可以先用同一个
-const QUALITY_MODEL = "llama-3.1-8b-instant";
+const QUALITY_MODEL = "llama-3.3-70b-versatile";;
 
 // HuggingFace 写作模型：DeepSeek + Kimi
 const HF_DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B";
@@ -143,19 +145,55 @@ async function callLocalOllamaChat(
   return reply as string;
 }
 
-// ------------------ 单模型模式：保持原样，用 Groq ------------------
+// ------------------ 单模型模式：根据 singleModelKey 选择不同模型 ------------------
 
 async function handleSingleMode(
   apiKey: string,
   modelKind: ModelKind,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  singleModelKey: SingleModelKey
 ) {
-  const groqModel = modelKind === "quality" ? QUALITY_MODEL : FAST_MODEL;
-  const reply = await callGroqChat(apiKey, groqModel, messages);
-  return reply;
+  // 默认：如果前端没传，就按原来的 fast/quality 逻辑用 Groq
+  if (!singleModelKey) {
+    const groqModel = modelKind === "quality" ? QUALITY_MODEL : FAST_MODEL;
+    return await callGroqChat(apiKey, groqModel, messages);
+  }
+
+  // 单模型模式显式选择
+  switch (singleModelKey) {
+    case "groq_fast": {
+      return await callGroqChat(apiKey, FAST_MODEL, messages);
+    }
+    case "groq_quality": {
+      return await callGroqChat(apiKey, QUALITY_MODEL, messages);
+    }
+    case "hf_deepseek": {
+      const hfKey = process.env.HF_TOKEN;
+      if (!hfKey) {
+        throw new Error(
+          "服务器缺少 HF_TOKEN（请在 .env.local 和 Vercel 环境变量中配置）。"
+        );
+      }
+      return await callHuggingFaceChat(hfKey, HF_DEEPSEEK_MODEL, messages);
+    }
+    case "hf_kimi": {
+      const hfKey = process.env.HF_TOKEN;
+      if (!hfKey) {
+        throw new Error(
+          "服务器缺少 HF_TOKEN（请在 .env.local 和 Vercel 环境变量中配置）。"
+        );
+      }
+      return await callHuggingFaceChat(hfKey, HF_KIMI_MODEL, messages);
+    }
+    default: {
+      // 安全兜底：当成 Groq 快速
+      return await callGroqChat(apiKey, FAST_MODEL, messages);
+    }
+  }
 }
 
-// ------------------ 多 Agent 讨论模式：DeepSeek + Kimi + Groq ------------------
+
+// ------------------ 多 Agent 讨论模式（并行）：DeepSeek + Kimi + Groq ------------------
 
 async function handleTeamMode(
   apiKey: string,
@@ -176,7 +214,7 @@ async function handleTeamMode(
     );
   }
 
-  // 1️⃣ Agent A：DeepSeek 先给出完整方案（偏逻辑 / 推理型）
+  // 1️⃣ Agent A：DeepSeek —— 偏分析、结构和推理
   const aMessages: ChatMessage[] = [
     {
       role: "system",
@@ -198,48 +236,36 @@ async function handleTeamMode(
     },
   ];
 
-  const replyA = await callHuggingFaceChat(
-    hfKey,
-    HF_DEEPSEEK_MODEL,
-    aMessages
-  );
-
-  // 2️⃣ Agent B：Kimi 看到 Agent A 的回答后，补充 & 纠正（偏表达 /中文风格）
+  // 2️⃣ Agent B：Kimi —— 偏表达、案例和用户体验
   const bMessages: ChatMessage[] = [
     {
       role: "system",
       content: [
         "你是 Agent B，一名擅长中文表达与用户体验的高级 AI 顾问。",
-        "你会看到 Agent A 的回答，你的任务是：在尊重用户需求的前提下，批判性地阅读 Agent A 的答案，然后给出一份你认为更合适的版本。",
+        "你会看到与用户同样的需求，你的任务是：在尊重用户需求的前提下，给出一份更贴近年轻人、容易理解的版本。",
         "",
         "要求：",
-        "1. 先在心中分析 Agent A 的优点和缺点（是否啰嗦、是否有遗漏点、是否不够贴近用户）；",
-        "2. 在输出时，不要写分析过程，直接给出你“改良后”的完整回答；",
-        "3. 语言要自然、流畅，更贴近真实中文互联网产品/内容风格；",
-        "4. 不要提到 Agent A，不要暴露有“其他智能体存在”。"
+        "1. 回答时可以多用例子、场景，让内容更接地气；",
+        "2. 结构要清晰，但语言可以更自然一点；",
+        "3. 不要提到 Agent A，不要暴露有“其他智能体存在”；",
+        "4. 不要解释你是 AI，只当自己是这个产品的顾问在说话。"
       ].join("\n"),
     },
     {
       role: "user",
-      content: [
-        "用户的原始需求是：",
+      content:
+        "用户的问题或需求如下，请直接给出你的完整回答：\n\n" +
         userRequest,
-        "",
-        "下面是 Agent A 的回答，请你在心中参考它，然后给出你认为更好的版本：",
-        "===== Agent A 的回答开始 =====",
-        replyA,
-        "===== Agent A 的回答结束 =====",
-      ].join("\n"),
     },
   ];
 
-  const replyB = await callHuggingFaceChat(
-    hfKey,
-    HF_KIMI_MODEL,
-    bMessages
-  );
+  // ⚡ 3️⃣ 并行调用：让 DeepSeek 和 Kimi 同时思考
+  const [replyA, replyB] = await Promise.all([
+    callHuggingFaceChat(hfKey, HF_DEEPSEEK_MODEL, aMessages),
+    callHuggingFaceChat(hfKey, HF_KIMI_MODEL, bMessages),
+  ]);
 
-  // 3️⃣ Agent C：Groq 作为“总导演”，看完 A 和 B，给出最终综合回答
+  // 4️⃣ Agent C：Groq 作为“总导演”，看完 A 和 B，给出最终综合回答
   const cMessages: ChatMessage[] = [
     {
       role: "system",
@@ -284,6 +310,7 @@ async function handleTeamMode(
 }
 
 
+
 // ------------------ Next.js 路由入口 ------------------
 
 export async function POST(request: Request) {
@@ -292,11 +319,13 @@ export async function POST(request: Request) {
       messages?: ChatMessage[];
       model?: ModelKind;
       mode?: Mode;
+      singleModelKey?: SingleModelKey;
     };
 
     const messages = body.messages;
     const modelKind = body.model ?? "fast";
     const mode = body.mode ?? "single";
+    const singleModelKey = body.singleModelKey ?? "groq_fast";
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json(
@@ -316,10 +345,11 @@ export async function POST(request: Request) {
     let reply: string;
 
     if (mode === "team") {
-      reply = await handleTeamMode(apiKey, modelKind, messages);
-    } else {
-      reply = await handleSingleMode(apiKey, modelKind, messages);
-    }
+  reply = await handleTeamMode(apiKey, modelKind, messages);
+} else {
+  reply = await handleSingleMode(apiKey, modelKind, messages, singleModelKey);
+}
+
 
     return NextResponse.json({ reply });
   } catch (err: any) {

@@ -2,75 +2,109 @@
 
 import { useState } from "react";
 
+type Role = "user" | "assistant";
+
 type Message = {
-  role: "user" | "assistant";
+  role: Role;
   content: string;
 };
 
-type ChatMessage = {
-  role: "system" | "user" | "assistant";
-  content: string;
-};
+type Mode = "single" | "team";
+type ModelKind = "fast" | "quality";
+type SingleModelKey = "groq_fast" | "groq_quality" | "hf_deepseek" | "hf_kimi";
+
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [model, setModel] = useState<"fast" | "quality">("fast");
-  const [mode, setMode] = useState<"single" | "team">("single");
+  
+
+  // 模式：单模型 / 团队协作
+  const [mode, setMode] = useState<Mode>("single");
+  // 模型：快速 / 高质量
+  const [modelKind, setModelKind] = useState<ModelKind>("fast");
+  const [singleModelKey, setSingleModelKey] = useState<SingleModelKey>("groq_fast");
 
 
-
-  // ✅ 发送「带上下文」的请求
+  // 发送 + 打字机效果
   async function handleSend() {
     if (!input.trim() || isLoading) return;
 
-    const userMessage: Message = { role: "user", content: input };
-
-    // 把这次用户消息加入到本地历史
-    const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
+    const userText = input.trim();
     setInput("");
     setIsLoading(true);
 
-    // 组装要发给后端 + Groq 的消息数组（包含 system + 全部历史）
-    const payloadMessages: ChatMessage[] = [
-      {
-        role: "system",
-        content:
-          "你是一个为网站提供服务的多模型 AI 助手，要尽量结合上下文连续回答，用中文回复。",
-      },
-      ...newMessages,
-    ];
+    const userMessage: Message = { role: "user", content: userText };
+
+    // 给后端用的“历史对话”（这里用变量，不依赖异步的 setState）
+    const historyForApi = [...messages, userMessage];
+
+    // ✅ 前端只加一次用户消息 + 一个空的助手占位
+    setMessages((prev) => [
+      ...prev,
+      userMessage,
+      { role: "assistant", content: "" },
+    ]);
 
     try {
+      // 调用后端 /api/chat
       const res = await fetch("/api/chat", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    messages: payloadMessages,
-    model,
-    mode, // 新增：告诉后端是单模型还是“AI 团队”
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+    messages: historyForApi,
+    mode,
+    model: modelKind,       // 团队模式用的 fast/quality
+    singleModelKey,         // 单模型模式用的具体模型
   }),
 });
 
 
-
       const data = await res.json();
+      const fullReply: string = data.reply ?? "AI 暂时没有返回内容。";
 
-      const assistantMessage: Message = {
-        role: "assistant",
-        content: data.reply ?? "AI 暂时没有返回内容。",
-      };
+      // 打字机效果：一点点把内容写进“最后一条助手消息”
+      const step = 2; // 每次加几个字符
+      let i = 0;
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      await new Promise<void>((resolve) => {
+        const timer = setInterval(() => {
+          i += step;
+          const slice = fullReply.slice(0, i);
+
+          setMessages((prev) => {
+            if (prev.length === 0) return prev;
+            const next = [...prev];
+            const lastIndex = next.length - 1;
+
+            // 确保最后一条是 assistant，再更新
+            if (next[lastIndex].role === "assistant") {
+              next[lastIndex] = {
+                ...next[lastIndex],
+                content: slice,
+              };
+            }
+
+            return next;
+          });
+
+          if (i >= fullReply.length) {
+            clearInterval(timer);
+            resolve();
+          }
+        }, 20); // 间隔可以调大/调小
+      });
     } catch (err) {
-      console.error(err);
+      console.error("调用 /api/chat 出错：", err);
+      // 出错时，把错误信息显示成一条 AI 消息
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: "⚠️ 调用 AI 失败，请检查服务器终端是否报错。",
+          content:
+            "调用后端出错了，请稍后重试。\n\n错误信息：" +
+            (err instanceof Error ? err.message : String(err)),
         },
       ]);
     } finally {
@@ -88,51 +122,116 @@ export default function ChatPage() {
   return (
     <main className="min-h-screen flex flex-col items-center bg-gray-100 p-4">
       <div className="w-full max-w-3xl bg-white rounded-xl shadow-md flex flex-col h-[80vh]">
-        {/* 顶部标题 */}
-       <header className="border-b px-4 py-3 flex items-center justify-between gap-4">
-  <div className="flex flex-col">
-    <h1 className="font-semibold text-lg">多模型 AI 助手 · 聊天测试版</h1>
-    <span className="text-xs text-gray-500">
-      模型：
-      {model === "fast" ? "快速 · 8B" : "（暂时同 8B，可以后换 70B）"}，
-      模式：{mode === "single" ? "单模型" : "AI 团队协作"}
-    </span>
-  </div>
+        {/* 顶部标题 + 模式选择 */}
+        <header className="border-b px-4 py-3 flex items-center justify-between gap-4">
+          <div>
+            <h1 className="font-semibold text-lg">多模型 AI 助手 · 聊天测试版</h1>
+            <p className="text-xs text-gray-500">
+              后端：Groq + DeepSeek + Kimi · 前端：本地打字机流式效果
+            </p>
+          </div>
 
-  <div className="flex flex-col items-end gap-1 text-xs">
-    {/* 模型选择 */}
-    <div className="flex items-center gap-2">
-      <span className="text-gray-500">模型</span>
-      <select
-        className="border rounded-md px-2 py-1"
-        value={model}
-        onChange={(e) =>
-          setModel(e.target.value === "quality" ? "quality" : "fast")
-        }
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-gray-500">模式</span>
+              <button
+                onClick={() => setMode("single")}
+                className={`px-2 py-1 rounded border text-xs ${
+                  mode === "single"
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-white text-gray-700"
+                }`}
+              >
+                单模型
+              </button>
+              <button
+                onClick={() => setMode("team")}
+                className={`px-2 py-1 rounded border text-xs ${
+                  mode === "team"
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-white text-gray-700"
+                }`}
+              >
+                团队协作
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs">
+  <span className="text-gray-500">
+    {mode === "single" ? "单模型" : "团队模型"}
+  </span>
+
+  {mode === "single" ? (
+    <>
+      <button
+        onClick={() => setSingleModelKey("groq_fast")}
+        className={`px-2 py-1 rounded border text-xs ${
+          singleModelKey === "groq_fast"
+            ? "bg-green-600 text-white border-green-600"
+            : "bg-white text-gray-700"
+        }`}
       >
-        <option value="fast">⚡ 快速 · llama-3.1-8b-instant</option>
-        <option value="quality">（暂用同上，预留高质量）</option>
-      </select>
-    </div>
-
-    {/* 协作模式选择 */}
-    <div className="flex items-center gap-2">
-      <span className="text-gray-500">模式</span>
-      <select
-        className="border rounded-md px-2 py-1"
-        value={mode}
-        onChange={(e) =>
-          setMode(e.target.value === "team" ? "team" : "single")
-        }
+        Groq fast
+      </button>
+      <button
+        onClick={() => setSingleModelKey("groq_quality")}
+        className={`px-2 py-1 rounded border text-xs ${
+          singleModelKey === "groq_quality"
+            ? "bg-purple-600 text-white border-purple-600"
+            : "bg-white text-gray-700"
+        }`}
       >
-        <option value="single">🧩 单模型</option>
-        <option value="team">🧠 AI 团队协作</option>
-      </select>
-    </div>
-  </div>
-</header>
+        Groq Pro
+      </button>
+      <button
+        onClick={() => setSingleModelKey("hf_deepseek")}
+        className={`px-2 py-1 rounded border text-xs ${
+          singleModelKey === "hf_deepseek"
+            ? "bg-blue-600 text-white border-blue-600"
+            : "bg-white text-gray-700"
+        }`}
+      >
+        DeepSeek
+      </button>
+      <button
+        onClick={() => setSingleModelKey("hf_kimi")}
+        className={`px-2 py-1 rounded border text-xs ${
+          singleModelKey === "hf_kimi"
+            ? "bg-pink-600 text-white border-pink-600"
+            : "bg-white text-gray-700"
+        }`}
+      >
+        Kimi
+      </button>
+    </>
+  ) : (
+    <>
+      <button
+        onClick={() => setModelKind("fast")}
+        className={`px-2 py-1 rounded border text-xs ${
+          modelKind === "fast"
+            ? "bg-green-600 text-white border-green-600"
+            : "bg-white text-gray-700"
+        }`}
+      >
+        快速
+      </button>
+      <button
+        onClick={() => setModelKind("quality")}
+        className={`px-2 py-1 rounded border text-xs ${
+          modelKind === "quality"
+            ? "bg-purple-600 text-white border-purple-600"
+            : "bg-white text-gray-700"
+        }`}
+      >
+        高质量
+      </button>
+    </>
+  )}
+</div>
 
-
+          </div>
+        </header>
 
         {/* 消息区域 */}
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -140,7 +239,7 @@ export default function ChatPage() {
             <div className="text-gray-400 text-sm text-center mt-10">
               还没有消息，试试输入点什么吧 👇
               <br />
-              例如：“我们接下来一起设计一个多模型 AI 网站”
+              比如：“帮我设计一个调查表”
             </div>
           )}
 
@@ -152,7 +251,7 @@ export default function ChatPage() {
               }`}
             >
               <div
-                className={`px-3 py-2 rounded-lg text-sm whitespace-pre-wrap ${
+                className={`px-3 py-2 rounded-lg text-sm whitespace-pre-wrap max-w-[80%] ${
                   msg.role === "user"
                     ? "bg-blue-500 text-white"
                     : "bg-gray-100 text-gray-900 border"
@@ -164,7 +263,11 @@ export default function ChatPage() {
           ))}
 
           {isLoading && (
-            <div className="text-xs text-gray-500">AI 正在思考...</div>
+            <div className="text-xs text-gray-500 mt-2">
+              {mode === "team"
+                ? "多模型团队正在协作思考中……"
+                : "模型正在思考中……"}
+            </div>
           )}
         </div>
 
@@ -177,13 +280,14 @@ export default function ChatPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
+              disabled={isLoading}
             />
             <button
               onClick={handleSend}
               disabled={isLoading || !input.trim()}
               className="w-24 h-10 self-end rounded-md bg-blue-600 text-white text-sm disabled:bg-gray-300"
             >
-              发送
+              {isLoading ? "思考中..." : "发送"}
             </button>
           </div>
         </div>
