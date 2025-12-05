@@ -2,9 +2,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-// 必须放在 import 后面，其他代码前面
+// 必须：禁用预渲染、禁用 SSG、禁用动态参数检查
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const dynamicParams = false;
+export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
   try {
