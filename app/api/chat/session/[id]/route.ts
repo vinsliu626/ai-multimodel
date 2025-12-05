@@ -1,18 +1,19 @@
 // app/api/chat/session/[id]/route.ts
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
+// Next.js App Router 动态路由 context 类型
 type RouteContext = {
-  params?: {
-    id?: string;
+  params: {
+    id: string;
   };
 };
 
-// 一个小工具：从 context / URL 里尽可能把 id 抠出来
-function getIdFromRequest(req: Request, context: RouteContext): string | null {
-  // 1）Next 传进来的动态路由参数
+// 小工具：从 context / URL 里尽可能把 id 抠出来
+function getIdFromRequest(req: NextRequest, context: RouteContext): string | null {
+  // 1）Next 传进来的动态路由参数（标准用法）
   if (context?.params?.id) {
     return context.params.id;
   }
@@ -33,7 +34,7 @@ function getIdFromRequest(req: Request, context: RouteContext): string | null {
 }
 
 // ---------------- GET：拿某个会话的全部消息 ----------------
-export async function GET(req: Request, context: RouteContext) {
+export async function GET(req: NextRequest, context: RouteContext) {
   const id = getIdFromRequest(req, context);
 
   if (!id) {
@@ -60,7 +61,7 @@ export async function GET(req: Request, context: RouteContext) {
 }
 
 // ---------------- DELETE：删除会话 + 消息 ----------------
-export async function DELETE(req: Request, context: RouteContext) {
+export async function DELETE(req: NextRequest, context: RouteContext) {
   const id = getIdFromRequest(req, context);
 
   if (!id) {
