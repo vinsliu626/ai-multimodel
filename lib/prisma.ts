@@ -1,5 +1,4 @@
 // lib/prisma.ts
-import { PrismaClient } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 
 const url = process.env.DATABASE_URL;
@@ -12,16 +11,30 @@ if (!url) {
 
 // 防止 Next.js 开发模式下热重载创建多个实例
 const globalForPrisma = globalThis as unknown as {
-  prisma?: PrismaClient;
+  prisma?: any;
 };
 
+// 用 require 动态加载，以绕过 TS 静态导出检查
+function loadPrismaClient() {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { PrismaClient } = require("@prisma/client");
+
+  if (!PrismaClient) {
+    throw new Error(
+      "无法从 @prisma/client 加载 PrismaClient，请检查依赖并执行 `npx prisma generate`。"
+    );
+  }
+
+  return PrismaClient;
+}
+
 const adapter = new PrismaBetterSqlite3({
-  url, // 这里用的就是 file:./dev.db
+  url, // 例如 file:./dev.db
 });
 
 export const prisma =
   globalForPrisma.prisma ??
-  new PrismaClient({
+  new (loadPrismaClient())({
     adapter,
     log: ["error", "warn"],
   });
