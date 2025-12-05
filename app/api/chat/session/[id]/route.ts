@@ -4,18 +4,26 @@ import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
-// Next.js App Router 动态路由 context 类型
-type RouteContext = {
-  params: {
-    id: string;
-  };
-};
-
 // 小工具：从 context / URL 里尽可能把 id 抠出来
-function getIdFromRequest(req: NextRequest, context: RouteContext): string | null {
-  // 1）Next 传进来的动态路由参数（标准用法）
-  if (context?.params?.id) {
-    return context.params.id;
+// 注意：这里用 any，同时兼容 context.params 是对象 或 Promise 的情况
+async function getIdFromRequest(
+  req: NextRequest,
+  context: any
+): Promise<string | null> {
+  const rawParams = context?.params;
+
+  // 1）Next 传进来的动态路由参数：可能是 { id: string }，也可能被标成 Promise<{ id: string }>
+  if (rawParams) {
+    try {
+      const params =
+        typeof rawParams.then === "function" ? await rawParams : rawParams;
+
+      if (params?.id) {
+        return params.id as string;
+      }
+    } catch {
+      // 忽略解析 params 的错误，继续走 URL 兜底逻辑
+    }
   }
 
   // 2）从 URL path 最后一个段拿，比如 /api/chat/session/xxxx
@@ -34,8 +42,8 @@ function getIdFromRequest(req: NextRequest, context: RouteContext): string | nul
 }
 
 // ---------------- GET：拿某个会话的全部消息 ----------------
-export async function GET(req: NextRequest, context: RouteContext) {
-  const id = getIdFromRequest(req, context);
+export async function GET(req: NextRequest, context: any) {
+  const id = await getIdFromRequest(req, context);
 
   if (!id) {
     return NextResponse.json(
@@ -61,8 +69,8 @@ export async function GET(req: NextRequest, context: RouteContext) {
 }
 
 // ---------------- DELETE：删除会话 + 消息 ----------------
-export async function DELETE(req: NextRequest, context: RouteContext) {
-  const id = getIdFromRequest(req, context);
+export async function DELETE(req: NextRequest, context: any) {
+  const id = await getIdFromRequest(req, context);
 
   if (!id) {
     return NextResponse.json(
