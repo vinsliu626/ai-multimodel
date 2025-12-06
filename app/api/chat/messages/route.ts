@@ -1,7 +1,7 @@
 // app/api/chat/messages/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 
+// 只告诉 Next：这是 Node 运行时 + 动态接口
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -16,6 +16,9 @@ export async function GET(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // ⬇️⬇️ 关键：在这里才动态加载 prisma，而不是文件顶部静态 import
+    const { prisma } = await import("@/lib/prisma");
 
     const messages = await prisma.chatMessage.findMany({
       where: { chatSessionId: sessionId },
