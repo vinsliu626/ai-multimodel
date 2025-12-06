@@ -1,23 +1,16 @@
 // lib/prisma.ts
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 
-const url = process.env.DATABASE_URL;
+const dbUrl = process.env.DATABASE_URL || "file:./dev.db";
 
-if (!url) {
-  throw new Error(
-    '缺少 DATABASE_URL，请在 .env.local 设置，例如：DATABASE_URL="file:./dev.db"'
-  );
-}
-
-// 防止 Next.js 开发模式下热重载创建多个实例
 const globalForPrisma = globalThis as unknown as {
   prisma?: any;
 };
 
-// 用 require 动态加载，以绕过 TS 静态导出检查
 function loadPrismaClient() {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const { PrismaClient } = require("@prisma/client");
+  const mod = require("@prisma/client");
+  const PrismaClient = mod?.PrismaClient;
 
   if (!PrismaClient) {
     throw new Error(
@@ -29,7 +22,7 @@ function loadPrismaClient() {
 }
 
 const adapter = new PrismaBetterSqlite3({
-  url, // 例如 file:./dev.db
+  url: dbUrl,
 });
 
 export const prisma =

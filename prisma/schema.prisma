@@ -5,7 +5,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"        // 开发阶段用 sqlite
+  provider = "sqlite"
 }
 
 // 一个用户可以有很多聊天会话
