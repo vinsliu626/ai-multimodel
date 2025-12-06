@@ -1,16 +1,20 @@
 // app/api/chat/messages/route.ts
-
-// 🚫 最关键的两行：禁止 Next.js 在构建阶段预渲染这个 route
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
+/** 完全禁止 Next.js 尝试预渲染这个接口 */
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store"; 
+export const preferredRegion = "auto";
+
+/** 明确告诉 Next：这是纯 runtime API，不参与 page-data 收集 */
+export const experimental_ppr = false;
+
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const sessionId = searchParams.get("sessionId");
+    const sessionId = request.nextUrl.searchParams.get("sessionId");
 
     if (!sessionId) {
       return NextResponse.json(
@@ -19,31 +23,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const session = await prisma.chatSession.findUnique({
-      where: { id: sessionId },
-    });
-
-    if (!session) {
-      return NextResponse.json(
-        { error: "会话不存在" },
-        { status: 404 }
-      );
-    }
-
     const messages = await prisma.chatMessage.findMany({
       where: { chatSessionId: sessionId },
       orderBy: { createdAt: "asc" },
-      select: {
-        role: true,
-        content: true,
-      },
+      select: { role: true, content: true },
     });
 
     return NextResponse.json({ messages });
   } catch (err: any) {
-    console.error("/api/chat/messages 出错：", err);
+    console.error("[/api/chat/messages] Error:", err);
     return NextResponse.json(
-      { error: "获取会话消息失败：" + (err?.message ?? "未知错误") },
+      { error: err?.message ?? "unknown error" },
       { status: 500 }
     );
   }
