@@ -1,11 +1,9 @@
 // app/api/chat/session/[id]/route.ts
-
-// 🚫 禁止构建阶段预渲染
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
-
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 // 小工具：从 context / URL 里尽可能把 id 抠出来
 async function getIdFromRequest(
@@ -43,7 +41,7 @@ async function getIdFromRequest(
   return null;
 }
 
-// ---------------- GET：获取会话消息 ----------------
+// ---------------- GET：拿某个会话的全部消息 ----------------
 export async function GET(req: NextRequest, context: any) {
   const id = await getIdFromRequest(req, context);
 
@@ -55,6 +53,8 @@ export async function GET(req: NextRequest, context: any) {
   }
 
   try {
+    const { prisma } = await import("@/lib/prisma");
+
     const messages = await prisma.chatMessage.findMany({
       where: { chatSessionId: id },
       orderBy: { createdAt: "asc" },
@@ -70,7 +70,7 @@ export async function GET(req: NextRequest, context: any) {
   }
 }
 
-// ---------------- DELETE：删除会话及其消息 ----------------
+// ---------------- DELETE：删除会话 + 消息 ----------------
 export async function DELETE(req: NextRequest, context: any) {
   const id = await getIdFromRequest(req, context);
 
@@ -82,6 +82,9 @@ export async function DELETE(req: NextRequest, context: any) {
   }
 
   try {
+    const { prisma } = await import("@/lib/prisma");
+
+    // 先删消息，再删会话
     await prisma.chatMessage.deleteMany({
       where: { chatSessionId: id },
     });
