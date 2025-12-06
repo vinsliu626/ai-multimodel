@@ -1,8 +1,9 @@
 // app/api/chat/route.ts
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 type ChatMessage = {
   role: "system" | "user" | "assistant";
@@ -223,7 +224,8 @@ async function handleTeamMode(
   return await callGroqChat(apiKey, groqModel, cMessages);
 }
 
-// app/api/chat/route.ts 里，和其他 helper 一起放
+// ---------- 生成会话标题 ----------
+
 async function generateSessionTitle(
   apiKey: string,
   lastUserMessage: string,
@@ -246,11 +248,9 @@ async function generateSessionTitle(
   const raw = await callGroqChat(apiKey, FAST_MODEL, [systemMsg, userMsg]);
   const firstLine = raw.split("\n")[0].trim();
 
-  // 去掉「标题：xxx」这种前缀，再截断一下
   const cleaned = firstLine.replace(/^标题[:：]\s*/, "").slice(0, 20);
   return cleaned || "新的对话";
 }
-
 
 // ---------- POST /api/chat ----------
 
@@ -297,8 +297,10 @@ export async function POST(request: Request) {
       );
     }
 
-    // 再落库（如果挂了也不影响用户拿到回复）
+    // ⬇⬇⬇ 这里才动态加载 prisma，避免构建阶段初始化
     try {
+      const { prisma } = await import("@/lib/prisma");
+
       const lastUserMessage = [...messages].reverse().find(
         (m) => m.role === "user"
       );
@@ -307,7 +309,6 @@ export async function POST(request: Request) {
 
       const userId = "anonymous";
 
-      // 只有新会话时才生成标题
       if (!chatSessionId) {
         let title = "新的对话";
         try {
@@ -344,7 +345,6 @@ export async function POST(request: Request) {
       console.error("保存聊天记录到数据库失败：", dbErr);
       // 不抛错，避免影响正常回复
     }
-
 
     return NextResponse.json({ reply, chatSessionId });
   } catch (err: any) {
