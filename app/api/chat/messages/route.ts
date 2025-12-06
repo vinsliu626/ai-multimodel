@@ -1,12 +1,11 @@
 // app/api/chat/messages/route.ts
+
+// 🚫 最关键的两行：禁止 Next.js 在构建阶段预渲染这个 route
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-
-// 必须：禁用预渲染、禁用 SSG、禁用动态参数检查
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-export const dynamicParams = false;
-export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
   try {
