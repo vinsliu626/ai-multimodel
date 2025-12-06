@@ -1,18 +1,20 @@
 // app/api/chat/session/[id]/route.ts
+
+// 🚫 禁止构建阶段预渲染
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-export const runtime = "nodejs";
-
 // 小工具：从 context / URL 里尽可能把 id 抠出来
-// 注意：这里用 any，同时兼容 context.params 是对象 或 Promise 的情况
 async function getIdFromRequest(
   req: NextRequest,
   context: any
 ): Promise<string | null> {
   const rawParams = context?.params;
 
-  // 1）Next 传进来的动态路由参数：可能是 { id: string }，也可能被标成 Promise<{ id: string }>
+  // 1）处理动态路由参数（可能是对象或 Promise）
   if (rawParams) {
     try {
       const params =
@@ -22,11 +24,11 @@ async function getIdFromRequest(
         return params.id as string;
       }
     } catch {
-      // 忽略解析 params 的错误，继续走 URL 兜底逻辑
+      // 忽略错误，继续后面的逻辑
     }
   }
 
-  // 2）从 URL path 最后一个段拿，比如 /api/chat/session/xxxx
+  // 2）从 URL 路径获取
   const url = new URL(req.url);
   const segments = url.pathname.split("/").filter(Boolean);
   const lastSeg = segments[segments.length - 1];
@@ -34,14 +36,14 @@ async function getIdFromRequest(
     return lastSeg;
   }
 
-  // 3）兜底：看 query ?id=xxx
+  // 3）从 query 参数获取
   const idFromQuery = url.searchParams.get("id");
   if (idFromQuery) return idFromQuery;
 
   return null;
 }
 
-// ---------------- GET：拿某个会话的全部消息 ----------------
+// ---------------- GET：获取会话消息 ----------------
 export async function GET(req: NextRequest, context: any) {
   const id = await getIdFromRequest(req, context);
 
@@ -68,7 +70,7 @@ export async function GET(req: NextRequest, context: any) {
   }
 }
 
-// ---------------- DELETE：删除会话 + 消息 ----------------
+// ---------------- DELETE：删除会话及其消息 ----------------
 export async function DELETE(req: NextRequest, context: any) {
   const id = await getIdFromRequest(req, context);
 
@@ -80,7 +82,6 @@ export async function DELETE(req: NextRequest, context: any) {
   }
 
   try {
-    // 先删消息，再删会话
     await prisma.chatMessage.deleteMany({
       where: { chatSessionId: id },
     });
