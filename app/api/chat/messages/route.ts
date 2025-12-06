@@ -2,10 +2,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-// ❗ 彻底禁止 Next.js 预渲染此 API
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const dynamicParams = true;
 export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
