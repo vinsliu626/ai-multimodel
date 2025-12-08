@@ -5,25 +5,69 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// 临时版：不访问数据库，只返回空消息列表
-export async function GET(req: NextRequest) {
-  return NextResponse.json(
-    {
-      ok: true,
-      messages: [],
-      note: "临时版本：服务器不读取数据库，只返回空消息列表。",
-    },
-    { status: 200 }
-  );
+// GET：根据会话 id 加载这条会话下的所有消息
+export async function GET(
+  req: NextRequest,
+  context: { params: { id: string } }
+) {
+  try {
+    const { prisma } = await import("@/lib/prisma");
+
+    const id = context?.params?.id;
+    if (!id) {
+      return NextResponse.json(
+        { ok: false, error: "缺少 id 参数" },
+        { status: 400 }
+      );
+    }
+
+    const messages = await prisma.chatMessage.findMany({
+      where: { chatSessionId: id },
+      orderBy: { createdAt: "asc" },
+    });
+
+    return NextResponse.json({ ok: true, messages }, { status: 200 });
+  } catch (err: any) {
+    console.error("加载会话消息失败：", err);
+    return NextResponse.json(
+      { ok: false, error: err?.message ?? "加载会话消息失败" },
+      { status: 500 }
+    );
+  }
 }
 
-// 临时版：不做真正删除操作，只假装成功
-export async function DELETE(req: NextRequest) {
-  return NextResponse.json(
-    {
-      ok: true,
-      note: "临时版本：未真正删除数据库记录，只返回成功。",
-    },
-    { status: 200 }
-  );
+// DELETE：删除会话下所有消息 + 会话本身
+export async function DELETE(
+  req: NextRequest,
+  context: { params: { id: string } }
+) {
+  try {
+    const { prisma } = await import("@/lib/prisma");
+
+    const id = context?.params?.id;
+    if (!id) {
+      return NextResponse.json(
+        { ok: false, error: "缺少 id 参数" },
+        { status: 400 }
+      );
+    }
+
+    // 先删这条会话下的所有消息
+    await prisma.chatMessage.deleteMany({
+      where: { chatSessionId: id },
+    });
+
+    // 再删会话本身
+    await prisma.chatSession.delete({
+      where: { id },
+    });
+
+    return NextResponse.json({ ok: true }, { status: 200 });
+  } catch (err: any) {
+    console.error("删除会话失败：", err);
+    return NextResponse.json(
+      { ok: false, error: err?.message ?? "删除会话失败" },
+      { status: 500 }
+    );
+  }
 }
