@@ -1,9 +1,32 @@
-// app/api/chat/route.ts
-import { NextResponse } from "next/server";
+// app/api/chat/sessions/route.ts
+import { NextRequest, NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+export async function GET(req: NextRequest) {
+  try {
+    const { prisma } = await import("@/lib/prisma");
+
+    const sessions = await prisma.chatSession.findMany({
+      orderBy: { updatedAt: "desc" },
+      take: 50,
+    });
+
+    return NextResponse.json(
+      { ok: true, sessions },
+      { status: 200 }
+    );
+  } catch (err: any) {
+    console.error("加载会话列表失败：", err);
+    return NextResponse.json(
+      { ok: false, sessions: [], error: err?.message ?? "加载失败" },
+      { status: 500 }
+    );
+  }
+}
+
 
 type ChatMessage = {
   role: "system" | "user" | "assistant";
