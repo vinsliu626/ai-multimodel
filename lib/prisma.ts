@@ -1,25 +1,22 @@
 // lib/prisma.ts
 import { PrismaClient } from "@prisma/client";
 import { PrismaNeon } from "@prisma/adapter-neon";
-import { Pool } from "@neondatabase/serverless";
+import { neonConfig } from "@neondatabase/serverless";
+import ws from "ws";
 
 declare global {
   // eslint-disable-next-line no-var
   var prisma: PrismaClient | undefined;
 }
 
-const databaseUrl = process.env.DATABASE_URL;
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) throw new Error("DATABASE_URL is not set");
 
-if (!databaseUrl) {
-  throw new Error("DATABASE_URL is not set");
-}
+// ✅ Node 环境下给 Neon 配 WebSocket（Neon 官方写法）
+neonConfig.webSocketConstructor = ws;
+// 如果你需要 Edge 才开这个：neonConfig.poolQueryViaFetch = true
 
-// Neon serverless pool
-const pool = new Pool({
-  connectionString: databaseUrl,
-});
-
-const adapter = new PrismaNeon(pool);
+const adapter = new PrismaNeon({ connectionString });
 
 export const prisma =
   global.prisma ??
@@ -28,6 +25,4 @@ export const prisma =
     log: ["error", "warn"],
   });
 
-if (process.env.NODE_ENV !== "production") {
-  global.prisma = prisma;
-}
+if (process.env.NODE_ENV !== "production") global.prisma = prisma;
