@@ -5,7 +5,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"  // ✅ 必须是这个
+  url      = env("DATABASE_URL")
 }
 
 // 一个用户可以有很多聊天会话
