@@ -1,17 +1,15 @@
-// prisma/schema.prisma
-
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
-// 一个用户可以有很多聊天会话
 model ChatSession {
   id        String        @id @default(cuid())
-  userId    String        // 暂时用 session.user.email，当作用户标识
+  userId    String
   title     String        @default("新的对话")
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
@@ -19,13 +17,12 @@ model ChatSession {
   messages  ChatMessage[]
 }
 
-// 每条消息
 model ChatMessage {
-  id            String       @id @default(cuid())
+  id            String      @id @default(cuid())
   chatSessionId String
-  role          String       // "user" | "assistant"
+  role          String
   content       String
-  createdAt     DateTime     @default(now())
+  createdAt     DateTime    @default(now())
 
-  chatSession   ChatSession  @relation(fields: [chatSessionId], references: [id])
+  chatSession   ChatSession @relation(fields: [chatSessionId], references: [id])
 }

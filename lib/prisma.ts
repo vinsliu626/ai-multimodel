@@ -1,37 +1,33 @@
 // lib/prisma.ts
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaClient } from "@prisma/client";
+import { PrismaNeon } from "@prisma/adapter-neon";
+import { Pool } from "@neondatabase/serverless";
 
-const dbUrl = process.env.DATABASE_URL || "file:./dev.db";
-
-const globalForPrisma = globalThis as unknown as {
-  prisma?: any;
-};
-
-function loadPrismaClient() {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const mod = require("@prisma/client");
-  const PrismaClient = mod?.PrismaClient;
-
-  if (!PrismaClient) {
-    throw new Error(
-      "无法从 @prisma/client 加载 PrismaClient，请检查依赖并执行 `npx prisma generate`。"
-    );
-  }
-
-  return PrismaClient;
+declare global {
+  // eslint-disable-next-line no-var
+  var prisma: PrismaClient | undefined;
 }
 
-const adapter = new PrismaBetterSqlite3({
-  url: dbUrl,
+const databaseUrl = process.env.DATABASE_URL;
+
+if (!databaseUrl) {
+  throw new Error("DATABASE_URL is not set");
+}
+
+// Neon serverless pool
+const pool = new Pool({
+  connectionString: databaseUrl,
 });
 
+const adapter = new PrismaNeon(pool);
+
 export const prisma =
-  globalForPrisma.prisma ??
-  new (loadPrismaClient())({
+  global.prisma ??
+  new PrismaClient({
     adapter,
     log: ["error", "warn"],
   });
 
 if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
+  global.prisma = prisma;
 }
