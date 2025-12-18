@@ -10,7 +10,7 @@ type ChatMessage = {
   content: string;
 };
 
-type Mode = "single" | "team";
+type Mode = "single" | "team" | "detector";
 type ModelKind = "fast" | "quality";
 type SingleModelKey = "groq_fast" | "groq_quality" | "hf_deepseek" | "hf_kimi";
 
@@ -64,20 +64,17 @@ async function callHuggingFaceChat(
   modelId: string,
   messages: ChatMessage[]
 ): Promise<string> {
-  const res = await fetch(
-    "https://router.huggingface.co/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: modelId,
-        messages,
-      }),
-    }
-  );
+  const res = await fetch("https://router.huggingface.co/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: modelId,
+      messages,
+    }),
+  });
 
   const text = await res.text();
 
@@ -119,14 +116,12 @@ async function handleSingleMode(
       return await callGroqChat(apiKey, QUALITY_MODEL, messages);
     case "hf_deepseek": {
       const hfKey = process.env.HF_TOKEN;
-      if (!hfKey)
-        throw new Error("服务器缺少 HF_TOKEN（请在环境变量中配置）。");
+      if (!hfKey) throw new Error("服务器缺少 HF_TOKEN（请在环境变量中配置）。");
       return await callHuggingFaceChat(hfKey, HF_DEEPSEEK_MODEL, messages);
     }
     case "hf_kimi": {
       const hfKey = process.env.HF_TOKEN;
-      if (!hfKey)
-        throw new Error("服务器缺少 HF_TOKEN（请在环境变量中配置）。");
+      if (!hfKey) throw new Error("服务器缺少 HF_TOKEN（请在环境变量中配置）。");
       return await callHuggingFaceChat(hfKey, HF_KIMI_MODEL, messages);
     }
     default:
@@ -147,8 +142,7 @@ async function handleTeamMode(
   const userRequest = lastUser?.content ?? "请根据以上对话完成任务。";
 
   const hfKey = process.env.HF_TOKEN;
-  if (!hfKey)
-    throw new Error("服务器缺少 HF_TOKEN（请在环境变量中配置）。");
+  if (!hfKey) throw new Error("服务器缺少 HF_TOKEN（请在环境变量中配置）。");
 
   const aMessages: ChatMessage[] = [
     {
@@ -161,9 +155,7 @@ async function handleTeamMode(
     },
     {
       role: "user",
-      content:
-        "用户的问题或需求如下，请直接给出你的完整回答：\n\n" +
-        userRequest,
+      content: "用户的问题或需求如下，请直接给出你的完整回答：\n\n" + userRequest,
     },
   ];
 
@@ -178,9 +170,7 @@ async function handleTeamMode(
     },
     {
       role: "user",
-      content:
-        "用户的问题或需求如下，请直接给出你的完整回答：\n\n" +
-        userRequest,
+      content: "用户的问题或需求如下，请直接给出你的完整回答：\n\n" + userRequest,
     },
   ];
 
@@ -271,8 +261,13 @@ export async function POST(request: Request) {
     let chatSessionId = body.chatSessionId ?? null;
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return NextResponse.json({ reply: "请求 body 中缺少 messages 数组。" }, { status: 200 });
+    }
+
+    // ✅ 防误用：Detector 不走 /api/chat
+    if (mode === "detector") {
       return NextResponse.json(
-        { reply: "请求 body 中缺少 messages 数组。" },
+        { reply: "AI Detector mode does not use /api/chat. Please call /api/ai-detector instead." },
         { status: 200 }
       );
     }
@@ -289,23 +284,15 @@ export async function POST(request: Request) {
     if (mode === "team") {
       reply = await handleTeamMode(apiKey, modelKind, messages);
     } else {
-      reply = await handleSingleMode(
-        apiKey,
-        modelKind,
-        messages,
-        singleModelKey
-      );
+      reply = await handleSingleMode(apiKey, modelKind, messages, singleModelKey);
     }
 
-    // ⬇⬇⬇ 这里才动态加载 prisma，避免构建阶段初始化
+    // 动态加载 prisma，避免构建阶段初始化
     try {
       const { prisma } = await import("@/lib/prisma");
 
-      const lastUserMessage = [...messages].reverse().find(
-        (m) => m.role === "user"
-      );
-      const userTextForThisTurn =
-        lastUserMessage?.content ?? "（未找到用户消息内容）";
+      const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+      const userTextForThisTurn = lastUserMessage?.content ?? "（未找到用户消息内容）";
 
       const userId = "anonymous";
 
@@ -319,31 +306,19 @@ export async function POST(request: Request) {
         }
 
         const session = await prisma.chatSession.create({
-          data: {
-            userId,
-            title,
-          },
+          data: { userId, title },
         });
         chatSessionId = session.id;
       }
 
       await prisma.chatMessage.createMany({
         data: [
-          {
-            chatSessionId,
-            role: "user",
-            content: userTextForThisTurn,
-          },
-          {
-            chatSessionId,
-            role: "assistant",
-            content: reply,
-          },
+          { chatSessionId, role: "user", content: userTextForThisTurn },
+          { chatSessionId, role: "assistant", content: reply },
         ],
       });
     } catch (dbErr) {
       console.error("保存聊天记录到数据库失败：", dbErr);
-      // 不抛错，避免影响正常回复
     }
 
     return NextResponse.json({ reply, chatSessionId });
@@ -352,9 +327,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         reply:
-          "服务器内部错误：" +
-          (err?.message ?? "未知错误") +
-          "（请稍后重试）",
+          "服务器内部错误：" + (err?.message ?? "未知错误") + "（请稍后重试）",
       },
       { status: 200 }
     );
