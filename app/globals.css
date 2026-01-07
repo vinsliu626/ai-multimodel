@@ -82,3 +82,54 @@ body {
     rgba(167, 139, 250, 0.95)
   ) !important;
 }
+
+/* Purple / dark scrollbar */
+.purple-scrollbar {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: rgba(168, 85, 247, 0.75) rgba(255, 255, 255, 0.06);
+}
+
+.purple-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.purple-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+}
+
+.purple-scrollbar::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(168, 85, 247, 0.85),
+    rgba(99, 102, 241, 0.75)
+  );
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.6); /* 贴合暗底 */
+}
+
+.purple-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(192, 132, 252, 0.95),
+    rgba(129, 140, 248, 0.9)
+  );
+}
+
+/* Hide scrollbar (for overlay/highlight layer only) */
+.scrollbar-none {
+  scrollbar-width: none;      /* Firefox */
+  -ms-overflow-style: none;   /* IE/Edge legacy */
+}
+.scrollbar-none::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+}
+
+
+/* Keep gutter stable so overlay doesn't shift when scrollbar appears */
+.scroll-stable {
+  scrollbar-gutter: stable;
+}
+

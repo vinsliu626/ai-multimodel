@@ -10,9 +10,11 @@
     "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@prisma/client": "6.12.0",
     "next": "^16.0.7",
     "next-auth": "^4.24.13",
+    "onnxruntime-node": "^1.23.2",
     "react": "19.2.0",
     "react-dom": "19.2.0"
   },
