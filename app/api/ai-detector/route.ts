@@ -35,7 +35,6 @@ function sigmoid(x: number) {
 function pythonTimeoutMs(text: string) {
   const w = countWords(text);
 
-  // 你可以按自己机器性能调这几个档位
   if (w <= 300) return 15_000;   // 15s
   if (w <= 800) return 35_000;   // 35s
   if (w <= 1500) return 60_000;  // 60s
@@ -88,12 +87,67 @@ function tokenizeWords(text: string) {
   return m ?? [];
 }
 
-function splitSentences(text: string) {
-  return text
-    .replace(/\r/g, "")
-    .split(/(?<=[.!?])\s+|\n+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+/**
+ * ✅ 更稳的句子切分 + offsets（避免 indexOf 重复句导致 start/end 错位）
+ */
+function splitSentencesWithOffsets(text: string) {
+  const out: { text: string; start: number; end: number }[] = [];
+  const s = text.replace(/\r/g, "");
+
+  let start = 0;
+
+  const pushTrimmed = (rawStart: number, rawEnd: number) => {
+    if (rawEnd <= rawStart) return;
+    const rawSlice = s.slice(rawStart, rawEnd);
+    const slice = rawSlice.trim();
+    if (!slice) return;
+
+    const leftTrim = rawSlice.match(/^\s*/)?.[0]?.length ?? 0;
+    const rightTrim = rawSlice.match(/\s*$/)?.[0]?.length ?? 0;
+
+    const realStart = rawStart + leftTrim;
+    const realEnd = rawEnd - rightTrim;
+
+    if (realEnd > realStart) {
+      out.push({
+        text: s.slice(realStart, realEnd),
+        start: realStart,
+        end: realEnd,
+      });
+    }
+  };
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    const isEndPunc = ch === "." || ch === "!" || ch === "?";
+    const isNewline = ch === "\n";
+
+    if (isEndPunc) {
+      // 句子到标点结束（包含标点）
+      pushTrimmed(start, i + 1);
+      start = i + 1;
+      continue;
+    }
+
+    if (isNewline) {
+      // 连续换行：当作分段切句
+      // 先把 start->i 当作一个句子
+      pushTrimmed(start, i);
+      // 跳过连续换行
+      let j = i;
+      while (j < s.length && s[j] === "\n") j++;
+      start = j;
+      i = j - 1;
+      continue;
+    }
+  }
+
+  // 收尾
+  if (start < s.length) {
+    pushTrimmed(start, s.length);
+  }
+
+  return out;
 }
 
 function phraseHitRate(textLower: string) {
@@ -136,7 +190,9 @@ function scoreSentenceLite(sentence: string) {
     0.20 * clamp((rep3 - 0.015) / 0.08, 0, 1) +
     0.10 * clamp((0.62 - ttr) / 0.26, 0, 1);
 
-  const aiScore = Math.round(clamp(sigmoid(10 * (sRaw - 0.25)) + 0.10, 0, 1) * 100);
+  const aiScore = Math.round(
+    clamp(sigmoid(10 * (sRaw - 0.25)) + 0.10, 0, 1) * 100
+  );
 
   const reasons: string[] = [];
   if (phr > 0.2) reasons.push("Template phrases / transitions");
@@ -214,15 +270,18 @@ async function callPythonDetector(text: string) {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Python detector HTTP ${res.status}: ${body.slice(0, 250)}`);
+    throw new Error(
+      `Python detector HTTP ${res.status}: ${body.slice(0, 250)}`
+    );
   }
 
   const data = (await res.json()) as PyDetectResponse;
 
-  // python 可能会回 {ok:false,error:"..."}，或者结构不对，这里统一兜底
   if (!data?.ok || !data?.result?.[0]) {
     const maybeErr = (data as any)?.error;
-    throw new Error(maybeErr ? String(maybeErr) : "Python detector returned invalid response.");
+    throw new Error(
+      maybeErr ? String(maybeErr) : "Python detector returned invalid response."
+    );
   }
 
   return data;
@@ -235,34 +294,36 @@ export async function POST(req: Request) {
     const text = (body?.text ?? "").trim();
 
     if (!text) {
-      return NextResponse.json({ ok: false, error: "Missing text." }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Missing text." },
+        { status: 400 }
+      );
     }
     if (hasNonEnglish(text)) {
-      return NextResponse.json({ ok: false, error: "Only English text is supported." }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "Only English text is supported." },
+        { status: 400 }
+      );
     }
 
     const words = countWords(text);
     if (words < 40) {
-      return NextResponse.json({ ok: false, error: "To analyze text, add at least 40 words." }, { status: 400 });
+      return NextResponse.json(
+        { ok: false, error: "To analyze text, add at least 40 words." },
+        { status: 400 }
+      );
     }
 
-    // 1) sentence results with offsets (for UI)
-    const sents = splitSentences(text);
-    let cursor = 0;
-    const sentenceResults = sents.map((s) => {
-      const start = text.indexOf(s, cursor);
-      const end = start === -1 ? -1 : start + s.length;
-      if (end !== -1) cursor = end;
+    // 1) sentence results with offsets (for UI) ✅ FIXED
+    const sents = splitSentencesWithOffsets(text);
+    const sentenceResults = sents.map((seg) => ({
+      text: seg.text,
+      start: seg.start,
+      end: seg.end,
+      ...scoreSentenceLite(seg.text),
+    }));
 
-      return {
-        text: s,
-        start,
-        end,
-        ...scoreSentenceLite(s),
-      };
-    });
-
-    // 2) highlights (phrase only, like your old version)
+    // 2) highlights (phrase only)
     const highlights = findPhraseHighlights(text);
 
     // 3) call python detector for main score
@@ -270,7 +331,6 @@ export async function POST(req: Request) {
     const metrics = py.result[0];
     const aiOverallRaw = Number(metrics?.["AI overall"]);
 
-    // Must have AI overall
     if (!Number.isFinite(aiOverallRaw)) {
       return NextResponse.json(
         { ok: false, error: "Python detector did not return AI overall." },
@@ -300,7 +360,7 @@ export async function POST(req: Request) {
 
       meta: {
         words,
-        timeoutMs: pythonTimeoutMs(text), // ✅ 方便你在前端/调试看到当前给了多久超时
+        timeoutMs: pythonTimeoutMs(text),
         provider: "python-gpt2ppl-ai-overall + local-heuristic-explanations",
       },
     });
@@ -308,7 +368,7 @@ export async function POST(req: Request) {
     const msg =
       e?.name === "AbortError"
         ? "Python detector request timed out."
-        : (e?.message ?? "Unknown error.");
+        : e?.message ?? "Unknown error.";
 
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
