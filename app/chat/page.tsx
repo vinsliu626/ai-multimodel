@@ -117,42 +117,173 @@ type DetectorHighlight = {
 
 type DetectorSentence = {
   text: string;
+  start: number; // ✅ 后端返回的句子起点
+  end: number;   // ✅ 后端返回的句子终点
   aiScore: number;
   reasons: string[];
 };
 
-function buildHighlightsFromSentences(
+function buildBlockHighlightsFromSentences(
   fullText: string,
   sentences: DetectorSentence[],
-  minScore = 1 // 你想全部高亮就保持 1；只高亮更可疑可设 60/70
+  opts?: {
+    threshold?: number;      // 多少分以上算可疑
+    gapChars?: number;       // 句子间隔小于多少字符就合并
+    minBlockChars?: number;  // 太短的块不高亮（避免只黄一个词）
+    contextSentences?: number; // 每个块前后扩展几句，让它更像 GPTZero
+  }
 ): DetectorHighlight[] {
-  const text = fullText;
-  const res: DetectorHighlight[] = [];
+  const threshold = opts?.threshold ?? 55;
+  const gapChars = opts?.gapChars ?? 8;
+  const minBlockChars = opts?.minBlockChars ?? 80;
+  const contextSentences = opts?.contextSentences ?? 1;
 
-  for (const s of sentences || []) {
-    const needle = (s?.text || "").trim();
-    if (!needle) continue;
-    if ((s.aiScore ?? 0) < minScore) continue;
+  const clean = (sentences || [])
+    .filter(s => Number.isFinite(s?.start) && Number.isFinite(s?.end) && s.end > s.start)
+    .slice()
+    .sort((a, b) => a.start - b.start);
 
-    let startIndex = 0;
-    while (true) {
-      const idx = text.indexOf(needle, startIndex);
-      if (idx === -1) break;
+  if (clean.length === 0) return [];
 
-      res.push({
-        start: idx,
-        end: idx + needle.length,
-        label: `AI ${Math.round(s.aiScore ?? 0)}%`,
-        severity: s.aiScore ?? 0,
-        phrase: needle,
-      });
+  // 1) 先挑出可疑句子
+  const suspiciousIdx: number[] = [];
+  for (let i = 0; i < clean.length; i++) {
+    if ((clean[i].aiScore ?? 0) >= threshold) suspiciousIdx.push(i);
+  }
+  if (suspiciousIdx.length === 0) return [];
 
-      startIndex = idx + needle.length;
+  // 2) 连续/相近的可疑句子合并成块
+  type Block = { i0: number; i1: number; maxScore: number };
+  const blocks: Block[] = [];
+  let cur: Block | null = null;
+
+  for (const idx of suspiciousIdx) {
+    if (!cur) {
+      cur = { i0: idx, i1: idx, maxScore: clean[idx].aiScore ?? 0 };
+      continue;
+    }
+    const prevEnd = clean[cur.i1].end;
+    const nextStart = clean[idx].start;
+    const closeEnough = (nextStart - prevEnd) <= gapChars;
+
+    if (closeEnough) {
+      cur.i1 = idx;
+      cur.maxScore = Math.max(cur.maxScore, clean[idx].aiScore ?? 0);
+    } else {
+      blocks.push(cur);
+      cur = { i0: idx, i1: idx, maxScore: clean[idx].aiScore ?? 0 };
+    }
+  }
+  if (cur) blocks.push(cur);
+
+  // 3) 每个块前后扩展几句（更像 GPTZero 的“段落范围”）
+  const expanded = blocks.map(b => {
+    const i0 = Math.max(0, b.i0 - contextSentences);
+    const i1 = Math.min(clean.length - 1, b.i1 + contextSentences);
+
+    const start = clean[i0].start;
+    const end = clean[i1].end;
+
+    return { start, end, maxScore: b.maxScore };
+  });
+
+  // 4) 过滤太短的块，避免只黄一小段
+  const results: DetectorHighlight[] = [];
+  for (const b of expanded) {
+    const s = Math.max(0, Math.min(fullText.length, b.start));
+    const e = Math.max(0, Math.min(fullText.length, b.end));
+    if (e - s < minBlockChars) continue;
+
+    results.push({
+      start: s,
+      end: e,
+      type: "block",
+      label: `Suspicious block (max AI ${Math.round(b.maxScore)}%)`,
+      severity: Math.max(0.1, Math.min(1, (b.maxScore ?? 0) / 100)),
+    });
+  }
+
+  // 5) 合并重叠块
+  results.sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
+  const merged: DetectorHighlight[] = [];
+  for (const h of results) {
+    const last = merged[merged.length - 1];
+    if (last && (h.start ?? 0) <= (last.end ?? 0)) {
+      last.end = Math.max(last.end ?? 0, h.end ?? 0);
+      last.severity = Math.max(last.severity ?? 0, h.severity ?? 0);
+    } else {
+      merged.push({ ...h });
+    }
+  }
+  return merged;
+}
+
+
+
+function buildHighlightsFromSentences(
+  fullText: string,
+  sentences: (DetectorSentence & { start?: number; end?: number })[],
+  minScore = 60 // GPTZero 风格阈值
+): DetectorHighlight[] {
+  if (!fullText || !Array.isArray(sentences)) return [];
+
+  const blocks: DetectorHighlight[] = [];
+
+  let blockStart = -1;
+  let blockEnd = -1;
+  let maxSeverity = 0;
+  let gapTolerance = 1; // 允许 1 句“缓冲”
+  let gapCount = 0;
+
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i];
+    if (!Number.isFinite(s.start) || !Number.isFinite(s.end)) continue;
+
+    const score = Number(s.aiScore ?? 0);
+    const isSuspicious = score >= minScore;
+
+    if (isSuspicious) {
+      if (blockStart === -1) {
+        blockStart = s.start!;
+        blockEnd = s.end!;
+        maxSeverity = score;
+      } else {
+        blockEnd = s.end!;
+        maxSeverity = Math.max(maxSeverity, score);
+      }
+      gapCount = 0;
+    } else if (blockStart !== -1) {
+      gapCount++;
+      if (gapCount > gapTolerance) {
+        blocks.push({
+          start: blockStart,
+          end: blockEnd,
+          label: `AI-like (${Math.round(maxSeverity)}%)`,
+          severity: maxSeverity / 100,
+          type: "block",
+        });
+        blockStart = -1;
+        blockEnd = -1;
+        maxSeverity = 0;
+        gapCount = 0;
+      }
     }
   }
 
-  return res;
+  // 收尾
+  if (blockStart !== -1) {
+    blocks.push({
+      start: blockStart,
+      end: blockEnd,
+      label: `AI-like (${Math.round(maxSeverity)}%)`,
+      severity: maxSeverity / 100,
+      type: "block",
+    });
+  }
+
+  return blocks;
 }
+
 
 function countWords(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
@@ -264,8 +395,15 @@ function renderHighlightedText(text: string, highlights: DetectorHighlight[]) {
 function renderHighlightLayer(text: string, highlights: DetectorHighlight[]) {
   if (!text) return null;
 
+  // ✅ 关键：每个换行后插入一个不可见字符，保证行高/换行与 textarea 完全一致
+  const ghost = (s: string) => s.replace(/\n/g, "\n\u200b");
+
   if (!highlights || highlights.length === 0) {
-    return <span>{text}</span>;
+    return (
+      <span className="whitespace-pre-wrap break-words">
+        {ghost(text)}
+      </span>
+    );
   }
 
   const sorted = [...highlights]
@@ -292,11 +430,15 @@ function renderHighlightLayer(text: string, highlights: DetectorHighlight[]) {
   let cursor = 0;
 
   merged.forEach((h, idx) => {
-    const s = h.start;
-    const e = h.end;
+    const s = h.start!;
+    const e = h.end!;
 
     if (cursor < s) {
-      nodes.push(<span key={`t-${idx}-a`}>{text.slice(cursor, s)}</span>);
+      nodes.push(
+        <span key={`t-${idx}-a`}>
+          {ghost(text.slice(cursor, s))}
+        </span>
+      );
     }
 
     nodes.push(
@@ -305,7 +447,7 @@ function renderHighlightLayer(text: string, highlights: DetectorHighlight[]) {
         className="rounded px-0.5 py-[1px] bg-amber-300/85 text-slate-950"
         title={h.label || "AI-like"}
       >
-        {text.slice(s, e)}
+        {ghost(text.slice(s, e))}
       </mark>
     );
 
@@ -313,11 +455,12 @@ function renderHighlightLayer(text: string, highlights: DetectorHighlight[]) {
   });
 
   if (cursor < text.length) {
-    nodes.push(<span key="tail">{text.slice(cursor)}</span>);
+    nodes.push(<span key="tail">{ghost(text.slice(cursor))}</span>);
   }
 
-  return <>{nodes}</>;
+  return <span className="whitespace-pre-wrap break-words">{nodes}</span>;
 }
+
 
 /** ✅ 左侧“同一块区域输入 + 高亮”的组件（高亮层 + 透明 textarea 覆盖） */
 function HighlightEditor({
@@ -452,11 +595,13 @@ function DetectorUI({
 
     setLoading(true);
     try {
+      const API_BASE = process.env.NEXT_PUBLIC_DETECTOR_URL ?? "http://127.0.0.1:8000";
       const res = await fetch("/api/ai-detector", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: t, lang: "en" }),
-      });
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: t, lang: "en" }),
+    });
+
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.ok === false) {
@@ -481,18 +626,54 @@ function DetectorUI({
       }
 
       // ✅ 句子 & 高亮
-      const rawSentences: DetectorSentence[] = Array.isArray(data?.sentences) ? data.sentences : [];
-      const rawHighlights: DetectorHighlight[] = Array.isArray(data?.highlights) ? data.highlights : [];
+     const rawSentences: DetectorSentence[] = Array.isArray(data?.sentences) ? data.sentences : [];
+setSentences(rawSentences);
 
-      setSentences(rawSentences);
+// ✅ GPTZero 风格：把连续高分句子合成“段落块”高亮（更准、更大段）
+// ✅ 先看句子分数分布：用“分位数阈值”模拟 GPTZero 的敏感度
+const scores = rawSentences
+  .map(s => Number(s.aiScore ?? 0))
+  .filter(n => Number.isFinite(n));
 
-      // ✅ 关键：如果后端 highlights 不全，就用 sentences 自动补全成全句高亮
-      let finalHighlights = rawHighlights;
-      if (!finalHighlights || finalHighlights.length < Math.min(3, rawSentences.length)) {
-        finalHighlights = buildHighlightsFromSentences(t, rawSentences, 1);
-      }
+scores.sort((a, b) => a - b);
 
-      setHighlights(finalHighlights);
+// 取 70 分位作为阈值（更像 GPTZero：高于一部分句子就高亮）
+// 同时给一个保底下限 35（否则很多文章永远高亮=0）
+const p70 = scores.length ? scores[Math.floor(scores.length * 0.7)] : 55;
+const dynamicThreshold = Math.max(35, Math.min(70, p70)); // clamp 到 35~70
+
+const finalHighlights = buildBlockHighlightsFromSentences(t, rawSentences, {
+  threshold: dynamicThreshold,
+  gapChars: 40,        // 放大合并范围，更像“段落块”
+  minBlockChars: 20,   // ✅ 原来 80 太苛刻，改小
+  contextSentences: 1,
+});
+
+
+// ✅ 可选：控制台看一下阈值和结果（调参用）
+console.log("[detector] scores", {
+  min: scores[0],
+  max: scores[scores.length - 1],
+  p70,
+  dynamicThreshold,
+  highlights: finalHighlights.length,
+});
+
+
+const fallbackHighlights =
+  finalHighlights.length > 0
+    ? finalHighlights
+    : (Array.isArray(data?.highlights) ? data.highlights : []);
+
+setHighlights(fallbackHighlights);
+
+
+// ✅ 如果你仍想“全句都高亮”，可以把阈值调低；如果只想可疑句子才高亮，用 >= 60/70
+// 例如只高亮 aiScore >= 60：
+// finalHighlights = finalHighlights.filter(h => h.severity >= 0.6);
+
+setHighlights(finalHighlights);
+
     } catch (e: any) {
       setError(e?.message || (isZh ? "分析失败。" : "Failed to analyze."));
     } finally {

@@ -1,78 +1,66 @@
 // app/api/ai-detector/route.ts
 import { NextResponse } from "next/server";
 
-// ====== ✅ 可选：Transformers 模型（失败自动回退 heuristic）======
-let _pipelinePromise: Promise<any> | null = null;
-
-// ✅ 不要写成 null/undefined，写死一个已知可用的 ONNX 模型
-const MODEL_ID = "onnx-community/roberta-base-openai-detector-ONNX";
-
-// 懒加载，避免每次请求都加载
-async function getTextClassifier() {
-  if (_pipelinePromise) return _pipelinePromise;
-
-  _pipelinePromise = (async () => {
-    const t = await import("@huggingface/transformers");
-    if (t.env) {
-      t.env.allowRemoteModels = true;
-      t.env.allowLocalModels = false;
-    }
-    return t.pipeline("text-classification", MODEL_ID);
-  })();
-
-  return _pipelinePromise;
-}
-
-// roberta-openai-detector 常见输出 label: "FAKE"/"REAL"
-function toAiProbFromClassifier(out: any): { ai01: number; label: string; conf: number } {
-  const arr = Array.isArray(out) ? out : [];
-  const best = arr.sort((a, b) => (b?.score ?? 0) - (a?.score ?? 0))[0];
-  if (!best) return { ai01: 0.5, label: "UNKNOWN", conf: 0.5 };
-
-  const label = String(best.label ?? "").toLowerCase();
-  const score = clamp(Number(best.score ?? 0.5), 0, 1);
-
-  let ai01 = 0.5;
-  if (label.includes("fake") || label.includes("ai") || label.includes("generated")) ai01 = score;
-  else if (label.includes("real") || label.includes("human")) ai01 = 1 - score;
-  else ai01 = score;
-
-  const conf = Math.max(score, 1 - score);
-  return { ai01: clamp(ai01, 0, 1), label: String(best.label ?? "UNKNOWN"), conf };
-}
-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+
+/**
+ * Python detector endpoint
+ * - local dev: http://127.0.0.1:8000/detect
+ * - production: set env PY_DETECTOR_URL=https://your-domain/detect
+ */
+const PY_DETECTOR_URL =
+  process.env.PY_DETECTOR_URL?.trim() || "http://127.0.0.1:8000/detect";
+
+// ---------- utils ----------
+function clamp(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n));
+}
 
 function countWords(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+// 只要出现中日韩等字符就判定非英文
 function hasNonEnglish(text: string) {
   return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/.test(text);
-}
-
-function clamp(n: number, a: number, b: number) {
-  return Math.max(a, Math.min(b, n));
 }
 
 function sigmoid(x: number) {
   return 1 / (1 + Math.exp(-x));
 }
 
-function mean(arr: number[]) {
-  if (arr.length === 0) return 0;
-  return arr.reduce((s, v) => s + v, 0) / arr.length;
+// ✅ 动态超时：文本越长，给 python 越久
+function pythonTimeoutMs(text: string) {
+  const w = countWords(text);
+
+  // 你可以按自己机器性能调这几个档位
+  if (w <= 300) return 15_000;   // 15s
+  if (w <= 800) return 35_000;   // 35s
+  if (w <= 1500) return 60_000;  // 60s
+  if (w <= 3000) return 90_000;  // 90s
+  return 120_000;               // 120s
 }
 
-function std(arr: number[]) {
-  if (arr.length <= 1) return 0;
-  const m = mean(arr);
-  const v = mean(arr.map((x) => (x - m) ** 2));
-  return Math.sqrt(v);
+// ✅ fetch + timeout（AbortController）
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
+// ---------- heuristic pieces for UI explanations (kept lightweight) ----------
 const STOPWORDS = new Set([
   "the","a","an","and","or","but","if","then","else","when","while","of","to","in","on","for","with","as","by","from","at",
   "is","are","was","were","be","been","being","it","this","that","these","those","i","you","he","she","they","we",
@@ -108,20 +96,10 @@ function splitSentences(text: string) {
     .filter(Boolean);
 }
 
-function splitParagraphs(text: string) {
-  return text
-    .replace(/\r/g, "")
-    .split(/\n{2,}/)
-    .map((p) => p.trim())
-    .filter(Boolean);
-}
-
-function distinctN(words: string[], n: number) {
-  if (words.length < n) return 0;
-  const total = words.length - n + 1;
-  const set = new Set<string>();
-  for (let i = 0; i < total; i++) set.add(words.slice(i, i + n).join(" "));
-  return set.size / total;
+function phraseHitRate(textLower: string) {
+  let hits = 0;
+  for (const p of AI_PHRASES) if (textLower.includes(p)) hits++;
+  return clamp(hits / 3, 0, 1);
 }
 
 function ngramRepeatRate(words: string[], n: number) {
@@ -142,57 +120,7 @@ function typeTokenRatio(words: string[]) {
   return new Set(words).size / words.length;
 }
 
-function stopwordRatio(words: string[]) {
-  if (words.length === 0) return 0;
-  let sw = 0;
-  for (const w of words) if (STOPWORDS.has(w)) sw++;
-  return sw / words.length;
-}
-
-function punctuationDensity(text: string) {
-  const punct = (text.match(/[,:;()\-—]/g) ?? []).length;
-  return punct / Math.max(1, text.length);
-}
-
-function phraseHitRate(textLower: string) {
-  let hits = 0;
-  for (const p of AI_PHRASES) if (textLower.includes(p)) hits++;
-  return clamp(hits / 3, 0, 1);
-}
-
-function sentenceStartDiversity(sentences: string[]) {
-  const starts: string[] = [];
-  for (const s of sentences) {
-    const w = tokenizeWords(s);
-    if (w.length >= 2) starts.push(w[0] + " " + w[1]);
-    else if (w.length === 1) starts.push(w[0]);
-  }
-  if (starts.length === 0) return 0;
-  return new Set(starts).size / starts.length;
-}
-
-function sentenceLengthUniformity(sentLens: number[]) {
-  if (sentLens.length < 6) return 0;
-  const m = mean(sentLens);
-  const sd = std(sentLens);
-  if (m <= 0) return 0;
-  const cv = sd / m;
-  return clamp((0.35 - cv) / 0.25, 0, 1);
-}
-
-function paragraphUniformity(text: string) {
-  const ps = splitParagraphs(text);
-  if (ps.length < 3) return 0;
-  const lens = ps.map((p) => tokenizeWords(p).length).filter((n) => n > 0);
-  if (lens.length < 3) return 0;
-  const m = mean(lens);
-  const sd = std(lens);
-  if (m <= 0) return 0;
-  const cv = sd / m;
-  return clamp((0.45 - cv) / 0.30, 0, 1);
-}
-
-/** 句子级解释 */
+/** sentence-level lite score (for UI) */
 function scoreSentenceLite(sentence: string) {
   const lower = sentence.toLowerCase();
   const w = tokenizeWords(sentence);
@@ -247,290 +175,141 @@ function findPhraseHighlights(text: string): Highlight[] {
       idx = hit + p.length;
     }
   }
-
   out.sort((a, b) => a.start - b.start);
-  const merged: Highlight[] = [];
-  for (const h of out) {
-    const last = merged[merged.length - 1];
-    if (last && h.start <= last.end) {
-      last.end = Math.max(last.end, h.end);
-      last.severity = Math.max(last.severity, h.severity);
-    } else merged.push({ ...h });
-  }
-  return merged;
+  return out;
 }
 
-/** ✅ 总分（从 aggressive 调整为 “不误伤学术”） */
-function scoreAiLikelihoodTamed(text: string, detectorAi01: number | null) {
-  const textLower = text.toLowerCase();
-  const words = tokenizeWords(text);
-  const sents = splitSentences(text);
-
-  const sentLens = sents.map((s) => tokenizeWords(s).length).filter((n) => n > 0);
-  const mLen = mean(sentLens);
-  const sdLen = std(sentLens);
-  const burstiness = mLen > 0 ? sdLen / mLen : 0;
-
-  const ttr = typeTokenRatio(words);
-  const swr = stopwordRatio(words);
-  const pden = punctuationDensity(text);
-
-  const rep2 = ngramRepeatRate(words, 2);
-  const rep3 = ngramRepeatRate(words, 3);
-  const rep4 = ngramRepeatRate(words, 4);
-  const d4 = distinctN(words, 4);
-
-  const startDiv = sentenceStartDiversity(sents);
-  const phr = phraseHitRate(textLower);
-
-  const uniSent = sentenceLengthUniformity(sentLens);
-  const uniPara = paragraphUniformity(text);
-
-  const nBurst = clamp(1 - burstiness / 0.90, 0, 1);
-  const nTtr   = clamp((0.62 - ttr) / 0.26, 0, 1);
-  const nSwr   = clamp((swr - 0.34) / 0.26, 0, 1);
-  const nPden  = clamp((pden - 0.010) / 0.020, 0, 1);
-
-  const nRep2  = clamp((rep2 - 0.03) / 0.12, 0, 1);
-  const nRep3  = clamp((rep3 - 0.015) / 0.08, 0, 1);
-  const nRep4  = clamp((rep4 - 0.008) / 0.05, 0, 1);
-  const nD4    = clamp((0.78 - d4) / 0.30, 0, 1);
-
-  const nStart = clamp((0.78 - startDiv) / 0.40, 0, 1);
-
-  // ✅ 关键：把 “短语命中”权重降下来（学术写作太容易误伤）
-  const raw =
-    0.14 * nBurst +
-    0.08 * nTtr +
-    0.08 * nSwr +
-    0.03 * nPden +
-    0.14 * nRep2 +
-    0.12 * nRep3 +
-    0.07 * nRep4 +
-    0.06 * nD4 +
-    0.08 * nStart +
-    0.08 * phr +        // ← 原来 0.18，现在 0.08
-    0.06 * uniSent +
-    0.04 * uniPara;
-
-  let ai01 = sigmoid(12 * (raw - 0.30)); // 稍微更保守一点
-  ai01 = clamp(ai01 + 0.10, 0, 1);       // 原来 +0.18 太猛
-
-  // ✅ 原来强制拉满（0.90/0.97）会把人写学术顶到 100 ——删掉，改成温和加分
-  const strongSignals = [
-    phr > 0.34,
-    nStart > 0.55,
-    uniSent > 0.60,
-    (nRep3 > 0.45 && nRep2 > 0.40),
-    (nD4 > 0.55 && nRep2 > 0.35),
-  ].filter(Boolean).length;
-
-  ai01 = clamp(ai01 + 0.05 * strongSignals, 0, 1);
-
-  // ✅ “人写学术保护阈”：如果 detector 明显偏 human，则 heuristic 不允许冲太高
-  if (typeof detectorAi01 === "number" && detectorAi01 < 0.35) {
-    ai01 = Math.min(ai01, 0.78);
-  }
-
-  // 长度置信度（短文更保守）
-  const wCount = words.length;
-  const conf = clamp((wCount - 80) / 420, 0, 1);
-  ai01 = clamp(ai01 * (0.88 + 0.12 * conf), 0, 1);
-
-  const ai = Math.round(ai01 * 100);
-
-  const mixed01 = clamp(0.25 * (1 - Math.abs(ai01 - 0.62) / 0.62), 0, 0.30);
-  let mixed = Math.round(mixed01 * 100);
-  let human = 100 - ai - mixed;
-
-  if (human < 0) {
-    const need = -human;
-    mixed = clamp(mixed - need, 0, 100);
-    human = 100 - ai - mixed;
-  }
-
-  return {
-    ai,
-    mixed,
-    human,
-    debug: {
-      raw,
-      burstiness,
-      ttr,
-      swr,
-      rep2,
-      rep3,
-      rep4,
-      d4,
-      startDiv,
-      phraseHitsApprox: Math.round(phr * 3),
-      uniSent,
-      uniPara,
-      strongSignals,
-      detectorAi01,
+// ---------- Python client ----------
+type PyDetectResponse = {
+  ok: boolean;
+  result: [
+    {
+      "AI overall"?: number;
+      "Perplexity"?: number;
+      "Perplexity per line"?: number;
+      "Burstiness"?: number;
+      "AI Generated percentage"?: number;
+      "Most probably AI Generated percentage"?: number;
+      "Human percentage"?: number;
+      "valid_sentences"?: number;
+      [k: string]: any;
     },
-  };
-}
+    string
+  ];
+};
 
-// ====== ✅ 轻量 burstiness（逐句 detector 概率波动，不做 perplexity）======
-const MAX_BURST_SENTENCES = 12;
-const BURST_BUDGET_MS = 1200;
+async function callPythonDetector(text: string) {
+  const timeoutMs = pythonTimeoutMs(text);
 
-async function computeDetectorBurstiness(text: string) {
-  const sents = splitSentences(text);
-  const usable = sents.filter((s) => tokenizeWords(s).length >= 6).slice(0, MAX_BURST_SENTENCES);
-  if (usable.length < 4) return { sentAi01: [] as number[], burstiness: 0, sentCount: usable.length };
+  const res = await fetchWithTimeout(
+    PY_DETECTOR_URL,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+      cache: "no-store",
+    },
+    timeoutMs
+  );
 
-  const classifier = await getTextClassifier();
-
-  const t0 = Date.now();
-  const sentAi01: number[] = [];
-  for (const s of usable) {
-    if (Date.now() - t0 > BURST_BUDGET_MS) break;
-    try {
-      const out = await classifier(s);
-      const r = toAiProbFromClassifier(out);
-      sentAi01.push(r.ai01);
-    } catch {
-      // skip
-    }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Python detector HTTP ${res.status}: ${body.slice(0, 250)}`);
   }
 
-  const m = mean(sentAi01);
-  const sd = std(sentAi01);
-  const burstiness = m > 0 ? sd / m : 0;
+  const data = (await res.json()) as PyDetectResponse;
 
-  return { sentAi01, burstiness, sentCount: sentAi01.length };
+  // python 可能会回 {ok:false,error:"..."}，或者结构不对，这里统一兜底
+  if (!data?.ok || !data?.result?.[0]) {
+    const maybeErr = (data as any)?.error;
+    throw new Error(maybeErr ? String(maybeErr) : "Python detector returned invalid response.");
+  }
+
+  return data;
 }
 
-// 越平滑（burstiness 越低）越像 AI
-function burstinessToAi01(burstiness: number) {
-  const smooth01 = clamp((0.18 - burstiness) / 0.18, 0, 1);
-  return clamp(sigmoid(7 * (smooth01 - 0.45)), 0, 1);
-}
-
-function toThreeWay(ai01: number) {
-  const gen = clamp(sigmoid(10 * (ai01 - 0.72)), 0, 1);
-  const human = clamp(sigmoid(10 * (0.38 - ai01)), 0, 1);
-  const refined = clamp(1 - gen - human, 0, 1);
-  const s = gen + refined + human || 1;
-  return { gen: gen / s, refined: refined / s, human: human / s };
-}
-
+// ---------- route ----------
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as { text?: string; lang?: string };
     const text = (body?.text ?? "").trim();
 
-    if (!text) return NextResponse.json({ ok: false, error: "Missing text." }, { status: 400 });
-    if (hasNonEnglish(text)) return NextResponse.json({ ok: false, error: "Only English text is supported." }, { status: 400 });
+    if (!text) {
+      return NextResponse.json({ ok: false, error: "Missing text." }, { status: 400 });
+    }
+    if (hasNonEnglish(text)) {
+      return NextResponse.json({ ok: false, error: "Only English text is supported." }, { status: 400 });
+    }
 
     const words = countWords(text);
-    if (words < 40) return NextResponse.json({ ok: false, error: "To analyze text, add at least 40 words." }, { status: 400 });
+    if (words < 40) {
+      return NextResponse.json({ ok: false, error: "To analyze text, add at least 40 words." }, { status: 400 });
+    }
 
-    // 句子级解释 + 短语高亮（保持）
+    // 1) sentence results with offsets (for UI)
     const sents = splitSentences(text);
     let cursor = 0;
     const sentenceResults = sents.map((s) => {
       const start = text.indexOf(s, cursor);
       const end = start === -1 ? -1 : start + s.length;
       if (end !== -1) cursor = end;
-      return { text: s, start, end, ...scoreSentenceLite(s) };
+
+      return {
+        text: s,
+        start,
+        end,
+        ...scoreSentenceLite(s),
+      };
     });
 
+    // 2) highlights (phrase only, like your old version)
     const highlights = findPhraseHighlights(text);
 
-    // roberta detector（全文）
-    let detectorAi01: number | null = null;
-    let modelAiGenerated: number | null = null;
-    let modelMeta: any = null;
+    // 3) call python detector for main score
+    const py = await callPythonDetector(text);
+    const metrics = py.result[0];
+    const aiOverallRaw = Number(metrics?.["AI overall"]);
 
-    try {
-      const classifier = await getTextClassifier();
-      const out = await classifier(text);
-      const r = toAiProbFromClassifier(out);
-      detectorAi01 = r.ai01;
-      modelAiGenerated = Math.round(r.ai01 * 100);
-      modelMeta = { model: MODEL_ID, label: r.label, confidence: r.conf };
-    } catch (err: any) {
-      detectorAi01 = null;
-      modelAiGenerated = null;
-      modelMeta = { model: MODEL_ID, error: err?.message ?? String(err) };
+    // Must have AI overall
+    if (!Number.isFinite(aiOverallRaw)) {
+      return NextResponse.json(
+        { ok: false, error: "Python detector did not return AI overall." },
+        { status: 502 }
+      );
     }
 
-    // ✅ 新 heuristic（不误伤学术）
-    const { ai, mixed, human, debug } = scoreAiLikelihoodTamed(text, detectorAi01);
-
-    // ✅ burstiness + ensemble（推荐 UI 用这个）
-    let burstMeta: any = null;
-    let ensembleAiGenerated: number | null = null;
-    let ensembleThreeWay: any = null;
-
-    try {
-      const b = await computeDetectorBurstiness(text);
-      const burstAi01 = burstinessToAi01(b.burstiness);
-
-      const heuristicAi01 = clamp(ai / 100, 0, 1);
-      const docAi01 = typeof detectorAi01 === "number" ? detectorAi01 : 0.55;
-
-      // ensemble：doc detector 主导 + heuristic 辅助 + burstiness（更像 GPTZero 的“波动”概念）
-      let ensembleAi01 = 0.62 * docAi01 + 0.28 * heuristicAi01 + 0.10 * burstAi01;
-
-      // 短文更保守
-      const lenConf = clamp((words - 80) / 420, 0, 1);
-      ensembleAi01 = clamp(ensembleAi01 * (0.88 + 0.12 * lenConf), 0, 1);
-
-      const three = toThreeWay(ensembleAi01);
-
-      const gen = Math.round(three.gen * 100);
-      const ref = Math.round(three.refined * 100);
-      const hum = clamp(100 - gen - ref, 0, 100);
-
-      ensembleAiGenerated = gen;
-      ensembleThreeWay = { aiGenerated: gen, humanAiRefined: ref, humanWritten: hum };
-
-      burstMeta = {
-        maxSentences: MAX_BURST_SENTENCES,
-        budgetMs: BURST_BUDGET_MS,
-        sentCount: b.sentCount,
-        sentAiGenerated: b.sentAi01.map((x) => Math.round(x * 100)),
-        burstiness: b.burstiness,
-        burstAiGenerated: Math.round(burstAi01 * 100),
-      };
-    } catch (err: any) {
-      burstMeta = { error: err?.message ?? String(err) };
-      ensembleAiGenerated = null;
-      ensembleThreeWay = null;
-    }
+    const aiGenerated = clamp(Math.round(aiOverallRaw), 0, 100);
+    const humanAiRefined = 0;
+    const humanWritten = clamp(100 - aiGenerated, 0, 100);
 
     return NextResponse.json({
       ok: true,
 
-      // ✅ 你的主分（tamed heuristic）
-      aiGenerated: ai,
-      humanAiRefined: mixed,
-      humanWritten: human,
+      aiGenerated,
+      humanAiRefined,
+      humanWritten,
 
-      // ✅ 解释输出
       sentences: sentenceResults,
       highlights,
 
-      // ✅ detector
-      modelAiGenerated,
-      modelMeta,
-
-      // ✅ 推荐：更贴“商用”的最终分
-      ensembleAiGenerated,
-      ensembleThreeWay,
-      burstMeta,
+      python: {
+        url: PY_DETECTOR_URL,
+        message: py.result[1],
+        metrics,
+      },
 
       meta: {
         words,
-        provider: "heuristic-tamed + detector + burstiness",
-        debug, // 线上不想暴露就删掉
+        timeoutMs: pythonTimeoutMs(text), // ✅ 方便你在前端/调试看到当前给了多久超时
+        provider: "python-gpt2ppl-ai-overall + local-heuristic-explanations",
       },
     });
   } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message ?? "Unknown error." }, { status: 500 });
+    const msg =
+      e?.name === "AbortError"
+        ? "Python detector request timed out."
+        : (e?.message ?? "Unknown error.");
+
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }
