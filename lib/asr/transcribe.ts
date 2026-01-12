@@ -1,35 +1,44 @@
-function env(name: string) {
-  return (process.env[name] || "").trim();
-}
-
-/**
- * 完全免费（本地）路线：
- * - 你已经在本地跑了 faster-whisper FastAPI 服务
- * - 默认 endpoint: http://127.0.0.1:9000/transcribe
- *
- * 如需自定义，再在 .env.local 设置：
- *   ASR_ENDPOINT=http://127.0.0.1:9000/transcribe
- *   ASR_API_KEY=xxx   (可选)
- */
+// lib/asr/transcribe.ts
 export async function transcribeAudioToText(file: File): Promise<string> {
-  const endpoint = env("ASR_ENDPOINT") || "http://127.0.0.1:9000/transcribe";
-  const apiKey = env("ASR_API_KEY");
+  const base = process.env.ASR_URL;
+  if (!base) {
+    throw new Error("Missing ASR_URL env. Set ASR_URL in Vercel env vars.");
+  }
+
+  // 统一拼出 endpoint
+  const endpoint = `${base.replace(/\/$/, "")}/transcribe`;
 
   const fd = new FormData();
-  fd.append("file", file, file.name);
+  fd.append("file", file, file.name || "audio");
+
+  const headers: Record<string, string> = {};
+  // 如果 Space 私有：在 Vercel 设置 HF_TOKEN
+  if (process.env.HF_TOKEN) {
+    headers["Authorization"] = `Bearer ${process.env.HF_TOKEN}`;
+  }
 
   const res = await fetch(endpoint, {
     method: "POST",
-    headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+    headers,
     body: fd,
+    cache: "no-store",
   });
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || data?.ok === false) {
-    throw new Error(data?.error || `ASR error (${res.status})`);
+  const data: any = await res.json().catch(() => ({}));
+
+  // 先看 HTTP，再看 ok 字段
+  if (!res.ok) {
+    const msg =
+      data?.error ||
+      data?.detail ||
+      `ASR HTTP error: ${res.status} ${res.statusText}`;
+    throw new Error(msg);
+  }
+  if (data?.ok === false) {
+    throw new Error(data?.error || "ASR returned ok=false");
   }
 
-  const text = String(data?.text || data?.transcript || "").trim();
+  const text = String(data?.text ?? data?.transcript ?? data?.result ?? "").trim();
   if (!text) throw new Error("ASR returned empty transcript.");
   return text;
 }

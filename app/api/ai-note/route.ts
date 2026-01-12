@@ -2,82 +2,73 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { runAiNotePipeline } from "@/lib/aiNote/pipeline";
-import { getYoutubeTranscriptText } from "@/lib/youtube/transcript";
 import { transcribeAudioToText } from "@/lib/asr/transcribe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const JsonBodySchema = z.object({
-  inputType: z.enum(["text", "youtube"]),
+  inputType: z.literal("text"),
   text: z.string().optional(),
-  youtubeUrl: z.string().optional(),
 });
 
 function ok(data: any) {
   return NextResponse.json({ ok: true, ...data });
 }
+
 function bad(message: string, status = 400) {
   return NextResponse.json({ ok: false, error: message }, { status });
 }
 
 function getStringFormValue(fd: FormData, key: string) {
   const v = fd.get(key);
-  return typeof v === "string" ? v : "";
+  return typeof v === "string" ? v.trim() : "";
 }
 
 export async function POST(req: Request) {
   try {
     const contentType = req.headers.get("content-type") || "";
 
-    // ---------- JSON: text / youtube ----------
+    // ---------- JSON: text ----------
     if (contentType.includes("application/json")) {
       const body = await req.json().catch(() => null);
       const parsed = JsonBodySchema.safeParse(body);
       if (!parsed.success) return bad("Invalid JSON payload");
 
-      if (parsed.data.inputType === "text") {
-        const text = (parsed.data.text || "").trim();
-        if (!text) return bad("Missing text");
-        const note = await runAiNotePipeline(text);
-        return ok({ note });
-      }
+      const text = (parsed.data.text || "").trim();
+      if (!text) return bad("Missing text");
 
-      // youtube
-      const url = (parsed.data.youtubeUrl || "").trim();
-      if (!url) return bad("Missing youtubeUrl");
-
-      const transcript = await getYoutubeTranscriptText(url);
-      if (!transcript.trim()) {
-        // 这里先不自动转 ASR（因为需要下载 YouTube 音频，涉及额外实现与合规/部署问题）
-        return bad("No transcript found for this YouTube video.");
-      }
-
-      const note = await runAiNotePipeline(transcript);
-      return ok({ note, transcriptChars: transcript.length });
+      const note = await runAiNotePipeline(text);
+      return ok({ note });
     }
 
     // ---------- multipart: upload / record ----------
-    // NoteUI 会用 FormData 发：inputType=upload/record + model=... + file=...
     if (contentType.includes("multipart/form-data")) {
       const fd = await req.formData();
 
-      const inputType = getStringFormValue(fd, "inputType"); // "upload" | "record"
+      const inputType = getStringFormValue(fd, "inputType"); // upload | record
       const file = fd.get("file");
 
       if (!inputType) return bad("Missing inputType in form-data");
       if (!(file instanceof File)) return bad("Missing file in form-data");
 
-      // ✅ 统一：所有音频都先走 ASR，再走笔记流水线
+      // ✅ 防炸：限制 25MB（你可以调大/调小）
+      const MAX_BYTES = 25 * 1024 * 1024;
+      if (file.size > MAX_BYTES) {
+        return bad("Audio file too large. Please keep it under 25MB.", 413);
+      }
+
       const transcript = await transcribeAudioToText(file);
-      if (!transcript.trim()) return bad("ASR returned empty transcript.");
+      if (!transcript.trim()) return bad("ASR returned empty transcript.", 500);
 
       const note = await runAiNotePipeline(transcript);
+
       return ok({
         note,
         transcriptChars: transcript.length,
         fileName: file.name,
         fileType: file.type || "",
+        inputType,
       });
     }
 

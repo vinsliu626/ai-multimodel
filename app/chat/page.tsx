@@ -733,7 +733,6 @@ function DetectorUI({
 
 /** ===================== AI Note UI ===================== */
 type NoteTab = "upload" | "record" | "text";
-type NoteModel = "groq" | "deepseek" | "kimi" | "team";
 
 function NoteUI({
   isLoadingGlobal,
@@ -743,7 +742,6 @@ function NoteUI({
   isZh: boolean;
 }) {
   const [tab, setTab] = useState<NoteTab>("upload");
-  const [noteModel, setNoteModel] = useState<NoteModel>("team");
 
   const [file, setFile] = useState<File | null>(null);
   const [text, setText] = useState("");
@@ -758,13 +756,6 @@ function NoteUI({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-
-  const modelOptions: PillOption[] = [
-    { value: "team", label: isZh ? "三模型协作（推荐）" : "Team (3 models)" },
-    { value: "groq", label: "Groq" },
-    { value: "deepseek", label: "DeepSeek" },
-    { value: "kimi", label: "Kimi" },
-  ];
 
   const canGenerate = useMemo(() => {
     if (loading || isLoadingGlobal) return false;
@@ -793,12 +784,12 @@ function NoteUI({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      // 尽量用支持的 mimeType
       const preferredTypes = [
         "audio/webm;codecs=opus",
         "audio/webm",
         "audio/ogg;codecs=opus",
         "audio/ogg",
+        // 某些 Safari/iOS 可能不支持 MediaRecorder；那会直接 throw
       ];
       const mimeType = preferredTypes.find((t) => MediaRecorder.isTypeSupported(t));
 
@@ -824,7 +815,7 @@ function NoteUI({
         setRecordSecs((s) => s + 1);
       }, 1000);
     } catch (e: any) {
-      setError(e?.message || (isZh ? "无法打开麦克风权限。" : "Cannot access microphone."));
+      setError(e?.message || (isZh ? "无法打开麦克风权限（或浏览器不支持录音）。" : "Cannot access microphone (or browser unsupported)."));
     }
   }
 
@@ -843,13 +834,32 @@ function NoteUI({
       setFile(null);
       return;
     }
-    // 只允许 mp3
-    const ok = f.type === "audio/mpeg" || f.name.toLowerCase().endsWith(".mp3");
-    if (!ok) {
-      setError(isZh ? "仅支持 MP3 文件上传。" : "Only MP3 files are supported.");
+
+    // ✅ 支持多种音频：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac
+    const name = f.name.toLowerCase();
+    const okExt =
+      name.endsWith(".mp3") ||
+      name.endsWith(".wav") ||
+      name.endsWith(".m4a") ||
+      name.endsWith(".mp4") ||
+      name.endsWith(".webm") ||
+      name.endsWith(".ogg") ||
+      name.endsWith(".aac") ||
+      name.endsWith(".flac");
+
+    // 有些浏览器给的 type 可能为空，所以 ext 是主判定
+    const okMime = !f.type || f.type.startsWith("audio/") || f.type === "video/mp4";
+
+    if (!okExt || !okMime) {
+      setError(
+        isZh
+          ? "仅支持常见音频格式：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"
+          : "Supported: mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"
+      );
       setFile(null);
       return;
     }
+
     setFile(f);
   }
 
@@ -867,8 +877,8 @@ function NoteUI({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             inputType: "text",
-            model: noteModel,
             text: text.trim(),
+            // ✅ 不再传 model：只保留 team
           }),
         });
 
@@ -880,7 +890,6 @@ function NoteUI({
       } else {
         const fd = new FormData();
         fd.append("inputType", tab);
-        fd.append("model", noteModel);
 
         if (tab === "upload") {
           if (!file) throw new Error("Missing file");
@@ -933,230 +942,172 @@ function NoteUI({
   return (
     <div className="flex-1 overflow-hidden px-4 py-4">
       <div className="relative h-full w-full rounded-3xl border border-white/10 bg-gradient-to-b from-slate-950/40 via-slate-900/30 to-slate-950/40 shadow-[0_20px_70px_rgba(0,0,0,0.35)] backdrop-blur-xl overflow-hidden flex flex-col">
-        {/* 顶部标题 */}
         <div className="px-6 py-5 border-b border-white/10">
           <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-50">
-            {isZh ? "AI 笔记助手" : "AI Note Assistant"}
+            {isZh ? "AI 笔记助手（团队协作）" : "AI Note Assistant (Team)"}
           </h2>
           <p className="mt-2 text-sm text-slate-300">
             {isZh
-              ? "提交音频或文本，生成清晰、可用的结构化笔记。"
-              : "Submit audio or text and get structured notes."}
+              ? "固定三模型协作：音频/录音转文字后，再生成结构化笔记。"
+              : "Always uses team mode: ASR → structured notes."}
           </p>
         </div>
 
-        <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
-          {/* 左侧：模型 */}
-          <div className="w-full lg:w-[360px] p-4 overflow-hidden">
-            <div className="h-full rounded-3xl p-[1px] bg-gradient-to-b from-white/10 via-blue-500/20 to-purple-500/20">
-              <div className="h-full rounded-3xl border border-white/10 bg-slate-950/60 backdrop-blur-xl shadow-xl overflow-hidden flex flex-col">
-                <div className="px-4 py-3 border-b border-white/10">
-                  <p className="text-sm font-semibold text-slate-50">
-                    {isZh ? "模型选择" : "Model selection"}
-                  </p>
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    {isZh ? "选择单模型或三模型协作生成笔记" : "Choose a single model or team mode"}
-                  </p>
+        {error && (
+          <div className="px-6 pt-4">
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-200">
+              {error}
+            </div>
+          </div>
+        )}
+
+        <div className="flex-1 overflow-hidden p-4">
+          <div className="h-full rounded-3xl p-[1px] bg-gradient-to-r from-blue-500/50 via-purple-500/40 to-cyan-400/40">
+            <div className="h-full rounded-3xl border border-white/10 bg-slate-950/60 backdrop-blur-xl shadow-xl overflow-hidden flex flex-col">
+              <div className="px-4 py-4 border-b border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  {tabBtn("upload", isZh ? "上传" : "Upload")}
+                  {tabBtn("record", isZh ? "录音" : "Record")}
+                  {tabBtn("text", isZh ? "文本" : "Text")}
                 </div>
 
-                <div className="px-4 py-4 space-y-3">
-                  <div>
-                    <p className="text-[11px] text-slate-400 mb-1">{isZh ? "模式" : "Mode"}</p>
-                    <PillSelect
-                      value={noteModel}
-                      options={modelOptions}
-                      onChange={(v) => setNoteModel(v as NoteModel)}
-                      disabled={loading || isLoadingGlobal}
-                    />
+                <button
+                  onClick={generateNotes}
+                  disabled={!canGenerate}
+                  className="h-10 px-5 rounded-full bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-400 text-white text-sm font-semibold shadow-md shadow-blue-500/30 disabled:from-slate-700 disabled:via-slate-700 disabled:to-slate-700 disabled:text-slate-300 disabled:shadow-none disabled:cursor-not-allowed hover:brightness-110 transition"
+                >
+                  {loading ? (isZh ? "生成中…" : "Generating…") : isZh ? "生成笔记" : "Generate notes"}
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-6">
+                <div className="mx-auto max-w-3xl">
+                  <div className="text-center">
+                    <div className="mx-auto h-14 w-14 rounded-3xl bg-gradient-to-br from-blue-500 via-cyan-400 to-emerald-400 opacity-90 shadow-lg shadow-blue-500/30 flex items-center justify-center">
+                      <span className="text-white text-2xl">📝</span>
+                    </div>
+                    <p className="mt-4 text-lg font-semibold text-slate-50">
+                      {tab === "upload"
+                        ? (isZh ? "上传音频（多格式），生成学习笔记" : "Upload audio (multi-format) to generate notes")
+                        : tab === "record"
+                        ? (isZh ? "浏览器录音，生成学习笔记" : "Record in browser to generate notes")
+                        : (isZh ? "粘贴文字内容，生成学习笔记" : "Paste text to generate notes")}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      {isZh
+                        ? "输出自动结构化：要点 / 术语 / 结论 / 复习清单"
+                        : "Structured output: key points, terms, summary, review list"}
+                    </p>
                   </div>
 
-                  <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-[12px] text-slate-300 leading-5">
-                    {noteModel === "team" ? (
-                      <>
-                        <span className="font-semibold text-slate-100">
-                          {isZh ? "三模型协作：" : "Team mode:"}
-                        </span>{" "}
-                        {isZh ? "更稳、更完整，适合课堂/会议笔记。" : "More robust and complete for lectures/meetings."}
-                      </>
-                    ) : (
-                      <>
-                        <span className="font-semibold text-slate-100">
-                          {isZh ? "单模型：" : "Single model:"}
-                        </span>{" "}
-                        {isZh ? "更省时，适合快速整理。" : "Faster for quick notes."}
-                      </>
+                  <div className="mt-8 rounded-3xl border border-white/10 bg-white/5 p-5">
+                    {tab === "upload" && (
+                      <div className="space-y-3">
+                        <p className="text-[12px] text-slate-300">
+                          {isZh
+                            ? "支持：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"
+                            : "Supported: mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"}
+                        </p>
+                        <input
+                          type="file"
+                          accept="audio/*,video/mp4,.mp3,.wav,.m4a,.mp4,.webm,.ogg,.aac,.flac"
+                          onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+                          className="block w-full text-sm text-slate-300 file:mr-4 file:rounded-full file:border-0 file:px-4 file:py-2 file:text-sm file:font-semibold file:bg-white/10 file:text-slate-100 hover:file:bg-white/15"
+                          disabled={loading || isLoadingGlobal}
+                        />
+                        {file && (
+                          <div className="text-[12px] text-slate-200">
+                            {isZh ? "已选择：" : "Selected:"}{" "}
+                            <span className="font-semibold">{file.name}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {tab === "record" && (
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="text-[12px] text-slate-300">
+                            {isZh ? "录音时长：" : "Duration:"}{" "}
+                            <span className="font-semibold text-slate-100">{recordSecs}s</span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {!recording ? (
+                              <button
+                                onClick={startRecording}
+                                disabled={loading || isLoadingGlobal}
+                                className="h-10 px-5 rounded-full bg-white/10 text-slate-100 border border-white/10 hover:bg-white/15 transition font-semibold"
+                              >
+                                {isZh ? "开始录音" : "Start"}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={stopRecording}
+                                className="h-10 px-5 rounded-full bg-red-500/80 text-white hover:bg-red-500 transition font-semibold"
+                              >
+                                {isZh ? "停止" : "Stop"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-white/10 bg-slate-950/30 px-3 py-3 text-[12px] text-slate-300">
+                          {recordBlob
+                            ? (isZh ? "已录音完成，可直接生成笔记。" : "Recording ready. You can generate notes now.")
+                            : (isZh ? "点击开始录音，结束后自动保存。" : "Click Start. When you stop, it will be saved automatically.")}
+                        </div>
+                      </div>
+                    )}
+
+                    {tab === "text" && (
+                      <div className="space-y-3">
+                        <textarea
+                          value={text}
+                          onChange={(e) => {
+                            resetAll();
+                            setText(e.target.value);
+                          }}
+                          placeholder={isZh ? "粘贴课堂/会议文字稿..." : "Paste transcript/notes here..."}
+                          className="w-full h-40 rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
+                          disabled={loading || isLoadingGlobal}
+                        />
+                        <p className="text-[11px] text-slate-400">
+                          {isZh ? "建议：越完整越好（可包含时间点、说话人、章节标题）。" : "Tip: fuller transcript yields better notes."}
+                        </p>
+                      </div>
                     )}
                   </div>
 
-                  {error && (
-                    <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-200">
-                      {error}
-                    </div>
-                  )}
-                </div>
-
-                <div className="mt-auto px-4 py-3 border-t border-white/10 text-[11px] text-slate-500">
-                  {isZh
-                    ? "提示：录音使用浏览器 MediaRecorder，无需付费服务。"
-                    : "Tip: Recording uses browser MediaRecorder (free)."}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 右侧：三按钮主界面 */}
-          <div className="flex-1 p-4 overflow-hidden">
-            <div className="h-full rounded-3xl p-[1px] bg-gradient-to-r from-blue-500/50 via-purple-500/40 to-cyan-400/40">
-              <div className="h-full rounded-3xl border border-white/10 bg-slate-950/60 backdrop-blur-xl shadow-xl overflow-hidden flex flex-col">
-                {/* 三按钮 + 生成 */}
-                <div className="px-4 py-4 border-b border-white/10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    {tabBtn("upload", isZh ? "上传" : "Upload")}
-                    {tabBtn("record", isZh ? "录音" : "Record")}
-                    {tabBtn("text", isZh ? "文本" : "Text")}
-                  </div>
-
-                  <button
-                    onClick={generateNotes}
-                    disabled={!canGenerate}
-                    className="h-10 px-5 rounded-full bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-400 text-white text-sm font-semibold shadow-md shadow-blue-500/30 disabled:from-slate-700 disabled:via-slate-700 disabled:to-slate-700 disabled:text-slate-300 disabled:shadow-none disabled:cursor-not-allowed hover:brightness-110 transition"
-                  >
-                    {loading ? (isZh ? "生成中…" : "Generating…") : isZh ? "生成笔记" : "Generate notes"}
-                  </button>
-                </div>
-
-                {/* 内容区 */}
-                <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-6">
-                  <div className="mx-auto max-w-3xl">
-                    <div className="text-center">
-                      <div className="mx-auto h-14 w-14 rounded-3xl bg-gradient-to-br from-blue-500 via-cyan-400 to-emerald-400 opacity-90 shadow-lg shadow-blue-500/30 flex items-center justify-center">
-                        <span className="text-white text-2xl">📝</span>
-                      </div>
-                      <p className="mt-4 text-lg font-semibold text-slate-50">
-                        {tab === "upload"
-                          ? (isZh ? "上传 MP3 音频，生成学习笔记" : "Upload an MP3 to generate notes")
-                          : tab === "record"
-                          ? (isZh ? "使用浏览器录音，生成学习笔记" : "Record in browser to generate notes")
-                          : (isZh ? "粘贴文字内容，生成学习笔记" : "Paste text to generate notes")}
-                      </p>
-                      <p className="mt-1 text-sm text-slate-400">
-                        {isZh
-                          ? "输出将自动结构化：要点 / 术语 / 结论 / 复习清单"
-                          : "Output will be structured: key points, terms, summary, review list"}
-                      </p>
+                  <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-5">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold text-slate-50">{isZh ? "生成的笔记" : "Generated notes"}</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!result) return;
+                          navigator.clipboard?.writeText(result).catch(() => {});
+                        }}
+                        className="text-[11px] text-slate-300 hover:text-slate-100 underline underline-offset-4"
+                      >
+                        {isZh ? "复制" : "Copy"}
+                      </button>
                     </div>
 
-                    <div className="mt-8 rounded-3xl border border-white/10 bg-white/5 p-5">
-                      {/* Upload */}
-                      {tab === "upload" && (
-                        <div className="space-y-3">
-                          <p className="text-[12px] text-slate-300">
-                            {isZh ? "仅支持 MP3 文件。" : "Only MP3 files are supported."}
-                          </p>
-                          <input
-                            type="file"
-                            accept=".mp3,audio/mpeg"
-                            onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
-                            className="block w-full text-sm text-slate-300 file:mr-4 file:rounded-full file:border-0 file:px-4 file:py-2 file:text-sm file:font-semibold file:bg-white/10 file:text-slate-100 hover:file:bg-white/15"
-                            disabled={loading || isLoadingGlobal}
-                          />
-                          {file && (
-                            <div className="text-[12px] text-slate-200">
-                              {isZh ? "已选择：" : "Selected:"}{" "}
-                              <span className="font-semibold">{file.name}</span>
-                            </div>
-                          )}
-                        </div>
+                    <div className="mt-3 whitespace-pre-wrap text-[13px] leading-6 text-slate-100 min-h-[120px]">
+                      {result ? (
+                        result
+                      ) : (
+                        <span className="text-slate-500">
+                          {isZh ? "生成后会在这里显示结构化笔记。" : "Your structured notes will appear here."}
+                        </span>
                       )}
-
-                      {/* Record */}
-                      {tab === "record" && (
-                        <div className="space-y-4">
-                          <div className="flex items-center justify-between">
-                            <div className="text-[12px] text-slate-300">
-                              {isZh ? "录音时长：" : "Duration:"}{" "}
-                              <span className="font-semibold text-slate-100">{recordSecs}s</span>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              {!recording ? (
-                                <button
-                                  onClick={startRecording}
-                                  disabled={loading || isLoadingGlobal}
-                                  className="h-10 px-5 rounded-full bg-white/10 text-slate-100 border border-white/10 hover:bg-white/15 transition font-semibold"
-                                >
-                                  {isZh ? "开始录音" : "Start"}
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={stopRecording}
-                                  className="h-10 px-5 rounded-full bg-red-500/80 text-white hover:bg-red-500 transition font-semibold"
-                                >
-                                  {isZh ? "停止" : "Stop"}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="rounded-2xl border border-white/10 bg-slate-950/30 px-3 py-3 text-[12px] text-slate-300">
-                            {recordBlob
-                              ? (isZh ? "已录音完成，可直接生成笔记。" : "Recording ready. You can generate notes now.")
-                              : (isZh ? "点击开始录音，结束后自动保存。" : "Click Start. When you stop, it will be saved automatically.")}
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Text */}
-                      {tab === "text" && (
-                        <div className="space-y-3">
-                          <textarea
-                            value={text}
-                            onChange={(e) => {
-                              resetAll();
-                              setText(e.target.value);
-                            }}
-                            placeholder={isZh ? "粘贴课堂/会议文字稿..." : "Paste transcript/notes here..."}
-                            className="w-full h-40 rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
-                            disabled={loading || isLoadingGlobal}
-                          />
-                          <p className="text-[11px] text-slate-400">
-                            {isZh ? "建议：越完整越好（可包含时间点、说话人、章节标题）。" : "Tip: fuller transcript yields better notes."}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* 输出 */}
-                    <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-5">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-semibold text-slate-50">{isZh ? "生成的笔记" : "Generated notes"}</p>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!result) return;
-                            navigator.clipboard?.writeText(result).catch(() => {});
-                          }}
-                          className="text-[11px] text-slate-300 hover:text-slate-100 underline underline-offset-4"
-                        >
-                          {isZh ? "复制" : "Copy"}
-                        </button>
-                      </div>
-
-                      <div className="mt-3 whitespace-pre-wrap text-[13px] leading-6 text-slate-100 min-h-[120px]">
-                        {result ? (
-                          result
-                        ) : (
-                          <span className="text-slate-500">
-                            {isZh ? "生成后会在这里显示结构化笔记。" : "Your structured notes will appear here."}
-                          </span>
-                        )}
-                      </div>
                     </div>
                   </div>
                 </div>
-
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-blue-500/10 via-purple-500/5 to-transparent" />
               </div>
+
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-blue-500/10 via-purple-500/5 to-transparent" />
             </div>
           </div>
         </div>
@@ -1164,6 +1115,7 @@ function NoteUI({
     </div>
   );
 }
+
 
 /** ===================== Main Page ===================== */
 export default function ChatPage() {
