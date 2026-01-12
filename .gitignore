@@ -41,3 +41,23 @@ yarn-error.log*
 next-env.d.ts
 
 /app/generated/prisma
+
+# ===== Python =====
+asr_server/.venv/
+asr_server/__pycache__/
+**/__pycache__/
+*.pyc
+
+# ===== Node =====
+node_modules/
+.next/
+dist/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+# ===== Env =====
+.env
+.env.local
+
