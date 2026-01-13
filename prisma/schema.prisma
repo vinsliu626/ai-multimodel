@@ -44,7 +44,7 @@ model ChatMessage {
 model UserEntitlement {
   id     String @id @default(cuid())
   userId String @unique
-  // user  User  @relation(fields: [userId], references: [id])  // 先注释掉，等你 User 模型确定后再加回来
+  // user  User  @relation(fields: [userId], references: [id]) // 先注释掉，等 User 模型确定后再加
 
   plan      String  @default("basic")
   unlimited Boolean @default(false)
@@ -60,6 +60,8 @@ model UserEntitlement {
   canSeeSuspiciousSentences Boolean @default(false)
 
   stripeCustomerId String?
+  stripeSubId      String?
+  stripeStatus     String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -68,7 +70,7 @@ model UserEntitlement {
 model GiftCode {
   code      String   @id
   isActive  Boolean  @default(true)
-  maxUses   Int? // null = unlimited uses
+  maxUses   Int?     // null = unlimited uses
   usedCount Int      @default(0)
   createdAt DateTime @default(now())
 
@@ -93,10 +95,21 @@ model GiftCodeRedemption {
 model UsageEvent {
   id        String   @id @default(cuid())
   userId    String
-  type      String // detector_words | note_seconds | chat_count
+  type      String   // detector_words | note_seconds | chat_count
   amount    Int
   createdAt DateTime @default(now())
 
   @@index([userId, type, createdAt])
   @@index([createdAt])
+
+  model StripeCustomer {
+  id         String   @id @default(cuid())
+  userId     String
+  customerId String   @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+}
+
 }

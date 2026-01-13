@@ -23,7 +23,7 @@ export async function ensureUserEntitlementRow(userId: string) {
   // create if not exists
   await prisma.userEntitlement.upsert({
     where: { userId },
-    create: { userId, plan: "basic", giftUnlimited: false },
+    create: { userId, plan: "basic", unlimited: false },
     update: {},
   });
 }
@@ -35,7 +35,7 @@ export async function getEntitlementStatus(userId: string): Promise<EntitlementS
   const usage = await getUsage(userId);
 
   const plan = (ent?.plan as PlanId) || "basic";
-  const giftUnlimited = !!ent?.giftUnlimited;
+  const giftUnlimited = !!ent?.unlimited;
 
   if (giftUnlimited) {
     return {

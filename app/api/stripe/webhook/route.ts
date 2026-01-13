@@ -1,3 +1,4 @@
+// app/api/stripe/webhook/route.ts
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { stripe } from "@/lib/stripe";
@@ -6,14 +7,8 @@ import { prisma } from "@/lib/prisma";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function planFromPrice(priceId?: string | null) {
-  if (!priceId) return null;
-  if (priceId === process.env.STRIPE_PRICE_ULTRA) return "ultra";
-  if (priceId === process.env.STRIPE_PRICE_PRO) return "pro";
-  return null;
-}
-
 export async function POST(req: Request) {
+  // ✅ 你这个版本就是需要 await
   const sig = (await headers()).get("stripe-signature");
   const whsec = process.env.STRIPE_WEBHOOK_SECRET;
 
@@ -23,7 +18,7 @@ export async function POST(req: Request) {
 
   const rawBody = await req.text();
 
-  let event;
+  let event: any;
   try {
     event = stripe.webhooks.constructEvent(rawBody, sig, whsec);
   } catch {
@@ -33,13 +28,12 @@ export async function POST(req: Request) {
   switch (event.type) {
     // ✅ 用户完成 checkout：保存 customerId / subscriptionId / plan
     case "checkout.session.completed": {
-      const s = event.data.object as any;
+      const session = event.data.object as any;
+      const userId = session?.metadata?.userId as string | undefined;
+      const plan = session?.metadata?.plan as string | undefined;
 
-      const userId = s?.metadata?.userId as string | undefined;
-      const plan = s?.metadata?.plan as string | undefined;
-
-      const customerId = (s?.customer as string | null) ?? null;
-      const subscriptionId = (s?.subscription as string | null) ?? null;
+      const subscriptionId = (session?.subscription as string | null) ?? null;
+      const customerId = (session?.customer as string | null) ?? null;
 
       if (userId) {
         await prisma.userEntitlement.upsert({
@@ -49,6 +43,7 @@ export async function POST(req: Request) {
             stripeCustomerId: customerId,
             stripeSubId: subscriptionId,
             stripeStatus: "active",
+            unlimited: false,
           },
           create: {
             userId,
@@ -56,34 +51,38 @@ export async function POST(req: Request) {
             stripeCustomerId: customerId,
             stripeSubId: subscriptionId,
             stripeStatus: "active",
+            unlimited: false,
           },
         });
       }
       break;
     }
 
-    // ✅ 订阅状态变化：用 customerId 反查 UserEntitlement
+    // ✅ 订阅状态变化：用 customerId 反查 UserEntitlement（不需要 stripeCustomer 表）
     case "customer.subscription.updated":
     case "customer.subscription.deleted": {
       const sub = event.data.object as any;
-
       const customerId = sub.customer as string | undefined;
-      const subscriptionId = sub.id as string | undefined;
       const status = sub.status as string | undefined;
-
-      // 订阅价格 -> plan（更精细：从 items[0].price.id 判断 pro/ultra）
-      const priceId = sub?.items?.data?.[0]?.price?.id as string | undefined;
-      const plan = status === "active" ? (planFromPrice(priceId) ?? "pro") : "basic";
+      const subscriptionId = sub.id as string | undefined;
 
       if (customerId) {
-        await prisma.userEntitlement.updateMany({
+        // 用 entitlement 表反查对应用户
+        const ent = await prisma.userEntitlement.findFirst({
           where: { stripeCustomerId: customerId },
-          data: {
-            stripeSubId: subscriptionId ?? null,
-            stripeStatus: status ?? null,
-            plan,
-          },
+          select: { userId: true },
         });
+
+        if (ent?.userId) {
+          await prisma.userEntitlement.update({
+            where: { userId: ent.userId },
+            data: {
+              stripeSubId: subscriptionId ?? null,
+              stripeStatus: status ?? null,
+              plan: status === "active" ? "pro" : "basic",
+            },
+          });
+        }
       }
       break;
     }

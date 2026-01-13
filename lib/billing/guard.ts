@@ -108,10 +108,10 @@ export async function assertQuotaOrThrow(input: {
   // 1) 读用户权益（没有就当 basic）
   const ent = await prisma.userEntitlement.findUnique({ where: { userId } });
   const plan = (ent?.plan as "basic" | "pro" | "ultra") || "basic";
-  const giftUnlimited = Boolean(ent?.giftUnlimited);
+  const isUnlimited = Boolean(ent?.unlimited);
 
   // 2) gift unlimited 直接放行；Ultra 全放行
-  if (giftUnlimited || plan === "ultra") return;
+  if (isUnlimited || plan === "ultra") return;
 
   // 3) 查窗口内已用量
   const usageType = usageTypeOf(action);
