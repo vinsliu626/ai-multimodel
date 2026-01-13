@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "gift:create": "ts-node scripts/create-gift-code.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
@@ -31,4 +32,6 @@
     "tailwindcss": "^4",
     "typescript": "^5"
   }
+
+  
 }
