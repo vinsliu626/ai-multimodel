@@ -38,21 +38,30 @@ model ChatMessage {
 
 /** ===================== Billing / Plans ===================== */
 model UserEntitlement {
-  userId           String   @id
-  plan             String   @default("basic") // basic | pro | ultra
-  giftUnlimited    Boolean  @default(false)
+  id        String  @id @default(cuid())
+  userId String @unique
+// user  User  @relation(fields: [userId], references: [id])  // 先注释掉，等你 User 模型确定后再加回来
 
-  // ✅ Stripe fields (加上这些你代码才不会报错)
-  stripeCustomerId String?  @unique
-  stripeSubId      String?  @unique
-  stripeStatus     String?  // active | trialing | canceled | past_due | unpaid...
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  plan      String  @default("basic")
+  unlimited Boolean @default(false)
 
-  @@index([plan])
-  @@index([stripeStatus])
+  detectorWordsPerWeek Int?
+  noteSecondsPerWeek   Int?
+  chatPerDay           Int?
+
+  usedDetectorWordsThisWeek Int @default(0)
+  usedNoteSecondsThisWeek   Int @default(0)
+  usedChatCountToday        Int @default(0)
+
+  canSeeSuspiciousSentences Boolean @default(false)
+
+  stripeCustomerId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
+
 
 
 model GiftCode {

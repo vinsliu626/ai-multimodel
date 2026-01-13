@@ -17,61 +17,71 @@ function isLocalDev(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
+  try {
+    const session = await getServerSession(authOptions);
+    const userId = (session as any)?.user?.id as string | undefined;
 
-  let userId = (session as any)?.user?.id as string | undefined;
+    if (!userId) {
+      return NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 });
+    }
 
-  // ✅ DEV 模式：后端也给一个“开发者用户”
-  if (!userId && isLocalDev(req)) {
-    const email = process.env.DEV_USER_EMAIL || "dev@local";
+    const body = await req.json().catch(() => ({}));
+    const plan = body?.plan === "ultra" ? "ultra" : "pro";
 
-    // 确保 DB 里有这个 user（按你的 schema 可能是 email unique）
-    const u = await prisma.user.upsert({
-      where: { email },
-      update: { name: "Developers" },
-      create: { email, name: "Developers" },
-    });
+    // ✅ 关键：先检查 stripe key
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return NextResponse.json({ ok: false, error: "MISSING_STRIPE_SECRET_KEY" }, { status: 500 });
+    }
 
-    userId = u.id;
-  }
+    const priceId =
+      plan === "ultra" ? process.env.STRIPE_PRICE_ULTRA : process.env.STRIPE_PRICE_PRO;
 
-  if (!userId) {
-    return NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 });
-  }
+    if (!priceId) {
+      return NextResponse.json(
+        { ok: false, error: plan === "ultra" ? "MISSING_PRICE_ULTRA" : "MISSING_PRICE_PRO" },
+        { status: 500 }
+      );
+    }
 
-  const body = await req.json().catch(() => ({}));
-  const plan = body?.plan === "ultra" ? "ultra" : "pro";
-
-  const priceId = plan === "ultra" ? process.env.STRIPE_PRICE_ULTRA : process.env.STRIPE_PRICE_PRO;
-  if (!priceId) return NextResponse.json({ ok: false, error: "MISSING_PRICE_ID" }, { status: 500 });
-
-  const ent = await prisma.userEntitlement.upsert({
-    where: { userId },
-    update: {},
-    create: { userId },
-  });
-
-  let customerId = (ent as any).stripeCustomerId ?? null;
-  if (!customerId) {
-    const customer = await stripe.customers.create({ metadata: { userId } });
-    customerId = customer.id;
-
-    await prisma.userEntitlement.update({
+    const ent = await prisma.userEntitlement.upsert({
       where: { userId },
-      data: { stripeCustomerId: customerId },
+      update: {},
+      create: { userId },
     });
+
+    let customerId = (ent as any).stripeCustomerId ?? null;
+
+    if (!customerId) {
+      const customer = await stripe.customers.create({ metadata: { userId } });
+      customerId = customer.id;
+
+      await prisma.userEntitlement.update({
+        where: { userId },
+        data: { stripeCustomerId: customerId },
+      });
+    }
+
+    const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+
+    const checkout = await stripe.checkout.sessions.create({
+      mode: "subscription",
+      customer: customerId,
+      line_items: [{ price: priceId, quantity: 1 }],
+      success_url: `${baseUrl}/billing?success=1`,
+      cancel_url: `${baseUrl}/billing?canceled=1`,
+      metadata: { userId, plan },
+    });
+
+    return NextResponse.json({ ok: true, url: checkout.url });
+  } catch (e: any) {
+    // ✅ 把 Stripe 的真实错误吐给你（本地调试用）
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "CHECKOUT_CREATE_FAILED",
+        message: e?.message || String(e),
+      },
+      { status: 500 }
+    );
   }
-
-  const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
-
-  const checkout = await stripe.checkout.sessions.create({
-    mode: "subscription",
-    customer: customerId,
-    line_items: [{ price: priceId, quantity: 1 }],
-    success_url: `${baseUrl}/billing?success=1`,
-    cancel_url: `${baseUrl}/billing?canceled=1`,
-    metadata: { userId, plan },
-  });
-
-  return NextResponse.json({ ok: true, url: checkout.url });
 }

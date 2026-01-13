@@ -131,7 +131,7 @@ function PlanModal({
   open,
   onClose,
   isZh,
-  effectiveSessionExists,
+  sessionExists,
   ent,
   onOpenRedeem,
   onManageBilling,
@@ -139,7 +139,7 @@ function PlanModal({
   open: boolean;
   onClose: () => void;
   isZh: boolean;
-  effectiveSessionExists: boolean;
+  sessionExists: boolean;
   ent: Entitlement | null;
   onOpenRedeem: () => void;
   onManageBilling: (plan: "pro" | "ultra") => void;
@@ -239,7 +239,7 @@ function PlanModal({
 
         <div className="px-5 py-4">
           {/* current usage */}
-          {effectiveSessionExists && ent && (
+          {sessionExists && ent && (
             <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
               <div className="flex items-center justify-between gap-3">
                 <div>
@@ -283,7 +283,7 @@ function PlanModal({
             </div>
           )}
 
-          {!effectiveSessionExists && (
+          {!sessionExists && (
             <div className="mb-4 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-[12px] text-amber-200">
               {isZh
                 ? "你还没登录：只能聊天，无法使用检测器/笔记，也不会保存记忆。登录后可开启套餐与额度。"
@@ -304,7 +304,7 @@ function PlanModal({
               ]}
               cta={cur === "basic" ? (isZh ? "已在使用" : "Using") : (isZh ? "使用 Basic" : "Use Basic")}
               onClick={() => {
-                if (!effectiveSessionExists) return signIn();
+                if (!sessionExists) return signIn();
                 onClose();
               }}
             />
@@ -323,12 +323,12 @@ function PlanModal({
               cta={
                 cur === "pro"
                   ? (isZh ? "管理订阅" : "Manage")
-                  : effectiveSessionExists
+                  : sessionExists
                   ? (isZh ? "升级到 Pro" : "Upgrade to Pro")
                   : (isZh ? "登录后升级" : "Sign in to upgrade")
               }
               onClick={() => {
-                if (!effectiveSessionExists) return signIn();
+                if (!sessionExists) return signIn();
                 onManageBilling("pro");
               }}
             />
@@ -346,12 +346,12 @@ function PlanModal({
               cta={
                 cur === "ultra"
                   ? (isZh ? "管理订阅" : "Manage")
-                  : effectiveSessionExists
+                  : sessionExists
                   ? (isZh ? "升级到 Ultra" : "Upgrade to Ultra")
                   : (isZh ? "登录后升级" : "Sign in to upgrade")
               }
               onClick={() => {
-                if (!effectiveSessionExists) return signIn();
+                if (!sessionExists) return signIn();
                 onManageBilling("ultra");
               }}
             />
@@ -449,12 +449,12 @@ function RedeemModal({
 }
 
 /** ===================== Entitlement Hook ===================== */
-function useEntitlement(effectiveSessionExists: boolean) {
+function useEntitlement(sessionExists: boolean) {
   const [ent, setEnt] = useState<Entitlement | null>(null);
   const [loadingEnt, setLoadingEnt] = useState(false);
 
   async function refresh() {
-    if (!effectiveSessionExists) {
+    if (!sessionExists) {
       setEnt(null);
       return;
     }
@@ -471,7 +471,7 @@ function useEntitlement(effectiveSessionExists: boolean) {
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveSessionExists]);
+  }, [sessionExists]);
 
   return { ent, loadingEnt, refresh, setEnt };
 }
@@ -1361,22 +1361,9 @@ function NoteUI({
 export default function ChatPage() {
   const { data: session, status } = useSession();
   const sessionExists = !!session;
+  const effectiveSessionExists = sessionExists;
+  const effectiveSession = session;
 
-   // ✅ DEV 假登录（只影响前端显示/交互 gating）
-  const devMode =
-    process.env.NEXT_PUBLIC_DEV_MODE === "true" &&
-    typeof window !== "undefined" &&
-    (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-
-  const effectiveSessionExists = sessionExists || devMode;
-
-  const effectiveSession =
-    session ??
-    (devMode
-      ? ({
-          user: { name: "Developers", email: "dev@local" },
-        } as any)
-      : null);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -1415,8 +1402,8 @@ export default function ChatPage() {
   const { ent, refresh: refreshEnt } = useEntitlement(sessionExists);
 
   // login gating: detector/note locked when not signed in
-  const detectorLocked = !effectiveSessionExists;
-  const noteLocked = !effectiveSessionExists;
+  const detectorLocked = !sessionExists;
+  const noteLocked = !sessionExists;
 
 
   useEffect(() => {
@@ -1613,18 +1600,41 @@ export default function ChatPage() {
 
   // 这里你之后接 Stripe：创建 checkout session / customer portal
   async function manageBilling(plan: "pro" | "ultra") {
+  try {
     const res = await fetch("/api/billing/checkout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ plan }),
     });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || !data?.url) {
-      alert(data?.error || "Failed to create checkout session");
+
+    const text = await res.text(); // 先拿原始文本
+    let data: any = null;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      // 不是 JSON
+    }
+
+    if (!res.ok) {
+      alert(
+        `Checkout API failed (${res.status})\n` +
+          (data?.error ? `error: ${data.error}\n` : "") +
+          `raw: ${text}`
+      );
       return;
     }
+
+    if (!data?.url) {
+      alert(`No checkout url returned.\nraw: ${text}`);
+      return;
+    }
+
     window.location.href = data.url;
+  } catch (e: any) {
+    alert(`Request error: ${e?.message || String(e)}`);
   }
+}
+
 
 
 
@@ -1675,15 +1685,15 @@ export default function ChatPage() {
           </div>
 
           <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 pb-3 space-y-1 mt-1 custom-scrollbar">
-            {!effectiveSessionExists && (
+            {!sessionExists && (
               <div className="px-3 py-3 text-xs text-slate-400">
                 {isZh ? "未登录：不会保存历史会话。" : "Not signed in: conversations are not saved."}
               </div>
             )}
 
-            {effectiveSessionExists && sessionsLoading && (<div className="px-3 py-2 text-xs text-slate-400">{isZh ? "正在加载历史会话…" : "Loading sessions…"}</div>)}
+            {sessionExists && sessionsLoading && (<div className="px-3 py-2 text-xs text-slate-400">{isZh ? "正在加载历史会话…" : "Loading sessions…"}</div>)}
 
-            {effectiveSessionExists && !sessionsLoading && sessions.length === 0 && (
+            {sessionExists && !sessionsLoading && sessions.length === 0 && (
             <div className="px-3 py-2 text-xs text-slate-500">
               {isZh ? (
                 <>
@@ -1700,7 +1710,7 @@ export default function ChatPage() {
           )}
 
 
-            {effectiveSessionExists &&
+            {sessionExists &&
               sessions.map((s) => {
                 const isActive = s.id === chatSessionId;
                 return (
@@ -1773,7 +1783,7 @@ export default function ChatPage() {
                       const next = v as Mode;
 
                       // ✅ 未登录禁止 detector/note
-                      if (!effectiveSessionExists && (next === "detector" || next === "note")) {
+                      if (!sessionExists && (next === "detector" || next === "note")) {
                         setPlanOpen(true);
                         return;
                       }
@@ -1913,7 +1923,7 @@ export default function ChatPage() {
                 </div>
 
                 {/* Basic quota hint (small) */}
-                {effectiveSessionExists && ent && !ent.unlimited && ent.plan === "basic" && (
+                {sessionExists && ent && !ent.unlimited && ent.plan === "basic" && (
                   <div className="mt-2 text-[11px] text-slate-500">
                     {isZh ? "Basic 今日聊天额度：" : "Basic chat quota today: "}
                     <span className="text-slate-300">{ent.usedChatCountToday}/{ent.chatPerDay}</span>
@@ -1934,10 +1944,10 @@ export default function ChatPage() {
         open={planOpen}
         onClose={() => setPlanOpen(false)}
         isZh={isZh}
-        effectiveSessionExists={effectiveSessionExists}
+        sessionExists={sessionExists}
         ent={ent}
         onOpenRedeem={() => {
-          if (!effectiveSessionExists) return signIn();
+          if (!sessionExists) return signIn();
           setRedeemError(null);
           setRedeemOpen(true);
         }}
