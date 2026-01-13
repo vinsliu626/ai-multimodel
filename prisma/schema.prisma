@@ -11,12 +11,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+/** ===================== Chat ===================== */
 model ChatSession {
-  id        String        @id @default(cuid())
+  id        String      @id @default(cuid())
   userId    String
-  title     String        @default("新的对话")
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
+  title     String      @default("新的对话")
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
 
   messages  ChatMessage[]
 
@@ -30,27 +31,40 @@ model ChatMessage {
   content       String
   createdAt     DateTime    @default(now())
 
-  chatSession   ChatSession @relation(fields: [chatSessionId], references: [id])
-}
+  chatSession   ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
 
+  @@index([chatSessionId, createdAt])
+}
 
 /** ===================== Billing / Plans ===================== */
 model UserEntitlement {
-  userId        String   @id
-  plan          String   @default("basic") // basic | pro | ultra
-  giftUnlimited Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  userId           String   @id
+  plan             String   @default("basic") // basic | pro | ultra
+  giftUnlimited    Boolean  @default(false)
+
+  // ✅ Stripe fields (加上这些你代码才不会报错)
+  stripeCustomerId String?  @unique
+  stripeSubId      String?  @unique
+  stripeStatus     String?  // active | trialing | canceled | past_due | unpaid...
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([plan])
+  @@index([stripeStatus])
 }
 
+
 model GiftCode {
-  code      String   @id
-  isActive  Boolean  @default(true)
-  maxUses   Int?     // null = unlimited uses
-  usedCount Int      @default(0)
-  createdAt DateTime @default(now())
+  code       String   @id
+  isActive   Boolean  @default(true)
+  maxUses    Int?     // null = unlimited uses
+  usedCount  Int      @default(0)
+  createdAt  DateTime @default(now())
 
   redemptions GiftCodeRedemption[]
+
+  @@index([isActive])
 }
 
 model GiftCodeRedemption {
@@ -63,6 +77,7 @@ model GiftCodeRedemption {
 
   @@unique([code, userId])
   @@index([userId])
+  @@index([code, createdAt])
 }
 
 model UsageEvent {
@@ -73,4 +88,5 @@ model UsageEvent {
   createdAt DateTime @default(now())
 
   @@index([userId, type, createdAt])
+  @@index([createdAt])
 }
