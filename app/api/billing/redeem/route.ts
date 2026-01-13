@@ -32,8 +32,8 @@ export async function POST(req: Request) {
         // idempotent success
         await tx.userEntitlement.upsert({
           where: { userId },
-          create: { userId, plan: "basic", giftUnlimited: true },
-          update: { giftUnlimited: true },
+          create: { userId, plan: "basic", unlimited: true },
+          update: { unlimited: true },
         });
         return { ok: true as const };
       }
@@ -49,8 +49,8 @@ export async function POST(req: Request) {
 
       await tx.userEntitlement.upsert({
         where: { userId },
-        create: { userId, plan: "basic", giftUnlimited: true },
-        update: { giftUnlimited: true },
+        create: { userId, plan: "basic", unlimited: true },
+        update: { unlimited: true },
       });
 
       return { ok: true as const };

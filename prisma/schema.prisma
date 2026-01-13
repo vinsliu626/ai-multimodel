@@ -11,37 +11,40 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/** ===================== Chat ===================== */
+/**
+ * ===================== Chat =====================
+ */
 model ChatSession {
-  id        String      @id @default(cuid())
+  id        String   @id @default(cuid())
   userId    String
-  title     String      @default("新的对话")
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  title     String   @default("新的对话")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  messages  ChatMessage[]
+  messages ChatMessage[]
 
   @@index([userId, updatedAt])
 }
 
 model ChatMessage {
-  id            String      @id @default(cuid())
+  id            String   @id @default(cuid())
   chatSessionId String
   role          String
   content       String
-  createdAt     DateTime    @default(now())
+  createdAt     DateTime @default(now())
 
-  chatSession   ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+  chatSession ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
 
   @@index([chatSessionId, createdAt])
 }
 
-/** ===================== Billing / Plans ===================== */
+/**
+ * ===================== Billing / Plans =====================
+ */
 model UserEntitlement {
-  id        String  @id @default(cuid())
+  id     String @id @default(cuid())
   userId String @unique
-// user  User  @relation(fields: [userId], references: [id])  // 先注释掉，等你 User 模型确定后再加回来
-
+  // user  User  @relation(fields: [userId], references: [id])  // 先注释掉，等你 User 模型确定后再加回来
 
   plan      String  @default("basic")
   unlimited Boolean @default(false)
@@ -62,14 +65,12 @@ model UserEntitlement {
   updatedAt DateTime @updatedAt
 }
 
-
-
 model GiftCode {
-  code       String   @id
-  isActive   Boolean  @default(true)
-  maxUses    Int?     // null = unlimited uses
-  usedCount  Int      @default(0)
-  createdAt  DateTime @default(now())
+  code      String   @id
+  isActive  Boolean  @default(true)
+  maxUses   Int? // null = unlimited uses
+  usedCount Int      @default(0)
+  createdAt DateTime @default(now())
 
   redemptions GiftCodeRedemption[]
 
@@ -82,7 +83,7 @@ model GiftCodeRedemption {
   userId    String
   createdAt DateTime @default(now())
 
-  giftCode  GiftCode @relation(fields: [code], references: [code], onDelete: Restrict)
+  giftCode GiftCode @relation(fields: [code], references: [code], onDelete: Restrict)
 
   @@unique([code, userId])
   @@index([userId])
@@ -92,7 +93,7 @@ model GiftCodeRedemption {
 model UsageEvent {
   id        String   @id @default(cuid())
   userId    String
-  type      String   // detector_words | note_seconds | chat_count
+  type      String // detector_words | note_seconds | chat_count
   amount    Int
   createdAt DateTime @default(now())
 
