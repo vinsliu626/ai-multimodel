@@ -1,5 +1,10 @@
 // app/api/chat/route.ts
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth"; // 如果你的路径不同，改这里
+
+import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
+import { addUsageEvent } from "@/lib/billing/usage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,26 +26,17 @@ const HF_DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B";
 const HF_KIMI_MODEL = "moonshotai/Kimi-K2-Instruct-0905";
 
 // ---------- 通用调用函数 ----------
-
-async function callGroqChat(
-  apiKey: string,
-  modelId: string,
-  messages: ChatMessage[]
-): Promise<string> {
+async function callGroqChat(apiKey: string, modelId: string, messages: ChatMessage[]): Promise<string> {
   const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model: modelId,
-      messages,
-    }),
+    body: JSON.stringify({ model: modelId, messages }),
   });
 
   const text = await res.text();
-
   if (!res.ok) {
     console.error("Groq 返回错误：", res.status, text);
     throw new Error(`调用 Groq 失败：${res.status}\n${text}`);
@@ -59,25 +55,17 @@ async function callGroqChat(
   return reply as string;
 }
 
-async function callHuggingFaceChat(
-  apiKey: string,
-  modelId: string,
-  messages: ChatMessage[]
-): Promise<string> {
+async function callHuggingFaceChat(apiKey: string, modelId: string, messages: ChatMessage[]): Promise<string> {
   const res = await fetch("https://router.huggingface.co/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model: modelId,
-      messages,
-    }),
+    body: JSON.stringify({ model: modelId, messages }),
   });
 
   const text = await res.text();
-
   if (!res.ok) {
     console.error("HF 返回错误：", res.status, text);
     throw new Error(`调用 HuggingFace 失败：${res.status}\n${text}`);
@@ -97,18 +85,12 @@ async function callHuggingFaceChat(
 }
 
 // ---------- 单模型模式 ----------
-
 async function handleSingleMode(
   apiKey: string,
   modelKind: ModelKind,
   messages: ChatMessage[],
   singleModelKey: SingleModelKey
 ) {
-  if (!singleModelKey) {
-    const groqModel = modelKind === "quality" ? QUALITY_MODEL : FAST_MODEL;
-    return await callGroqChat(apiKey, groqModel, messages);
-  }
-
   switch (singleModelKey) {
     case "groq_fast":
       return await callGroqChat(apiKey, FAST_MODEL, messages);
@@ -124,18 +106,15 @@ async function handleSingleMode(
       if (!hfKey) throw new Error("服务器缺少 HF_TOKEN（请在环境变量中配置）。");
       return await callHuggingFaceChat(hfKey, HF_KIMI_MODEL, messages);
     }
-    default:
-      return await callGroqChat(apiKey, FAST_MODEL, messages);
+    default: {
+      const groqModel = modelKind === "quality" ? QUALITY_MODEL : FAST_MODEL;
+      return await callGroqChat(apiKey, groqModel, messages);
+    }
   }
 }
 
 // ---------- 多 Agent 团队模式 ----------
-
-async function handleTeamMode(
-  apiKey: string,
-  modelKind: ModelKind,
-  messages: ChatMessage[]
-) {
+async function handleTeamMode(apiKey: string, modelKind: ModelKind, messages: ChatMessage[]) {
   const groqModel = modelKind === "quality" ? QUALITY_MODEL : FAST_MODEL;
 
   const lastUser = [...messages].reverse().find((m) => m.role === "user");
@@ -215,12 +194,7 @@ async function handleTeamMode(
 }
 
 // ---------- 生成会话标题 ----------
-
-async function generateSessionTitle(
-  apiKey: string,
-  lastUserMessage: string,
-  reply: string
-): Promise<string> {
+async function generateSessionTitle(apiKey: string, lastUserMessage: string, reply: string): Promise<string> {
   const systemMsg: ChatMessage = {
     role: "system",
     content:
@@ -243,7 +217,6 @@ async function generateSessionTitle(
 }
 
 // ---------- POST /api/chat ----------
-
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as {
@@ -261,25 +234,42 @@ export async function POST(request: Request) {
     let chatSessionId = body.chatSessionId ?? null;
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      return NextResponse.json({ reply: "请求 body 中缺少 messages 数组。" }, { status: 200 });
+      return NextResponse.json({ ok: false, error: "MISSING_MESSAGES" }, { status: 400 });
     }
 
     // ✅ 防误用：Detector 不走 /api/chat
     if (mode === "detector") {
       return NextResponse.json(
-        { reply: "AI Detector mode does not use /api/chat. Please call /api/ai-detector instead." },
-        { status: 200 }
+        { ok: false, error: "DETECTOR_MODE_NOT_ALLOWED", reply: "Detector mode uses /api/ai-detector." },
+        { status: 400 }
       );
     }
 
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
-      return NextResponse.json(
-        { reply: "服务器缺少 GROQ_API_KEY（请检查环境变量）。" },
-        { status: 200 }
-      );
+      return NextResponse.json({ ok: false, error: "MISSING_GROQ_API_KEY" }, { status: 500 });
     }
 
+    // ✅ 取登录用户（未登录也能聊天，但不存储/不计费/不限制）
+    const session = await getServerSession(authOptions);
+    const userId = (session as any)?.user?.id as string | undefined;
+
+    // ✅ 登录用户：先做配额检查（chat 10/天，pro/ultra/礼包无限制会自动放行）
+    if (userId) {
+      try {
+        await assertQuotaOrThrow({ userId, action: "chat", amount: 1 });
+      } catch (e) {
+        if (e instanceof QuotaError) {
+          return NextResponse.json(
+            { ok: false, error: e.code, message: e.message },
+            { status: 429 }
+          );
+        }
+        throw e;
+      }
+    }
+
+    // ✅ 调模型
     let reply: string;
     if (mode === "team") {
       reply = await handleTeamMode(apiKey, modelKind, messages);
@@ -287,49 +277,50 @@ export async function POST(request: Request) {
       reply = await handleSingleMode(apiKey, modelKind, messages, singleModelKey);
     }
 
-    // 动态加载 prisma，避免构建阶段初始化
-    try {
-      const { prisma } = await import("@/lib/prisma");
+    // ✅ 登录用户：记一次用量 + 保存聊天
+    if (userId) {
+      // 先记用量（你也可以放在 db 成功后再记）
+      await addUsageEvent(userId, "chat_count", 1).catch((e) => console.error("usageEvent 写入失败：", e));
 
-      const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
-      const userTextForThisTurn = lastUserMessage?.content ?? "（未找到用户消息内容）";
+      try {
+        const { prisma } = await import("@/lib/prisma");
 
-      const userId = "anonymous";
+        const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
+        const userTextForThisTurn = lastUserMessage?.content ?? "（未找到用户消息内容）";
 
-      if (!chatSessionId) {
-        let title = "新的对话";
-        try {
-          title = await generateSessionTitle(apiKey, userTextForThisTurn, reply);
-        } catch (e) {
-          console.error("生成会话标题失败，使用兜底标题：", e);
-          title = userTextForThisTurn.slice(0, 30) || "新的对话";
+        if (!chatSessionId) {
+          let title = "新的对话";
+          try {
+            title = await generateSessionTitle(apiKey, userTextForThisTurn, reply);
+          } catch (e) {
+            console.error("生成会话标题失败，使用兜底标题：", e);
+            title = userTextForThisTurn.slice(0, 30) || "新的对话";
+          }
+
+          const sessionRow = await prisma.chatSession.create({
+            data: { userId, title },
+          });
+          chatSessionId = sessionRow.id;
         }
 
-        const session = await prisma.chatSession.create({
-          data: { userId, title },
+        await prisma.chatMessage.createMany({
+          data: [
+            { chatSessionId, role: "user", content: userTextForThisTurn },
+            { chatSessionId, role: "assistant", content: reply },
+          ],
         });
-        chatSessionId = session.id;
+      } catch (dbErr) {
+        console.error("保存聊天记录到数据库失败：", dbErr);
       }
-
-      await prisma.chatMessage.createMany({
-        data: [
-          { chatSessionId, role: "user", content: userTextForThisTurn },
-          { chatSessionId, role: "assistant", content: reply },
-        ],
-      });
-    } catch (dbErr) {
-      console.error("保存聊天记录到数据库失败：", dbErr);
     }
 
-    return NextResponse.json({ reply, chatSessionId });
+    // 未登录：只返回 reply，不保存 sessionId
+    return NextResponse.json({ ok: true, reply, chatSessionId });
   } catch (err: any) {
     console.error("API /api/chat 出错：", err);
     return NextResponse.json(
-      {
-        reply:
-          "服务器内部错误：" + (err?.message ?? "未知错误") + "（请稍后重试）",
-      },
-      { status: 200 }
+      { ok: false, error: "INTERNAL_ERROR", message: err?.message ?? "未知错误" },
+      { status: 500 }
     );
   }
 }

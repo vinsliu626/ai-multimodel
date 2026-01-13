@@ -5,11 +5,7 @@ import { useSession, signIn, signOut } from "next-auth/react";
 
 /** ===================== Types ===================== */
 type Role = "user" | "assistant";
-
-type Message = {
-  role: Role;
-  content: string;
-};
+type Message = { role: Role; content: string };
 
 type Mode = "single" | "team" | "detector" | "note";
 type ModelKind = "fast" | "quality";
@@ -23,10 +19,7 @@ type ChatSession = {
   updatedAt: string;
 };
 
-type PillOption = {
-  value: string;
-  label: string;
-};
+type PillOption = { value: string; label: string };
 
 type PillSelectProps = {
   value: string;
@@ -36,8 +29,42 @@ type PillSelectProps = {
   className?: string;
 };
 
+/** ===================== Billing / Entitlement ===================== */
+type PlanId = "basic" | "pro" | "ultra" | "gift";
+type UsageType = "detector_words_week" | "note_seconds_week" | "chat_count_day";
+
+type Entitlement = {
+  ok: true;
+  plan: PlanId;
+  unlimited: boolean;
+  // limits
+  detectorWordsPerWeek: number | null;
+  noteSecondsPerWeek: number | null;
+  chatPerDay: number | null;
+
+  // usage
+  usedDetectorWordsThisWeek: number;
+  usedNoteSecondsThisWeek: number;
+  usedChatCountToday: number;
+
+  // capabilities
+  canSeeSuspiciousSentences: boolean;
+};
+
+function formatSecondsToHrs(sec: number) {
+  const h = sec / 3600;
+  if (h < 1) return `${Math.round((sec / 60) * 10) / 10}m`;
+  return `${Math.round(h * 10) / 10}h`;
+}
+
+function planLabel(plan: PlanId, isZh: boolean) {
+  if (plan === "gift") return isZh ? "礼包无限制" : "Gift Unlimited";
+  if (plan === "ultra") return "Ultra Pro";
+  if (plan === "pro") return "Pro";
+  return isZh ? "Basic（免费）" : "Basic (Free)";
+}
+
 /** ===================== UI: PillSelect ===================== */
-/** 自定义椭圆下拉组件，替代原生 <select> */
 function PillSelect({
   value,
   options,
@@ -99,63 +126,380 @@ function PillSelect({
   );
 }
 
+/** ===================== Plan Modal ===================== */
+function PlanModal({
+  open,
+  onClose,
+  isZh,
+  sessionExists,
+  ent,
+  onOpenRedeem,
+  onManageBilling,
+}: {
+  open: boolean;
+  onClose: () => void;
+  isZh: boolean;
+  sessionExists: boolean;
+  ent: Entitlement | null;
+  onOpenRedeem: () => void;
+  onManageBilling: (plan: "pro" | "ultra") => void;
+}) {
+  if (!open) return null;
+
+  const cur = ent?.plan ?? "basic";
+
+  const Card = ({
+    title,
+    price,
+    badge,
+    active,
+    items,
+    cta,
+    onClick,
+  }: {
+    title: string;
+    price: string;
+    badge?: string;
+    active?: boolean;
+    items: string[];
+    cta: string;
+    onClick: () => void;
+  }) => (
+    <div
+      className={[
+        "rounded-3xl border p-4",
+        active
+          ? "border-blue-400/70 bg-blue-500/10 shadow-[0_0_0_1px_rgba(59,130,246,0.35)]"
+          : "border-white/10 bg-white/5",
+      ].join(" ")}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-semibold text-slate-50">{title}</p>
+            {badge && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-400/15 text-emerald-200 border border-emerald-400/20">
+                {badge}
+              </span>
+            )}
+            {active && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-blue-400/15 text-blue-200 border border-blue-400/20">
+                {isZh ? "当前" : "Current"}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 text-[12px] text-slate-300">{price}</p>
+        </div>
+      </div>
+
+      <ul className="mt-3 space-y-2 text-[12px] text-slate-200">
+        {items.map((it, i) => (
+          <li key={i} className="flex gap-2">
+            <span className="text-emerald-300">✓</span>
+            <span>{it}</span>
+          </li>
+        ))}
+      </ul>
+
+      <button
+        onClick={onClick}
+        className={[
+          "mt-4 w-full h-10 rounded-2xl font-semibold text-sm transition",
+          active
+            ? "bg-white/10 text-slate-200 border border-white/10 hover:bg-white/15"
+            : "bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-400 text-white shadow-md shadow-blue-500/30 hover:brightness-110",
+        ].join(" ")}
+      >
+        {cta}
+      </button>
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[80] bg-black/60 flex items-center justify-center p-4">
+      <div className="w-full max-w-3xl rounded-3xl border border-white/10 bg-slate-950 shadow-2xl">
+        <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-slate-50">
+              {isZh ? "选择套餐" : "Choose a plan"}
+            </p>
+            <p className="text-[12px] text-slate-400 mt-1">
+              {isZh
+                ? "Basic 有额度限制；Pro/Ultra 解锁更高额度；礼包码可永久无限制。"
+                : "Basic has limits. Pro/Ultra increases limits. Gift code unlocks unlimited."}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="h-9 w-9 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition flex items-center justify-center text-slate-200"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="px-5 py-4">
+          {/* current usage */}
+          {sessionExists && ent && (
+            <div className="mb-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[12px] text-slate-300">
+                    {isZh ? "当前套餐：" : "Current plan: "}
+                    <span className="font-semibold text-slate-50">{planLabel(ent.plan, isZh)}</span>
+                    {ent.unlimited && (
+                      <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-emerald-400/15 text-emerald-200 border border-emerald-400/20">
+                        {isZh ? "无限制" : "Unlimited"}
+                      </span>
+                    )}
+                  </p>
+                  {!ent.unlimited && (
+                    <p className="text-[11px] text-slate-400 mt-1">
+                      {isZh ? "本周检测：" : "Detector this week: "}
+                      <span className="text-slate-200">
+                        {ent.usedDetectorWordsThisWeek}/{ent.detectorWordsPerWeek}
+                      </span>
+                      {" · "}
+                      {isZh ? "本周笔记：" : "Notes this week: "}
+                      <span className="text-slate-200">
+                        {formatSecondsToHrs(ent.usedNoteSecondsThisWeek)}/
+                        {formatSecondsToHrs(ent.noteSecondsPerWeek ?? 0)}
+                      </span>
+                      {" · "}
+                      {isZh ? "今日聊天：" : "Chat today: "}
+                      <span className="text-slate-200">
+                        {ent.usedChatCountToday}/{ent.chatPerDay}
+                      </span>
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  onClick={onOpenRedeem}
+                  className="h-9 px-4 rounded-2xl bg-white/5 border border-white/10 text-slate-100 text-[12px] font-semibold hover:bg-white/10 transition"
+                >
+                  {isZh ? "输入礼包码" : "Redeem code"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!sessionExists && (
+            <div className="mb-4 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-3 text-[12px] text-amber-200">
+              {isZh
+                ? "你还没登录：只能聊天，无法使用检测器/笔记，也不会保存记忆。登录后可开启套餐与额度。"
+                : "You are not signed in: chat only. Detector/Notes are locked and memory won't be saved. Sign in to unlock plans & quotas."}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Card
+              title={isZh ? "Basic（免费）" : "Basic (Free)"}
+              price={isZh ? "￥0 / 月" : "$0 / mo"}
+              active={cur === "basic"}
+              items={[
+                isZh ? "AI 检测器：5000 词/周" : "AI Detector: 5000 words/week",
+                isZh ? "AI 笔记：2 小时/周" : "AI Notes: 2 hours/week",
+                isZh ? "多模型聊天：10 次/天" : "Multi-model chat: 10/day",
+                isZh ? "不含可疑句子列表" : "No suspicious sentence list",
+              ]}
+              cta={cur === "basic" ? (isZh ? "已在使用" : "Using") : (isZh ? "使用 Basic" : "Use Basic")}
+              onClick={() => {
+                if (!sessionExists) return signIn();
+                onClose();
+              }}
+            />
+
+            <Card
+              title="Pro"
+              price={isZh ? "￥5.99 / 月" : "$5.99 / mo"}
+              badge={isZh ? "推荐" : "Popular"}
+              active={cur === "pro"}
+              items={[
+                isZh ? "AI 检测器：15000 词/周" : "AI Detector: 15000 words/week",
+                isZh ? "AI 笔记：15 小时/周" : "AI Notes: 15 hours/week",
+                isZh ? "可疑句子列表（商用体验）" : "Suspicious sentence list",
+                isZh ? "多模型聊天：无限制" : "Multi-model chat: unlimited",
+              ]}
+              cta={
+                cur === "pro"
+                  ? (isZh ? "管理订阅" : "Manage")
+                  : sessionExists
+                  ? (isZh ? "升级到 Pro" : "Upgrade to Pro")
+                  : (isZh ? "登录后升级" : "Sign in to upgrade")
+              }
+              onClick={() => {
+                if (!sessionExists) return signIn();
+                onManageBilling("pro");
+              }}
+            />
+
+            <Card
+              title="Ultra Pro"
+              price={isZh ? "￥7.99 / 月" : "$7.99 / mo"}
+              active={cur === "ultra"}
+              items={[
+                isZh ? "AI 检测器：无限制" : "AI Detector: unlimited",
+                isZh ? "AI 笔记：无限制" : "AI Notes: unlimited",
+                isZh ? "多模型聊天：无限制" : "Multi-model chat: unlimited",
+                isZh ? "所有功能解锁" : "Everything unlocked",
+              ]}
+              cta={
+                cur === "ultra"
+                  ? (isZh ? "管理订阅" : "Manage")
+                  : sessionExists
+                  ? (isZh ? "升级到 Ultra" : "Upgrade to Ultra")
+                  : (isZh ? "登录后升级" : "Sign in to upgrade")
+              }
+              onClick={() => {
+                if (!sessionExists) return signIn();
+                onManageBilling("ultra");
+              }}
+            />
+          </div>
+
+          <div className="mt-4 text-[11px] text-slate-500">
+            {isZh
+              ? "提示：付款用 Stripe 最省事；礼包码适合早期内测/推广。"
+              : "Tip: Stripe is easiest for billing. Gift codes are great for early access & partnerships."}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** ===================== Redeem Modal ===================== */
+function RedeemModal({
+  open,
+  onClose,
+  isZh,
+  onRedeem,
+  loading,
+  error,
+}: {
+  open: boolean;
+  onClose: () => void;
+  isZh: boolean;
+  onRedeem: (code: string) => void;
+  loading: boolean;
+  error: string | null;
+}) {
+  const [code, setCode] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setCode("");
+  }, [open]);
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[90] bg-black/60 flex items-center justify-center p-4">
+      <div className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-950 shadow-2xl">
+        <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between">
+          <p className="text-sm font-semibold text-slate-50">
+            {isZh ? "输入礼包码" : "Redeem code"}
+          </p>
+          <button
+            onClick={onClose}
+            className="h-9 w-9 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition flex items-center justify-center text-slate-200"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="px-5 py-4">
+          <p className="text-[12px] text-slate-400">
+            {isZh ? "输入有效礼包码后，将永久解锁无限制使用。" : "A valid code unlocks unlimited access permanently."}
+          </p>
+
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder={isZh ? "例如：EARLY-ACCESS-2026" : "e.g. EARLY-ACCESS-2026"}
+            className="mt-3 w-full h-11 rounded-2xl bg-slate-900 border border-white/15 px-4 text-sm text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500/70 focus:border-blue-500/70"
+          />
+
+          {error && (
+            <div className="mt-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-200">
+              {error}
+            </div>
+          )}
+
+          <div className="mt-4 flex gap-2">
+            <button
+              onClick={onClose}
+              disabled={loading}
+              className="flex-1 h-10 rounded-2xl bg-white/5 border border-white/10 text-slate-200 font-semibold hover:bg-white/10 transition disabled:opacity-60"
+            >
+              {isZh ? "取消" : "Cancel"}
+            </button>
+            <button
+              onClick={() => onRedeem(code.trim())}
+              disabled={loading || !code.trim()}
+              className="flex-1 h-10 rounded-2xl bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-400 text-white font-semibold shadow-md shadow-blue-500/30 hover:brightness-110 transition disabled:opacity-60"
+            >
+              {loading ? (isZh ? "验证中…" : "Checking…") : (isZh ? "兑换" : "Redeem")}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** ===================== Entitlement Hook ===================== */
+function useEntitlement(sessionExists: boolean) {
+  const [ent, setEnt] = useState<Entitlement | null>(null);
+  const [loadingEnt, setLoadingEnt] = useState(false);
+
+  async function refresh() {
+    if (!sessionExists) {
+      setEnt(null);
+      return;
+    }
+    setLoadingEnt(true);
+    try {
+      const res = await fetch("/api/billing/status", { cache: "no-store" });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.ok) setEnt(data as Entitlement);
+    } finally {
+      setLoadingEnt(false);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionExists]);
+
+  return { ent, loadingEnt, refresh, setEnt };
+}
+
 /** ===================== Detector helpers ===================== */
-type DetectorResult = {
-  aiGenerated: number;
-  humanAiRefined: number;
-  humanWritten: number;
-};
-
-type DetectorHighlight = {
-  start: number;
-  end: number;
-  type?: string;
-  label?: string;
-  severity?: number;
-  phrase?: string;
-};
-
-type DetectorSentence = {
-  text: string;
-  start: number; // backend offset
-  end: number;   // backend offset
-  aiScore: number;
-  reasons: string[];
-};
+type DetectorResult = { aiGenerated: number; humanAiRefined: number; humanWritten: number };
+type DetectorHighlight = { start: number; end: number; type?: string; label?: string; severity?: number; phrase?: string };
+type DetectorSentence = { text: string; start: number; end: number; aiScore: number; reasons: string[] };
 
 function countWords(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
-
 function hasNonEnglish(text: string) {
   return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/.test(text);
 }
-
 function clampPct(n: number) {
   if (Number.isNaN(n)) return 0;
   return Math.max(0, Math.min(100, n));
 }
-
 function approxWordCountBySlice(s: string) {
   return s.trim().split(/\s+/).filter(Boolean).length;
 }
 
-/**
- * ✅核心：让高亮“覆盖比例”≈整体 AI%
- * - 把句子按 aiScore 从高到低排序
- * - 从高分开始选句子，直到选中的词数 >= totalWords * targetPct
- * - 把选中句子按原顺序合并成块，并可前后扩展 contextSentences
- */
 function buildCoverageHighlightsFromSentences(
   fullText: string,
   sentences: DetectorSentence[],
   targetPct: number,
-  opts?: {
-    minSentenceScore?: number;   // 防止 AI%很高但句子分数都不高时乱选：给个底线
-    contextSentences?: number;   // 每个块前后扩展几句
-    gapChars?: number;           // 句子间距小于多少合并
-    minBlockChars?: number;      // 块太短就不画
-  }
+  opts?: { minSentenceScore?: number; contextSentences?: number; gapChars?: number; minBlockChars?: number }
 ): DetectorHighlight[] {
   const minSentenceScore = opts?.minSentenceScore ?? 35;
   const contextSentences = opts?.contextSentences ?? 1;
@@ -163,7 +507,7 @@ function buildCoverageHighlightsFromSentences(
   const minBlockChars = opts?.minBlockChars ?? 20;
 
   const clean = (sentences || [])
-    .filter(s => Number.isFinite(s?.start) && Number.isFinite(s?.end) && s.end > s.start)
+    .filter((s) => Number.isFinite(s?.start) && Number.isFinite(s?.end) && s.end > s.start)
     .slice()
     .sort((a, b) => a.start - b.start);
 
@@ -172,7 +516,6 @@ function buildCoverageHighlightsFromSentences(
   const totalWords = countWords(fullText);
   const wantWords = Math.max(1, Math.round(totalWords * (clampPct(targetPct) / 100)));
 
-  // 1) 按分数从高到低挑句子（但分数不能低于 minSentenceScore）
   const ranked = clean
     .map((s, idx) => ({ s, idx }))
     .sort((a, b) => (b.s.aiScore ?? 0) - (a.s.aiScore ?? 0));
@@ -193,7 +536,6 @@ function buildCoverageHighlightsFromSentences(
     if (pickedWords >= wantWords) break;
   }
 
-  // 如果目标很高但 picked 不够（比如句子分数整体偏低），再“放宽”继续补齐
   if (pickedWords < wantWords) {
     for (const item of ranked) {
       if (picked.has(item.idx)) continue;
@@ -207,10 +549,8 @@ function buildCoverageHighlightsFromSentences(
 
   if (picked.size === 0) return [];
 
-  // 2) 把 picked 变回原顺序的 index 列表
   const pickedIdx = Array.from(picked).sort((a, b) => a - b);
 
-  // 3) 连续/相近句子合并成块
   type Block = { i0: number; i1: number; maxScore: number };
   const blocks: Block[] = [];
   let cur: Block | null = null;
@@ -222,7 +562,7 @@ function buildCoverageHighlightsFromSentences(
     }
     const prevEnd = clean[cur.i1].end;
     const nextStart = clean[idx].start;
-    const closeEnough = (nextStart - prevEnd) <= gapChars;
+    const closeEnough = nextStart - prevEnd <= gapChars;
 
     if (closeEnough) {
       cur.i1 = idx;
@@ -234,20 +574,14 @@ function buildCoverageHighlightsFromSentences(
   }
   if (cur) blocks.push(cur);
 
-  // 4) 扩展上下文（更像 GPTZero）
-  const expanded = blocks.map(b => {
+  const expanded = blocks.map((b) => {
     const i0 = Math.max(0, b.i0 - contextSentences);
     const i1 = Math.min(clean.length - 1, b.i1 + contextSentences);
-    return {
-      start: clean[i0].start,
-      end: clean[i1].end,
-      maxScore: b.maxScore,
-    };
+    return { start: clean[i0].start, end: clean[i1].end, maxScore: b.maxScore };
   });
 
-  // 5) 过滤太短 + 合并重叠
   const results: DetectorHighlight[] = expanded
-    .map(b => {
+    .map((b) => {
       const s = Math.max(0, Math.min(fullText.length, b.start));
       const e = Math.max(0, Math.min(fullText.length, b.end));
       return {
@@ -258,7 +592,7 @@ function buildCoverageHighlightsFromSentences(
         severity: Math.max(0.1, Math.min(1, (b.maxScore ?? 0) / 100)),
       };
     })
-    .filter(h => (h.end - h.start) >= minBlockChars)
+    .filter((h) => h.end - h.start >= minBlockChars)
     .sort((a, b) => a.start - b.start);
 
   const merged: DetectorHighlight[] = [];
@@ -275,10 +609,8 @@ function buildCoverageHighlightsFromSentences(
   return merged;
 }
 
-/** ✅ 高亮层渲染（textarea overlay） */
 function renderHighlightLayer(text: string, highlights: DetectorHighlight[]) {
   if (!text) return null;
-
   const ghost = (s: string) => s.replace(/\n/g, "\n\u200b");
 
   if (!highlights || highlights.length === 0) {
@@ -294,15 +626,11 @@ function renderHighlightLayer(text: string, highlights: DetectorHighlight[]) {
     }))
     .sort((a, b) => a.start - b.start);
 
-  // merge overlaps
   const merged: DetectorHighlight[] = [];
   for (const h of sorted) {
     const last = merged[merged.length - 1];
-    if (last && h.start <= (last.end ?? 0)) {
-      last.end = Math.max(last.end ?? 0, h.end);
-    } else {
-      merged.push({ ...h });
-    }
+    if (last && h.start <= (last.end ?? 0)) last.end = Math.max(last.end ?? 0, h.end);
+    else merged.push({ ...h });
   }
 
   const nodes: React.ReactNode[] = [];
@@ -311,11 +639,7 @@ function renderHighlightLayer(text: string, highlights: DetectorHighlight[]) {
   merged.forEach((h, idx) => {
     const s = h.start!;
     const e = h.end!;
-
-    if (cursor < s) {
-      nodes.push(<span key={`t-${idx}-a`}>{ghost(text.slice(cursor, s))}</span>);
-    }
-
+    if (cursor < s) nodes.push(<span key={`t-${idx}-a`}>{ghost(text.slice(cursor, s))}</span>);
     nodes.push(
       <mark
         key={`t-${idx}-m`}
@@ -325,18 +649,13 @@ function renderHighlightLayer(text: string, highlights: DetectorHighlight[]) {
         {ghost(text.slice(s, e))}
       </mark>
     );
-
     cursor = e;
   });
 
-  if (cursor < text.length) {
-    nodes.push(<span key="tail">{ghost(text.slice(cursor))}</span>);
-  }
-
+  if (cursor < text.length) nodes.push(<span key="tail">{ghost(text.slice(cursor))}</span>);
   return <span className="whitespace-pre-wrap break-words">{nodes}</span>;
 }
 
-/** ✅ 左侧编辑器（高亮层 + 透明 textarea） */
 function HighlightEditor({
   value,
   onChange,
@@ -365,26 +684,15 @@ function HighlightEditor({
     syncScroll();
   }, [value, highlights]);
 
-  const sharedTextStyle =
-    "px-4 py-3 text-[14px] leading-6 whitespace-pre-wrap break-words font-sans";
+  const sharedTextStyle = "px-4 py-3 text-[14px] leading-6 whitespace-pre-wrap break-words font-sans";
 
   return (
     <div className="relative h-full w-full rounded-2xl border border-white/10 bg-slate-950/30 overflow-hidden">
       <div
         ref={layerRef}
-        className={[
-          "absolute inset-0",
-          "overflow-auto scrollbar-none",
-          sharedTextStyle,
-          "text-slate-100",
-          "pointer-events-none",
-        ].join(" ")}
+        className={["absolute inset-0", "overflow-auto scrollbar-none", sharedTextStyle, "text-slate-100", "pointer-events-none"].join(" ")}
       >
-        {value ? (
-          renderHighlightLayer(value, highlights)
-        ) : (
-          <span className="text-slate-500">{placeholder}</span>
-        )}
+        {value ? renderHighlightLayer(value, highlights) : <span className="text-slate-500">{placeholder}</span>}
       </div>
 
       <textarea
@@ -409,15 +717,7 @@ function HighlightEditor({
   );
 }
 
-function ResultRow({
-  label,
-  value,
-  dot,
-}: {
-  label: string;
-  value: number;
-  dot: string;
-}) {
+function ResultRow({ label, value, dot }: { label: string; value: number; dot: string }) {
   return (
     <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3">
       <div className="flex items-center justify-between gap-3">
@@ -425,9 +725,7 @@ function ResultRow({
           <span className={`h-2.5 w-2.5 rounded-full ${dot}`} />
           <span className="text-[12px] text-slate-200">{label}</span>
         </div>
-        <span className="text-[12px] font-semibold text-slate-50">
-          {Math.round(value)}%
-        </span>
+        <span className="text-[12px] font-semibold text-slate-50">{Math.round(value)}%</span>
       </div>
       <div className="mt-2 h-2 rounded-full bg-white/10 overflow-hidden">
         <div className="h-full bg-white/30" style={{ width: `${Math.round(value)}%` }} />
@@ -440,9 +738,13 @@ function ResultRow({
 function DetectorUI({
   isLoadingGlobal,
   isZh,
+  locked,
+  canSeeSuspicious,
 }: {
   isLoadingGlobal: boolean;
   isZh: boolean;
+  locked: boolean;
+  canSeeSuspicious: boolean;
 }) {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
@@ -467,6 +769,10 @@ function DetectorUI({
   }, [text, words]);
 
   async function detect() {
+    if (locked) {
+      setError(isZh ? "请先登录后使用 AI 检测器。" : "Please sign in to use AI Detector.");
+      return;
+    }
     if (loading || isLoadingGlobal) return;
 
     setError(null);
@@ -501,7 +807,6 @@ function DetectorUI({
         throw new Error(data?.error || `Detector API error: ${res.status}`);
       }
 
-      // 结果占比
       const ai = clampPct(Number(data?.aiGenerated ?? data?.ai ?? 0));
       const humanAi = clampPct(Number(data?.humanAiRefined ?? data?.mixed ?? 0));
       const human = clampPct(Number(data?.humanWritten ?? data?.human ?? 0));
@@ -518,31 +823,17 @@ function DetectorUI({
 
       setResult(normalized);
 
-      // ✅ 句子
       const rawSentences: DetectorSentence[] = Array.isArray(data?.sentences) ? data.sentences : [];
       setSentences(rawSentences);
 
-      // ✅ 关键：高亮覆盖比例≈ aiGenerated
-      const finalHighlights = buildCoverageHighlightsFromSentences(
-        t,
-        rawSentences,
-        normalized.aiGenerated,
-        {
-          minSentenceScore: 35,
-          contextSentences: 1,
-          gapChars: 60,
-          minBlockChars: 20,
-        }
-      );
+      const finalHighlights = buildCoverageHighlightsFromSentences(t, rawSentences, normalized.aiGenerated, {
+        minSentenceScore: 35,
+        contextSentences: 1,
+        gapChars: 60,
+        minBlockChars: 20,
+      });
 
       setHighlights(finalHighlights);
-
-      // Debug
-      console.log("[detector] coverage", {
-        aiGenerated: normalized.aiGenerated,
-        sentences: rawSentences.length,
-        highlights: finalHighlights.length,
-      });
     } catch (e: any) {
       setError(e?.message || (isZh ? "分析失败。" : "Failed to analyze."));
     } finally {
@@ -550,43 +841,31 @@ function DetectorUI({
     }
   }
 
-  const canDetect = !!text.trim() && !tooShort && !englishWarning && !loading && !isLoadingGlobal;
+  const canDetect = !!text.trim() && !tooShort && !englishWarning && !loading && !isLoadingGlobal && !locked;
 
-  // 右侧“可疑句子”列表：只显示高分的（更像商用产品）
   const suspiciousSentences = useMemo(() => {
     const arr = sentences
       .slice()
-      .filter(s => typeof s.aiScore === "number" && s.text?.trim())
+      .filter((s) => typeof s.aiScore === "number" && s.text?.trim())
       .sort((a, b) => (b.aiScore ?? 0) - (a.aiScore ?? 0));
 
-    // ✅ 动态阈值：整体 AI 越高，就更宽松展示（更像 GPTZero）
     const base = result?.aiGenerated ?? 0;
-    const threshold =
-      base >= 80 ? 35 :
-      base >= 60 ? 40 :
-      base >= 40 ? 45 :
-      50;
-
-    const filtered = arr.filter(s => (s.aiScore ?? 0) >= threshold).slice(0, 40);
-
-    // ✅ 如果过滤后为空，fallback：直接展示 top 20（避免“看起来坏了”）
+    const threshold = base >= 80 ? 35 : base >= 60 ? 40 : base >= 40 ? 45 : 50;
+    const filtered = arr.filter((s) => (s.aiScore ?? 0) >= threshold).slice(0, 40);
     if (filtered.length === 0) return arr.slice(0, 20);
-
     return filtered;
   }, [sentences, result?.aiGenerated]);
-
 
   return (
     <div className="flex-1 overflow-hidden px-4 py-4">
       <div className="relative h-full w-full rounded-3xl border border-white/10 bg-gradient-to-b from-slate-950/40 via-slate-900/30 to-slate-950/40 shadow-[0_20px_70px_rgba(0,0,0,0.35)] backdrop-blur-xl overflow-hidden flex flex-col">
-        {/* 顶部 */}
         <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-400 to-emerald-400 shadow-md shadow-blue-500/30" />
             <div className="leading-tight">
               <p className="text-xs uppercase tracking-widest text-slate-400">AI Detector</p>
               <p className="text-sm font-semibold text-slate-50">
-                {isZh ? "左侧原文直接高亮 · 右侧结果" : "Inline highlight (left) · Results (right)"}
+                {isZh ? "左侧原文高亮 · 右侧结果" : "Inline highlight (left) · Results (right)"}
               </p>
             </div>
           </div>
@@ -596,18 +875,22 @@ function DetectorUI({
           </div>
         </div>
 
-        {/* 两列 */}
+        {locked && (
+          <div className="px-4 pt-3">
+            <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-200">
+              {isZh ? "请先登录后使用 AI 检测器（Basic 有每周额度）。" : "Sign in to use AI Detector (Basic has weekly quota)."}
+            </div>
+          </div>
+        )}
+
         <div className="flex-1 overflow-hidden flex flex-col lg:flex-row">
-          {/* 左侧 */}
           <div className="flex-1 p-4 overflow-hidden">
             <div className="h-full rounded-3xl p-[1px] bg-gradient-to-r from-blue-500/60 via-purple-500/50 to-cyan-400/50">
               <div className="h-full rounded-3xl border border-white/10 bg-slate-950/70 backdrop-blur-xl shadow-xl overflow-hidden flex flex-col">
                 <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-slate-50">{isZh ? "文本" : "Text"}</p>
-                    <p className="text-[11px] text-slate-400">
-                      {tooShort ? (isZh ? "至少 40 个英文单词" : "Add at least 40 words") : " "}
-                    </p>
+                    <p className="text-[11px] text-slate-400">{tooShort ? (isZh ? "至少 40 个英文单词" : "Add at least 40 words") : " "}</p>
                   </div>
 
                   <button
@@ -644,23 +927,18 @@ function DetectorUI({
 
                 <div className="px-4 py-3 border-t border-white/10 text-[11px] text-slate-400 flex items-center justify-between">
                   <span>{words > 0 ? (isZh ? `单词数：${words}` : `${words} words`) : " "}</span>
-                  <span className="text-slate-500">
-                    {isZh ? "高亮覆盖比例会跟随整体 AI%" : "Highlight coverage follows overall AI%"}
-                  </span>
+                  <span className="text-slate-500">{isZh ? "高亮覆盖比例会跟随整体 AI%" : "Highlight coverage follows overall AI%"}</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* 右侧 */}
           <div className="w-full lg:w-[420px] p-4 overflow-hidden">
             <div className="h-full rounded-3xl p-[1px] bg-gradient-to-b from-white/10 via-blue-500/20 to-purple-500/20">
               <div className="h-full rounded-3xl border border-white/10 bg-slate-950/60 backdrop-blur-xl shadow-xl overflow-hidden flex flex-col">
                 <div className="px-4 py-3 border-b border-white/10">
                   <p className="text-sm font-semibold text-slate-50">{isZh ? "结果" : "Results"}</p>
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    {isZh ? "右侧显示占比与可疑句子列表" : "Breakdown + suspicious sentences"}
-                  </p>
+                  <p className="mt-1 text-[11px] text-slate-400">{isZh ? "右侧显示占比与可疑句子列表" : "Breakdown + suspicious sentences"}</p>
                 </div>
 
                 <div className="flex-1 overflow-y-auto custom-scrollbar px-2 py-3 space-y-1 mt-1">
@@ -678,32 +956,36 @@ function DetectorUI({
                         <ResultRow label={isZh ? "人写" : "Human-written"} value={result.humanWritten} dot="bg-slate-200" />
                       </div>
 
-                      <details className="mt-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
-                        <summary className="cursor-pointer text-[12px] text-slate-200 select-none">
-                          {isZh ? `可疑句子（${suspiciousSentences.length}）` : `Suspicious sentences (${suspiciousSentences.length})`}
-                        </summary>
-
-                        <div className="mt-3 space-y-2">
-                          {suspiciousSentences.map((s, i) => (
-                            <div key={i} className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-[11px] text-slate-300">
-                                  {isZh ? "AI 概率" : "AI"}:{" "}
-                                  <span className="font-semibold text-amber-200">{Math.round(s.aiScore)}%</span>
-                                </span>
-                                <span className="text-[10px] text-slate-500">
-                                  {Array.isArray(s.reasons) ? s.reasons.join(" · ") : ""}
-                                </span>
-                              </div>
-                              <div className="mt-1 text-[12px] text-slate-100 leading-5">{s.text}</div>
-                            </div>
-                          ))}
+                      {!canSeeSuspicious ? (
+                        <div className="mt-3 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-200">
+                          {isZh ? "可疑句子列表仅 Pro/Ultra 或礼包用户可见。" : "Suspicious sentence list is available for Pro/Ultra or Gift users."}
                         </div>
-                      </details>
+                      ) : (
+                        <details className="mt-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2">
+                          <summary className="cursor-pointer text-[12px] text-slate-200 select-none">
+                            {isZh ? `可疑句子（${suspiciousSentences.length}）` : `Suspicious sentences (${suspiciousSentences.length})`}
+                          </summary>
 
-                      <div className="text-[11px] text-slate-500">
-                        {isZh ? `高亮片段数：${highlights.length}` : `Highlight spans: ${highlights.length}`}
-                      </div>
+                          <div className="mt-3 space-y-2">
+                            {suspiciousSentences.map((s, i) => (
+                              <div key={i} className="rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] text-slate-300">
+                                    {isZh ? "AI 概率" : "AI"}:{" "}
+                                    <span className="font-semibold text-amber-200">{Math.round(s.aiScore)}%</span>
+                                  </span>
+                                  <span className="text-[10px] text-slate-500">
+                                    {Array.isArray(s.reasons) ? s.reasons.join(" · ") : ""}
+                                  </span>
+                                </div>
+                                <div className="mt-1 text-[12px] text-slate-100 leading-5">{s.text}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
+                      )}
+
+                      <div className="text-[11px] text-slate-500">{isZh ? `高亮片段数：${highlights.length}` : `Highlight spans: ${highlights.length}`}</div>
                     </>
                   )}
                 </div>
@@ -722,24 +1004,17 @@ function DetectorUI({
   );
 }
 
-
-/** ===================== AI Note UI ===================== */
-/* （你后面 NoteUI / ChatPage 主体我没有改动，保持你发的原样）
-   为了不把消息长度撑爆，如果你确认上面 DetectorUI / HighlightEditor 修好了，
-   我再把 NoteUI + ChatPage 余下部分也整段原样贴给你。 */
-
-
-
-
 /** ===================== AI Note UI ===================== */
 type NoteTab = "upload" | "record" | "text";
 
 function NoteUI({
   isLoadingGlobal,
   isZh,
+  locked,
 }: {
   isLoadingGlobal: boolean;
   isZh: boolean;
+  locked: boolean;
 }) {
   const [tab, setTab] = useState<NoteTab>("upload");
 
@@ -758,11 +1033,12 @@ function NoteUI({
   const [error, setError] = useState<string | null>(null);
 
   const canGenerate = useMemo(() => {
+    if (locked) return false;
     if (loading || isLoadingGlobal) return false;
     if (tab === "upload") return !!file;
     if (tab === "record") return !!recordBlob;
     return text.trim().length > 0;
-  }, [tab, file, recordBlob, text, loading, isLoadingGlobal]);
+  }, [tab, file, recordBlob, text, loading, isLoadingGlobal, locked]);
 
   function resetAll() {
     setError(null);
@@ -777,6 +1053,10 @@ function NoteUI({
   }
 
   async function startRecording() {
+    if (locked) {
+      setError(isZh ? "请先登录后使用 AI 笔记（Basic 有每周额度）。" : "Please sign in to use AI Notes.");
+      return;
+    }
     resetAll();
     setRecordBlob(null);
     setRecordSecs(0);
@@ -784,13 +1064,7 @@ function NoteUI({
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      const preferredTypes = [
-        "audio/webm;codecs=opus",
-        "audio/webm",
-        "audio/ogg;codecs=opus",
-        "audio/ogg",
-        // 某些 Safari/iOS 可能不支持 MediaRecorder；那会直接 throw
-      ];
+      const preferredTypes = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg"];
       const mimeType = preferredTypes.find((t) => MediaRecorder.isTypeSupported(t));
 
       const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
@@ -835,7 +1109,6 @@ function NoteUI({
       return;
     }
 
-    // ✅ 支持多种音频：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac
     const name = f.name.toLowerCase();
     const okExt =
       name.endsWith(".mp3") ||
@@ -847,15 +1120,10 @@ function NoteUI({
       name.endsWith(".aac") ||
       name.endsWith(".flac");
 
-    // 有些浏览器给的 type 可能为空，所以 ext 是主判定
     const okMime = !f.type || f.type.startsWith("audio/") || f.type === "video/mp4";
 
     if (!okExt || !okMime) {
-      setError(
-        isZh
-          ? "仅支持常见音频格式：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"
-          : "Supported: mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"
-      );
+      setError(isZh ? "仅支持常见音频格式：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac" : "Supported: mp3 / wav / m4a / mp4 / webm / ogg / aac / flac");
       setFile(null);
       return;
     }
@@ -864,6 +1132,10 @@ function NoteUI({
   }
 
   async function generateNotes() {
+    if (locked) {
+      setError(isZh ? "请先登录后使用 AI 笔记。" : "Please sign in to use AI Notes.");
+      return;
+    }
     if (!canGenerate) return;
 
     setLoading(true);
@@ -875,17 +1147,11 @@ function NoteUI({
         const res = await fetch("/api/ai-note", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            inputType: "text",
-            text: text.trim(),
-            // ✅ 不再传 model：只保留 team
-          }),
+          body: JSON.stringify({ inputType: "text", text: text.trim() }),
         });
 
         const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.ok === false) {
-          throw new Error(data?.error || `AI Note API error: ${res.status}`);
-        }
+        if (!res.ok || data?.ok === false) throw new Error(data?.error || `AI Note API error: ${res.status}`);
         setResult(String(data?.note ?? data?.result ?? ""));
       } else {
         const fd = new FormData();
@@ -896,19 +1162,14 @@ function NoteUI({
           fd.append("file", file, file.name);
         } else {
           if (!recordBlob) throw new Error("Missing recording");
-          const ext =
-            recordBlob.type.includes("ogg") ? "ogg" : "webm";
-          const recFile = new File([recordBlob], `recording.${ext}`, {
-            type: recordBlob.type || "audio/webm",
-          });
+          const ext = recordBlob.type.includes("ogg") ? "ogg" : "webm";
+          const recFile = new File([recordBlob], `recording.${ext}`, { type: recordBlob.type || "audio/webm" });
           fd.append("file", recFile, recFile.name);
         }
 
         const res = await fetch("/api/ai-note", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.ok === false) {
-          throw new Error(data?.error || `AI Note API error: ${res.status}`);
-        }
+        if (!res.ok || data?.ok === false) throw new Error(data?.error || `AI Note API error: ${res.status}`);
         setResult(String(data?.note ?? data?.result ?? ""));
       }
     } catch (e: any) {
@@ -943,21 +1204,18 @@ function NoteUI({
     <div className="flex-1 overflow-hidden px-4 py-4">
       <div className="relative h-full w-full rounded-3xl border border-white/10 bg-gradient-to-b from-slate-950/40 via-slate-900/30 to-slate-950/40 shadow-[0_20px_70px_rgba(0,0,0,0.35)] backdrop-blur-xl overflow-hidden flex flex-col">
         <div className="px-6 py-5 border-b border-white/10">
-          <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-50">
-            {isZh ? "AI 笔记助手（团队协作）" : "AI Note Assistant (Team)"}
-          </h2>
-          <p className="mt-2 text-sm text-slate-300">
-            {isZh
-              ? "固定三模型协作：音频/录音转文字后，再生成结构化笔记。"
-              : "Always uses team mode: ASR → structured notes."}
-          </p>
+          <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-50">{isZh ? "AI 笔记助手" : "AI Note Assistant"}</h2>
+          <p className="mt-2 text-sm text-slate-300">{isZh ? "固定三模型协作：音频/录音转文字后，再生成结构化笔记。" : "Always uses team mode: ASR → structured notes."}</p>
+          {locked && (
+            <div className="mt-3 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-200">
+              {isZh ? "请先登录后使用 AI 笔记（Basic 有每周额度）。" : "Sign in to use AI Notes (Basic has weekly quota)."}
+            </div>
+          )}
         </div>
 
         {error && (
           <div className="px-6 pt-4">
-            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-200">
-              {error}
-            </div>
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-200">{error}</div>
           </div>
         )}
 
@@ -988,26 +1246,24 @@ function NoteUI({
                     </div>
                     <p className="mt-4 text-lg font-semibold text-slate-50">
                       {tab === "upload"
-                        ? (isZh ? "上传音频（多格式），生成学习笔记" : "Upload audio (multi-format) to generate notes")
+                        ? isZh
+                          ? "上传音频（多格式），生成学习笔记"
+                          : "Upload audio (multi-format) to generate notes"
                         : tab === "record"
-                        ? (isZh ? "浏览器录音，生成学习笔记" : "Record in browser to generate notes")
-                        : (isZh ? "粘贴文字内容，生成学习笔记" : "Paste text to generate notes")}
+                        ? isZh
+                          ? "浏览器录音，生成学习笔记"
+                          : "Record in browser to generate notes"
+                        : isZh
+                        ? "粘贴文字内容，生成学习笔记"
+                        : "Paste text to generate notes"}
                     </p>
-                    <p className="mt-1 text-sm text-slate-400">
-                      {isZh
-                        ? "输出自动结构化：要点 / 术语 / 结论 / 复习清单"
-                        : "Structured output: key points, terms, summary, review list"}
-                    </p>
+                    <p className="mt-1 text-sm text-slate-400">{isZh ? "输出自动结构化：要点 / 术语 / 结论 / 复习清单" : "Structured output: key points, terms, summary, review list"}</p>
                   </div>
 
                   <div className="mt-8 rounded-3xl border border-white/10 bg-white/5 p-5">
                     {tab === "upload" && (
                       <div className="space-y-3">
-                        <p className="text-[12px] text-slate-300">
-                          {isZh
-                            ? "支持：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"
-                            : "Supported: mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"}
-                        </p>
+                        <p className="text-[12px] text-slate-300">{isZh ? "支持：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac" : "Supported: mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"}</p>
                         <input
                           type="file"
                           accept="audio/*,video/mp4,.mp3,.wav,.m4a,.mp4,.webm,.ogg,.aac,.flac"
@@ -1017,8 +1273,7 @@ function NoteUI({
                         />
                         {file && (
                           <div className="text-[12px] text-slate-200">
-                            {isZh ? "已选择：" : "Selected:"}{" "}
-                            <span className="font-semibold">{file.name}</span>
+                            {isZh ? "已选择：" : "Selected:"} <span className="font-semibold">{file.name}</span>
                           </div>
                         )}
                       </div>
@@ -1028,24 +1283,20 @@ function NoteUI({
                       <div className="space-y-4">
                         <div className="flex items-center justify-between">
                           <div className="text-[12px] text-slate-300">
-                            {isZh ? "录音时长：" : "Duration:"}{" "}
-                            <span className="font-semibold text-slate-100">{recordSecs}s</span>
+                            {isZh ? "录音时长：" : "Duration:"} <span className="font-semibold text-slate-100">{recordSecs}s</span>
                           </div>
 
                           <div className="flex items-center gap-2">
                             {!recording ? (
                               <button
                                 onClick={startRecording}
-                                disabled={loading || isLoadingGlobal}
-                                className="h-10 px-5 rounded-full bg-white/10 text-slate-100 border border-white/10 hover:bg-white/15 transition font-semibold"
+                                disabled={loading || isLoadingGlobal || locked}
+                                className="h-10 px-5 rounded-full bg-white/10 text-slate-100 border border-white/10 hover:bg-white/15 transition font-semibold disabled:opacity-60"
                               >
                                 {isZh ? "开始录音" : "Start"}
                               </button>
                             ) : (
-                              <button
-                                onClick={stopRecording}
-                                className="h-10 px-5 rounded-full bg-red-500/80 text-white hover:bg-red-500 transition font-semibold"
-                              >
+                              <button onClick={stopRecording} className="h-10 px-5 rounded-full bg-red-500/80 text-white hover:bg-red-500 transition font-semibold">
                                 {isZh ? "停止" : "Stop"}
                               </button>
                             )}
@@ -1053,9 +1304,7 @@ function NoteUI({
                         </div>
 
                         <div className="rounded-2xl border border-white/10 bg-slate-950/30 px-3 py-3 text-[12px] text-slate-300">
-                          {recordBlob
-                            ? (isZh ? "已录音完成，可直接生成笔记。" : "Recording ready. You can generate notes now.")
-                            : (isZh ? "点击开始录音，结束后自动保存。" : "Click Start. When you stop, it will be saved automatically.")}
+                          {recordBlob ? (isZh ? "已录音完成，可直接生成笔记。" : "Recording ready. You can generate notes now.") : isZh ? "点击开始录音，结束后自动保存。" : "Click Start. When you stop, it will be saved automatically."}
                         </div>
                       </div>
                     )}
@@ -1070,11 +1319,9 @@ function NoteUI({
                           }}
                           placeholder={isZh ? "粘贴课堂/会议文字稿..." : "Paste transcript/notes here..."}
                           className="w-full h-40 rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
-                          disabled={loading || isLoadingGlobal}
+                          disabled={loading || isLoadingGlobal || locked}
                         />
-                        <p className="text-[11px] text-slate-400">
-                          {isZh ? "建议：越完整越好（可包含时间点、说话人、章节标题）。" : "Tip: fuller transcript yields better notes."}
-                        </p>
+                        <p className="text-[11px] text-slate-400">{isZh ? "建议：越完整越好（可包含时间点、说话人、章节标题）。" : "Tip: fuller transcript yields better notes."}</p>
                       </div>
                     )}
                   </div>
@@ -1095,13 +1342,7 @@ function NoteUI({
                     </div>
 
                     <div className="mt-3 whitespace-pre-wrap text-[13px] leading-6 text-slate-100 min-h-[120px]">
-                      {result ? (
-                        result
-                      ) : (
-                        <span className="text-slate-500">
-                          {isZh ? "生成后会在这里显示结构化笔记。" : "Your structured notes will appear here."}
-                        </span>
-                      )}
+                      {result ? <>{result}</> : <span className="text-slate-500">{isZh ? "生成后会在这里显示结构化笔记。" : "Your structured notes will appear here."}</span>}
                     </div>
                   </div>
                 </div>
@@ -1116,16 +1357,15 @@ function NoteUI({
   );
 }
 
-
 /** ===================== Main Page ===================== */
 export default function ChatPage() {
   const { data: session, status } = useSession();
+  const sessionExists = !!session;
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  // 语言切换（Detector / Note 也要用）
   const [lang, setLang] = useState<Lang>("zh");
   const isZh = lang === "zh";
 
@@ -1150,24 +1390,17 @@ export default function ChatPage() {
   const [renameLoading, setRenameLoading] = useState(false);
   const [showRenameModal, setShowRenameModal] = useState(false);
 
-  const zhPrompts = [
-    "今天有什么可以帮到你？",
-    "最近在忙什么项目？可以说说，我帮你拆一拆。",
-    "试试：为大学生设计一个文档。",
-    "或者：帮我写一份简历。",
-    "想不想试试多模型一起给你出主意？",
-  ];
-  const enPrompts = [
-    "What can I help you with today?",
-    "Working on anything interesting recently?",
-    "Try: Design a document for college students.",
-    "Or: Help me write a resume that stands out.",
-    "Let the multi-agent team brainstorm with you.",
-  ];
+  // Billing UI
+  const [planOpen, setPlanOpen] = useState(false);
+  const [redeemOpen, setRedeemOpen] = useState(false);
+  const [redeemLoading, setRedeemLoading] = useState(false);
+  const [redeemError, setRedeemError] = useState<string | null>(null);
 
-  const [heroText, setHeroText] = useState("");
-  const [promptIndex, setPromptIndex] = useState(0);
-  const [isDeletingHero, setIsDeletingHero] = useState(false);
+  const { ent, refresh: refreshEnt } = useEntitlement(sessionExists);
+
+  // login gating: detector/note locked when not signed in
+  const detectorLocked = !sessionExists;
+  const noteLocked = !sessionExists;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1178,6 +1411,10 @@ export default function ChatPage() {
   }, []);
 
   async function loadSessions() {
+    if (!sessionExists) {
+      setSessions([]);
+      return;
+    }
     try {
       setSessionsLoading(true);
       const res = await fetch("/api/chat/sessions");
@@ -1192,49 +1429,11 @@ export default function ChatPage() {
 
   useEffect(() => {
     loadSessions();
-  }, []);
-
-  useEffect(() => {
-    if (mode === "detector" || mode === "note") return;
-    if (messages.length > 0) {
-      if (heroText !== "") setHeroText("");
-      return;
-    }
-
-    const phrases = isZh ? zhPrompts : enPrompts;
-    const current = phrases[promptIndex % phrases.length];
-
-    const typingSpeed = 80;
-    const deletingSpeed = 50;
-    const stayDuration = 1200;
-
-    let timeout: NodeJS.Timeout;
-
-    if (!isDeletingHero) {
-      if (heroText.length < current.length) {
-        timeout = setTimeout(() => {
-          setHeroText(current.slice(0, heroText.length + 1));
-        }, typingSpeed);
-      } else {
-        timeout = setTimeout(() => {
-          setIsDeletingHero(true);
-        }, stayDuration);
-      }
-    } else {
-      if (heroText.length > 0) {
-        timeout = setTimeout(() => {
-          setHeroText(current.slice(0, heroText.length - 1));
-        }, deletingSpeed);
-      } else {
-        setIsDeletingHero(false);
-        setPromptIndex((prev) => (prev + 1) % phrases.length);
-      }
-    }
-
-    return () => clearTimeout(timeout);
-  }, [heroText, isDeletingHero, promptIndex, isZh, messages.length, mode]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionExists]);
 
   async function handleSelectSession(sessionId: string) {
+    if (!sessionExists) return;
     if (isLoading) return;
     setIsLoading(true);
     setMenuOpenId(null);
@@ -1243,12 +1442,10 @@ export default function ChatPage() {
       const res = await fetch(`/api/chat/session/${sessionId}`);
       const data = await res.json().catch(() => ({}));
 
-      const msgs: Message[] = (data.messages ?? []).map(
-        (m: { role: string; content: string }) => ({
-          role: m.role === "assistant" ? "assistant" : "user",
-          content: m.content,
-        })
-      );
+      const msgs: Message[] = (data.messages ?? []).map((m: { role: string; content: string }) => ({
+        role: m.role === "assistant" ? "assistant" : "user",
+        content: m.content,
+      }));
 
       setMessages(msgs);
       setChatSessionId(sessionId);
@@ -1261,133 +1458,11 @@ export default function ChatPage() {
     }
   }
 
-  function openDeleteConfirm(sessionId: string, title: string) {
-    if (isLoading) return;
-    setMenuOpenId(null);
-    setDeleteTargetId(sessionId);
-    setDeleteTargetTitle(title || (isZh ? "未命名会话" : "Untitled"));
-    setShowDeleteConfirm(true);
-  }
-
-  function closeDeleteConfirm() {
-    if (deleteLoading) return;
-    setShowDeleteConfirm(false);
-    setDeleteTargetId(null);
-    setDeleteTargetTitle("");
-  }
-
-  async function confirmDeleteSession() {
-    if (!deleteTargetId) return;
-
-    setDeleteLoading(true);
-    try {
-      const res = await fetch(`/api/chat/session/${deleteTargetId}`, {
-        method: "DELETE",
-      });
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch {}
-
-      if (!res.ok || data?.ok === false) {
-        console.error("删除接口返回非 200：", res.status, data);
-        alert(
-          (isZh
-            ? "删除会话失败，请稍后重试。"
-            : "Failed to delete conversation.") +
-            (data?.error ? "\n\n" + data.error : "")
-        );
-        return;
-      }
-
-      setSessions((prev) => prev.filter((s) => s.id !== deleteTargetId));
-
-      if (chatSessionId === deleteTargetId) {
-        setChatSessionId(null);
-        setMessages([]);
-        setInput("");
-        setHeroText("");
-        setPromptIndex(0);
-        setIsDeletingHero(false);
-      }
-
-      closeDeleteConfirm();
-    } catch (err) {
-      console.error("删除会话失败：", err);
-      alert(isZh ? "删除失败，请稍后重试。" : "Failed to delete. Please try again.");
-    } finally {
-      setDeleteLoading(false);
-    }
-  }
-
-  function openRenameModal(sessionId: string, currentTitle: string) {
-    if (isLoading) return;
-    setMenuOpenId(null);
-    setRenameTargetId(sessionId);
-    setRenameTitle(currentTitle || (isZh ? "未命名会话" : "Untitled"));
-    setShowRenameModal(true);
-  }
-
-  function closeRenameModal() {
-    if (renameLoading) return;
-    setShowRenameModal(false);
-    setRenameTargetId(null);
-    setRenameTitle("");
-  }
-
-  async function confirmRenameSession() {
-    if (!renameTargetId) return;
-    const newTitle = renameTitle.trim();
-    if (!newTitle) {
-      alert(isZh ? "标题不能为空" : "Title cannot be empty");
-      return;
-    }
-
-    setRenameLoading(true);
-    try {
-      const res = await fetch(`/api/chat/session/${renameTargetId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: newTitle }),
-      });
-
-      let data: any = null;
-      try {
-        data = await res.json();
-      } catch {}
-
-      if (!res.ok || data?.ok === false) {
-        console.error("重命名接口返回非 200：", res.status, data);
-        alert(
-          (isZh
-            ? "重命名会话失败，请稍后重试。"
-            : "Failed to rename conversation.") +
-            (data?.error ? "\n\n" + data.error : "")
-        );
-        return;
-      }
-
-      setSessions((prev) =>
-        prev.map((s) => (s.id === renameTargetId ? { ...s, title: newTitle } : s))
-      );
-
-      closeRenameModal();
-    } catch (err) {
-      console.error("重命名会话失败：", err);
-      alert(isZh ? "重命名失败，请稍后重试。" : "Rename failed, please try again.");
-    } finally {
-      setRenameLoading(false);
-    }
-  }
-
   function handleNewChat() {
     if (isLoading) return;
     setMessages([]);
     setInput("");
     setChatSessionId(null);
-    setHeroText("");
-    setPromptIndex(0);
-    setIsDeletingHero(false);
     setMenuOpenId(null);
     setSidebarOpen(false);
     if (mode === "detector" || mode === "note") setMode("single");
@@ -1404,11 +1479,7 @@ export default function ChatPage() {
     const userMessage: Message = { role: "user", content: userText };
     const historyForApi = [...messages, userMessage];
 
-    setMessages((prev) => [
-      ...prev,
-      userMessage,
-      { role: "assistant", content: "" },
-    ]);
+    setMessages((prev) => [...prev, userMessage, { role: "assistant", content: "" }]);
 
     try {
       const res = await fetch("/api/chat", {
@@ -1424,13 +1495,16 @@ export default function ChatPage() {
       });
 
       const data = await res.json().catch(() => ({}));
-      const fullReply: string =
-        data.reply ?? (isZh ? "AI 暂时没有返回内容。" : "No response from AI.");
+      const fullReply: string = data.reply ?? (isZh ? "AI 暂时没有返回内容。" : "No response from AI.");
 
-      if (data.chatSessionId) {
+      // ✅ 未登录不保存 sessionId
+      if (sessionExists && data.chatSessionId) {
         setChatSessionId(data.chatSessionId);
         loadSessions();
       }
+
+      // ✅ 刷新额度（聊天计数）
+      if (sessionExists) refreshEnt();
 
       const step = 2;
       let i = 0;
@@ -1444,10 +1518,7 @@ export default function ChatPage() {
             if (prev.length === 0) return prev;
             const next = [...prev];
             const lastIndex = next.length - 1;
-
-            if (next[lastIndex].role === "assistant") {
-              next[lastIndex] = { ...next[lastIndex], content: slice };
-            }
+            if (next[lastIndex].role === "assistant") next[lastIndex] = { ...next[lastIndex], content: slice };
             return next;
           });
 
@@ -1457,16 +1528,14 @@ export default function ChatPage() {
           }
         }, 20);
       });
-    } catch (err) {
+    } catch (err: any) {
       console.error("调用 /api/chat 出错：", err);
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
           content:
-            (isZh
-              ? "调用后端出错了，请稍后重试。\n\n错误信息："
-              : "Backend error, please try again later.\n\nError: ") +
+            (isZh ? "调用后端出错了，请稍后重试。\n\n错误信息：" : "Backend error, please try again later.\n\nError: ") +
             (err instanceof Error ? err.message : String(err)),
         },
       ]);
@@ -1483,24 +1552,11 @@ export default function ChatPage() {
     }
   }
 
-  const modeLabel = (() => {
-    if (mode === "detector") return isZh ? "AI 检测器（英文）" : "AI Detector (English)";
-    if (mode === "note") return isZh ? "AI 笔记（音频/文本）" : "AI Note (audio/text)";
-    if (mode === "team") return isZh ? "AI 多智能体协作中" : "Multi-agent collaboration mode";
-    if (singleModelKey === "hf_deepseek") return isZh ? "DeepSeek 单模型" : "DeepSeek single model";
-    if (singleModelKey === "hf_kimi") return isZh ? "Kimi 单模型" : "Kimi single model";
-    if (singleModelKey === "groq_quality") return isZh ? "Groq · 高质量" : "Groq · high quality";
-    return isZh ? "Groq · 极速" : "Groq · ultra fast";
-  })();
-
-  const userInitial =
-    session?.user?.name?.[0] || session?.user?.email?.[0] || "U";
-
   const modeOptions: PillOption[] = [
     { value: "single", label: isZh ? "单模型" : "Single model" },
     { value: "team", label: isZh ? "团队协作" : "Team / multi-agent" },
     { value: "detector", label: isZh ? "AI 检测器" : "AI Detector" },
-    { value: "note", label: isZh ? "AI Note（笔记）" : "AI Note" },
+    { value: "note", label: isZh ? "AI 笔记" : "AI Note" },
   ];
 
   const singleModelOptions: PillOption[] = [
@@ -1515,15 +1571,40 @@ export default function ChatPage() {
     { value: "quality", label: isZh ? "高质量" : "High quality" },
   ];
 
+  const userInitial = session?.user?.name?.[0] || session?.user?.email?.[0] || "U";
+
+  async function redeemCode(code: string) {
+    setRedeemError(null);
+    if (!code) return;
+    setRedeemLoading(true);
+    try {
+      const res = await fetch("/api/billing/redeem", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data?.ok === false) throw new Error(data?.error || `Redeem error: ${res.status}`);
+      setRedeemOpen(false);
+      await refreshEnt();
+    } catch (e: any) {
+      setRedeemError(e?.message || (isZh ? "兑换失败" : "Redeem failed"));
+    } finally {
+      setRedeemLoading(false);
+    }
+  }
+
+  // 这里你之后接 Stripe：创建 checkout session / customer portal
+  function manageBilling(plan: "pro" | "ultra") {
+    // 你可以先跳到一个 /pricing 页面，或者直接调用后端生成 Stripe checkout
+    // 这里先给一个占位：你后端实现 /api/billing/checkout?plan=pro|ultra
+    window.location.href = `/api/billing/checkout?plan=${plan}`;
+  }
+
   return (
     <main className="h-screen w-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100 overflow-hidden">
       <div className="h-full w-full border border-white/10 bg-white/5 shadow-[0_18px_60px_rgba(15,23,42,0.8)] backdrop-blur-xl flex">
-        {sidebarOpen && (
-          <div
-            className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[1px]"
-            onClick={() => setSidebarOpen(false)}
-          />
-        )}
+        {sidebarOpen && <div className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[1px]" onClick={() => setSidebarOpen(false)} />}
 
         {/* Sidebar */}
         <aside
@@ -1565,46 +1646,16 @@ export default function ChatPage() {
             </div>
           </div>
 
-          <div className="px-3 pt-3 pb-2">
-            <div className="rounded-2xl bg-slate-900/80 border border-white/10 px-3 py-2 text-[11px] text-slate-300 flex flex-col gap-1">
-              <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-1">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  {isZh ? "运行模式" : "Mode"}
-                </span>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-200">
-                  {mode === "single"
-                    ? isZh
-                      ? "单模型"
-                      : "Single"
-                    : mode === "team"
-                    ? isZh
-                      ? "多智能体"
-                      : "Multi"
-                    : mode === "detector"
-                    ? isZh
-                      ? "检测器"
-                      : "Detector"
-                    : isZh
-                    ? "笔记"
-                    : "Note"}
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400 line-clamp-2">{modeLabel}</p>
-              <p className="mt-1 text-[10px] text-slate-500">
-                {isZh ? "提示：按 ESC 可快速关闭" : "Tip: Press ESC to close"}
-              </p>
-            </div>
-          </div>
-
           <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 pb-3 space-y-1 mt-1 custom-scrollbar">
-            {sessionsLoading && (
-              <div className="px-3 py-2 text-xs text-slate-400">
-                {isZh ? "正在加载历史会话…" : "Loading sessions…"}
+            {!sessionExists && (
+              <div className="px-3 py-3 text-xs text-slate-400">
+                {isZh ? "未登录：不会保存历史会话。" : "Not signed in: conversations are not saved."}
               </div>
             )}
 
-            {!sessionsLoading && sessions.length === 0 && (
+            {sessionExists && sessionsLoading && <div className="px-3 py-2 text-xs text-slate-400">{isZh ? "正在加载历史会话…" : "Loading sessions…"}</div>}
+
+            {sessionExists && !sessionsLoading && sessions.length === 0 && (
               <div className="px-3 py-2 text-xs text-slate-500">
                 {isZh ? (
                   <>
@@ -1620,71 +1671,33 @@ export default function ChatPage() {
               </div>
             )}
 
-            {sessions.map((s) => {
-              const isActive = s.id === chatSessionId;
-              return (
-                <div
-                  key={s.id}
-                  className={[
-                    "w-full flex items-center gap-1 px-2 py-1 rounded-2xl text-xs transition-all duration-150",
-                    isActive
-                      ? "bg-blue-500/20 border border-blue-400/70 text-slate-50 shadow-[0_0_0_1px_rgba(59,130,246,0.4)]"
-                      : "bg-slate-900/60 border border-white/5 text-slate-300 hover:border-blue-400/60 hover:bg-slate-900",
-                  ].join(" ")}
-                >
-                  <button
-                    onClick={() => handleSelectSession(s.id)}
-                    className="flex-1 text-left flex flex-col gap-0.5 px-1 py-1"
+            {sessionExists &&
+              sessions.map((s) => {
+                const isActive = s.id === chatSessionId;
+                return (
+                  <div
+                    key={s.id}
+                    className={[
+                      "w-full flex items-center gap-1 px-2 py-1 rounded-2xl text-xs transition-all duration-150",
+                      isActive
+                        ? "bg-blue-500/20 border border-blue-400/70 text-slate-50 shadow-[0_0_0_1px_rgba(59,130,246,0.4)]"
+                        : "bg-slate-900/60 border border-white/5 text-slate-300 hover:border-blue-400/60 hover:bg-slate-900",
+                    ].join(" ")}
                   >
-                    <span className="truncate font-medium text-[12px]">
-                      {s.title || (isZh ? "未命名会话" : "Untitled")}
-                    </span>
-                    <span className="text-[10px] text-slate-500">
-                      {new Date(s.createdAt).toLocaleString()}
-                    </span>
-                  </button>
-
-                  <div className="relative">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuOpenId((prev) => (prev === s.id ? null : s.id));
-                      }}
-                      className="p-1 rounded-full hover:bg-slate-800 text-slate-400 hover:text-slate-100 transition-colors"
-                      title={isZh ? "更多操作" : "More actions"}
-                    >
-                      ⋯
+                    <button onClick={() => handleSelectSession(s.id)} className="flex-1 text-left flex flex-col gap-0.5 px-1 py-1">
+                      <span className="truncate font-medium text-[12px]">{s.title || (isZh ? "未命名会话" : "Untitled")}</span>
+                      <span className="text-[10px] text-slate-500">{new Date(s.createdAt).toLocaleString()}</span>
                     </button>
-
-                    {menuOpenId === s.id && (
-                      <div
-                        className="absolute right-0 top-7 z-20 w-32 rounded-2xl bg-slate-950 border border-white/10 shadow-lg py-1 text-[11px]"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          className="w-full text-left px-3 py-1.5 hover:bg-slate-800 text-slate-100"
-                          onClick={() => openRenameModal(s.id, s.title)}
-                        >
-                          {isZh ? "重命名" : "Rename"}
-                        </button>
-                        <button
-                          className="w-full text-left px-3 py-1.5 hover:bg-red-600/10 text-red-400"
-                          onClick={() => openDeleteConfirm(s.id, s.title)}
-                        >
-                          {isZh ? "删除" : "Delete"}
-                        </button>
-                      </div>
-                    )}
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
           </div>
         </aside>
 
         {/* Main */}
         <div className="flex-1 flex flex-col bg-slate-950/60">
           <header className="border-b border-white/10 px-4 py-3 flex items-center justify-between gap-4 bg-slate-950/60">
+            {/* Left */}
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setSidebarOpen(true)}
@@ -1696,15 +1709,30 @@ export default function ChatPage() {
 
               <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-blue-500 via-sky-500 to-emerald-400 shadow-md shadow-blue-500/40" />
               <div className="flex flex-col gap-0.5">
-                <h1 className="font-semibold text-sm text-slate-100">
-                  {isZh ? "多模型 AI 助手 · 工作台" : "Multi-Model AI Workspace"}
-                </h1>
-                <p className="text-[11px] text-slate-400">
-                  Groq · DeepSeek · Kimi · Multi-Agent
-                </p>
+                <h1 className="font-semibold text-sm text-slate-100">{isZh ? "多模型 AI 助手 · 工作台" : "Multi-Model AI Workspace"}</h1>
+                <p className="text-[11px] text-slate-400">Groq · DeepSeek · Kimi · Multi-Agent</p>
               </div>
             </div>
 
+            {/* Center: Plan pill (你要的“屏幕中上方美观”入口) */}
+            <div className="hidden md:flex items-center justify-center flex-1">
+              <button
+                onClick={() => setPlanOpen(true)}
+                className="px-4 py-2 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition shadow-sm flex items-center gap-2"
+              >
+                <span className="text-[11px] text-slate-300">{isZh ? "套餐" : "Plan"}</span>
+                <span className="text-[12px] font-semibold text-slate-50">
+                  {planLabel(ent?.plan ?? "basic", isZh)}
+                </span>
+                {ent?.unlimited && (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-400/15 text-emerald-200 border border-emerald-400/20">
+                    {isZh ? "无限制" : "Unlimited"}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Right */}
             <div className="flex items-center gap-4">
               <div className="hidden sm:flex items-center gap-3 px-3 py-2 rounded-2xl bg-slate-900/80 border border-white/10 shadow-sm">
                 <div className="flex flex-col gap-1 text-[11px] min-w-[160px]">
@@ -1714,6 +1742,12 @@ export default function ChatPage() {
                     options={modeOptions}
                     onChange={(v) => {
                       const next = v as Mode;
+
+                      // ✅ 未登录禁止 detector/note
+                      if (!sessionExists && (next === "detector" || next === "note")) {
+                        setPlanOpen(true);
+                        return;
+                      }
                       setMode(next);
                       if (next === "detector" || next === "note") setIsLoading(false);
                     }}
@@ -1725,37 +1759,13 @@ export default function ChatPage() {
 
                 <div className="flex flex-col gap-1 text-[11px] min-w-[180px]">
                   <span className="text-slate-400">
-                    {mode === "single"
-                      ? isZh
-                        ? "单模型选择"
-                        : "Model"
-                      : mode === "team"
-                      ? isZh
-                        ? "团队质量"
-                        : "Team quality"
-                      : mode === "detector"
-                      ? isZh
-                        ? "检测语言"
-                        : "Language"
-                      : isZh
-                      ? "笔记输入"
-                      : "Input"}
+                    {mode === "single" ? (isZh ? "单模型选择" : "Model") : mode === "team" ? (isZh ? "团队质量" : "Team quality") : mode === "detector" ? (isZh ? "检测语言" : "Language") : isZh ? "笔记输入" : "Input"}
                   </span>
 
                   {mode === "single" ? (
-                    <PillSelect
-                      value={singleModelKey}
-                      options={singleModelOptions}
-                      onChange={(v) => setSingleModelKey(v as SingleModelKey)}
-                      disabled={isLoading}
-                    />
+                    <PillSelect value={singleModelKey} options={singleModelOptions} onChange={(v) => setSingleModelKey(v as SingleModelKey)} disabled={isLoading} />
                   ) : mode === "team" ? (
-                    <PillSelect
-                      value={modelKind}
-                      options={teamQualityOptions}
-                      onChange={(v) => setModelKind(v as ModelKind)}
-                      disabled={isLoading}
-                    />
+                    <PillSelect value={modelKind} options={teamQualityOptions} onChange={(v) => setModelKind(v as ModelKind)} disabled={isLoading} />
                   ) : mode === "detector" ? (
                     <div className="w-full rounded-full border border-white/15 bg-slate-900/90 px-3 py-1 text-[11px] text-slate-100 shadow-inner shadow-slate-900/50">
                       English only
@@ -1768,32 +1778,32 @@ export default function ChatPage() {
                 </div>
               </div>
 
-              {/* 语言切换 */}
+              {/* Mobile Plan button */}
+              <button
+                onClick={() => setPlanOpen(true)}
+                className="md:hidden px-3 py-1.5 rounded-full bg-white/5 border border-white/10 text-[11px] text-slate-100 hover:bg-white/10 transition"
+              >
+                {isZh ? "套餐" : "Plan"}
+              </button>
+
+              {/* Language */}
               <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-white/5 border border-white/10 text-[11px]">
                 <span className="text-slate-300 mr-1">🌐</span>
                 <button
                   onClick={() => setLang("zh")}
-                  className={`px-2 py-0.5 rounded-full transition ${
-                    isZh
-                      ? "bg-slate-100 text-slate-900 text-[11px] font-medium"
-                      : "text-slate-300 hover:text-white"
-                  }`}
+                  className={`px-2 py-0.5 rounded-full transition ${isZh ? "bg-slate-100 text-slate-900 text-[11px] font-medium" : "text-slate-300 hover:text-white"}`}
                 >
                   中
                 </button>
                 <button
                   onClick={() => setLang("en")}
-                  className={`px-2 py-0.5 rounded-full transition ${
-                    !isZh
-                      ? "bg-slate-100 text-slate-900 text-[11px] font-medium"
-                      : "text-slate-300 hover:text-white"
-                  }`}
+                  className={`px-2 py-0.5 rounded-full transition ${!isZh ? "bg-slate-100 text-slate-900 text-[11px] font-medium" : "text-slate-300 hover:text-white"}`}
                 >
                   EN
                 </button>
               </div>
 
-              {/* 登录 */}
+              {/* Auth */}
               <div className="flex items-center gap-2">
                 {status === "loading" ? (
                   <div className="h-8 w-8 rounded-full bg-slate-800 animate-pulse" />
@@ -1803,13 +1813,8 @@ export default function ChatPage() {
                       {String(userInitial).toUpperCase()}
                     </div>
                     <div className="hidden sm:flex flex-col text-[11px] leading-tight">
-                      <span className="text-slate-100 truncate max-w-[120px]">
-                        {session.user?.name || session.user?.email}
-                      </span>
-                      <button
-                        onClick={() => signOut()}
-                        className="text-xs text-slate-400 hover:text-slate-200 underline-offset-2 hover:underline"
-                      >
+                      <span className="text-slate-100 truncate max-w-[120px]">{session.user?.name || session.user?.email}</span>
+                      <button onClick={() => signOut()} className="text-xs text-slate-400 hover:text-slate-200 underline-offset-2 hover:underline">
                         {isZh ? "退出登录" : "Sign out"}
                       </button>
                     </div>
@@ -1828,41 +1833,22 @@ export default function ChatPage() {
 
           {/* Body */}
           {mode === "detector" ? (
-            <DetectorUI isLoadingGlobal={isLoading} isZh={isZh} />
+            <DetectorUI
+              isLoadingGlobal={isLoading}
+              isZh={isZh}
+              locked={detectorLocked}
+              canSeeSuspicious={!!ent?.canSeeSuspiciousSentences}
+            />
           ) : mode === "note" ? (
-            <NoteUI isLoadingGlobal={isLoading} isZh={isZh} />
+            <NoteUI isLoadingGlobal={isLoading} isZh={isZh} locked={noteLocked} />
           ) : (
             <>
               <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-3 custom-scrollbar">
-                {messages.length === 0 && (
-                  <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 text-sm">
-                    <div className="mb-4 h-14 w-14 rounded-full bg-gradient-to-br from-blue-500 via-cyan-400 to-emerald-400 opacity-80 animate-pulse shadow-lg shadow-blue-500/40" />
-                    <p className="min-h-[1.5em] text-base text-slate-100">
-                      {heroText ||
-                        (isZh
-                          ? "今天有什么可以帮到你？"
-                          : "What can I help you with today?")}
-                    </p>
-                    <p className="mt-2 text-[11px] text-slate-400">
-                      {isZh
-                        ? "可以直接用自然语言描述你的想法，支持单模型 / 多智能体协作。"
-                        : "Describe your idea in natural language. Single model and multi-agent modes are both supported."}
-                    </p>
-                  </div>
-                )}
-
                 {messages.map((msg, idx) => (
-                  <div
-                    key={idx}
-                    className={`flex ${
-                      msg.role === "user" ? "justify-end" : "justify-start"
-                    }`}
-                  >
+                  <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                     <div
                       className={`px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap max-w-[80%] border backdrop-blur-sm ${
-                        msg.role === "user"
-                          ? "bg-blue-600 text-white border-blue-400/70 shadow-md shadow-blue-500/30"
-                          : "bg-slate-900/80 text-slate-100 border-white/10"
+                        msg.role === "user" ? "bg-blue-600 text-white border-blue-400/70 shadow-md shadow-blue-500/30" : "bg-slate-900/80 text-slate-100 border-white/10"
                       }`}
                     >
                       {msg.content}
@@ -1873,13 +1859,7 @@ export default function ChatPage() {
                 {isLoading && (
                   <div className="text-[11px] text-slate-400 mt-2 flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    {mode === "team"
-                      ? isZh
-                        ? "多模型团队正在协作思考中……"
-                        : "Multi-agent team is thinking…"
-                      : isZh
-                      ? "模型正在思考中……"
-                      : "Model is thinking…"}
+                    {mode === "team" ? (isZh ? "多模型团队正在协作思考中……" : "Multi-agent team is thinking…") : isZh ? "模型正在思考中……" : "Model is thinking…"}
                   </div>
                 )}
               </div>
@@ -1888,11 +1868,7 @@ export default function ChatPage() {
                 <div className="flex gap-2 items-end">
                   <textarea
                     className="flex-1 border border-white/10 rounded-2xl px-3 py-2 text-sm resize-none h-20 bg-slate-950/70 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/70 focus:border-transparent"
-                    placeholder={
-                      isZh
-                        ? "输入你的问题，按 Enter 发送，Shift+Enter 换行"
-                        : "Type your question, press Enter to send, Shift+Enter for new line"
-                    }
+                    placeholder={isZh ? "输入你的问题，按 Enter 发送，Shift+Enter 换行" : "Type your question, press Enter to send, Shift+Enter for new line"}
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={handleKeyDown}
@@ -1903,85 +1879,51 @@ export default function ChatPage() {
                     disabled={isLoading || !input.trim()}
                     className="w-28 h-10 rounded-2xl bg-gradient-to-r from-blue-500 via-sky-500 to-emerald-400 text-white text-sm font-medium shadow-md shadow-blue-500/40 disabled:from-slate-600 disabled:via-slate-700 disabled:to-slate-700 disabled:shadow-none disabled:cursor-not-allowed transition-all duration-150 hover:brightness-110"
                   >
-                    {isLoading
-                      ? isZh
-                        ? "思考中..."
-                        : "Thinking..."
-                      : isZh
-                      ? "发送 →"
-                      : "Send →"}
+                    {isLoading ? (isZh ? "思考中..." : "Thinking...") : isZh ? "发送 →" : "Send →"}
                   </button>
                 </div>
+
+                {/* Basic quota hint (small) */}
+                {sessionExists && ent && !ent.unlimited && ent.plan === "basic" && (
+                  <div className="mt-2 text-[11px] text-slate-500">
+                    {isZh ? "Basic 今日聊天额度：" : "Basic chat quota today: "}
+                    <span className="text-slate-300">{ent.usedChatCountToday}/{ent.chatPerDay}</span>
+                    {" · "}
+                    <button onClick={() => setPlanOpen(true)} className="underline underline-offset-4 hover:text-slate-300">
+                      {isZh ? "升级解锁更多" : "Upgrade"}
+                    </button>
+                  </div>
+                )}
               </div>
             </>
           )}
         </div>
       </div>
 
-      {/* 删除确认弹窗 */}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-xs rounded-2xl bg-slate-950 border border-white/10 shadow-2xl p-4">
-            <h2 className="text-sm font-semibold text-slate-50 mb-2">
-              {isZh ? "删除会话？" : "Delete conversation?"}
-            </h2>
-            <p className="text-xs text-slate-400 mb-3 break-words">
-              {isZh
-                ? `确认要删除「${deleteTargetTitle}」这个会话吗？删除后将无法恢复。`
-                : `Are you sure you want to delete “${deleteTargetTitle}”? This action cannot be undone.`}
-            </p>
-            <div className="flex justify-end gap-2 text-xs">
-              <button
-                onClick={closeDeleteConfirm}
-                disabled={deleteLoading}
-                className="px-3 py-1 rounded-full border border-white/15 bg-slate-900 text-slate-200 hover:border-slate-400 disabled:opacity-60"
-              >
-                {isZh ? "取消" : "Cancel"}
-              </button>
-              <button
-                onClick={confirmDeleteSession}
-                disabled={deleteLoading}
-                className="px-3 py-1 rounded-full bg-red-500/90 text-white font-medium hover:bg-red-500 disabled:opacity-60"
-              >
-                {deleteLoading ? (isZh ? "删除中…" : "Deleting…") : isZh ? "删除" : "Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Plan modal */}
+      <PlanModal
+        open={planOpen}
+        onClose={() => setPlanOpen(false)}
+        isZh={isZh}
+        sessionExists={sessionExists}
+        ent={ent}
+        onOpenRedeem={() => {
+          if (!sessionExists) return signIn();
+          setRedeemError(null);
+          setRedeemOpen(true);
+        }}
+        onManageBilling={manageBilling}
+      />
 
-      {/* 重命名弹窗 */}
-      {showRenameModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-          <div className="w-full max-w-xs rounded-2xl bg-slate-950 border border-white/10 shadow-2xl p-4">
-            <h2 className="text-sm font-semibold text-slate-50 mb-2">
-              {isZh ? "重命名会话" : "Rename conversation"}
-            </h2>
-            <input
-              value={renameTitle}
-              onChange={(e) => setRenameTitle(e.target.value)}
-              className="w-full text-xs px-3 py-2 rounded-xl bg-slate-900 border border-white/15 text-slate-100 focus:outline-none focus:ring-1 focus:ring-blue-500/70 focus:border-blue-500/70 mb-3"
-              placeholder={isZh ? "输入新的会话标题" : "Enter new title"}
-            />
-            <div className="flex justify-end gap-2 text-xs">
-              <button
-                onClick={closeRenameModal}
-                disabled={renameLoading}
-                className="px-3 py-1 rounded-full border border-white/15 bg-slate-900 text-slate-200 hover:border-slate-400 disabled:opacity-60"
-              >
-                {isZh ? "取消" : "Cancel"}
-              </button>
-              <button
-                onClick={confirmRenameSession}
-                disabled={renameLoading}
-                className="px-3 py-1 rounded-full bg-blue-500/90 text-white font-medium hover:bg-blue-500 disabled:opacity-60"
-              >
-                {renameLoading ? (isZh ? "保存中…" : "Saving…") : isZh ? "保存" : "Save"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Redeem modal */}
+      <RedeemModal
+        open={redeemOpen}
+        onClose={() => setRedeemOpen(false)}
+        isZh={isZh}
+        onRedeem={redeemCode}
+        loading={redeemLoading}
+        error={redeemError}
+      />
     </main>
   );
 }

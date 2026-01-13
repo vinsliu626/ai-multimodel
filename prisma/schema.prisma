@@ -11,7 +11,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
 model ChatSession {
   id        String        @id @default(cuid())
   userId    String
@@ -20,6 +19,8 @@ model ChatSession {
   updatedAt DateTime      @updatedAt
 
   messages  ChatMessage[]
+
+  @@index([userId, updatedAt])
 }
 
 model ChatMessage {
@@ -30,4 +31,46 @@ model ChatMessage {
   createdAt     DateTime    @default(now())
 
   chatSession   ChatSession @relation(fields: [chatSessionId], references: [id])
+}
+
+
+/** ===================== Billing / Plans ===================== */
+model UserEntitlement {
+  userId        String   @id
+  plan          String   @default("basic") // basic | pro | ultra
+  giftUnlimited Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model GiftCode {
+  code      String   @id
+  isActive  Boolean  @default(true)
+  maxUses   Int?     // null = unlimited uses
+  usedCount Int      @default(0)
+  createdAt DateTime @default(now())
+
+  redemptions GiftCodeRedemption[]
+}
+
+model GiftCodeRedemption {
+  id        String   @id @default(cuid())
+  code      String
+  userId    String
+  createdAt DateTime @default(now())
+
+  giftCode  GiftCode @relation(fields: [code], references: [code], onDelete: Restrict)
+
+  @@unique([code, userId])
+  @@index([userId])
+}
+
+model UsageEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String   // detector_words | note_seconds | chat_count
+  amount    Int
+  createdAt DateTime @default(now())
+
+  @@index([userId, type, createdAt])
 }
