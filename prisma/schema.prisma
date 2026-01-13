@@ -101,15 +101,4 @@ model UsageEvent {
 
   @@index([userId, type, createdAt])
   @@index([createdAt])
-
-  model StripeCustomer {
-  id         String   @id @default(cuid())
-  userId     String
-  customerId String   @unique
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  @@index([userId])
-}
-
 }
