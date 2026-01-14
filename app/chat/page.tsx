@@ -432,7 +432,7 @@ function PlanModal({
             <div className="rounded-3xl border border-white/10 bg-slate-950/50 backdrop-blur-xl p-4">
               <Card
                 title="Pro"
-                price={isZh ? "￥5.99 / 月" : "$5.99 / mo"}
+                price={isZh ? "$5.99 / 月" : "$5.99 / mo"}
                 badge={isZh ? "推荐" : "Popular"}
                 active={cur === "pro"}
                 items={[
@@ -460,7 +460,7 @@ function PlanModal({
             <div className="rounded-3xl border border-white/10 bg-slate-950/50 backdrop-blur-xl p-4">
               <Card
                 title="Ultra Pro"
-                price={isZh ? "￥7.99 / 月" : "$7.99 / mo"}
+                price={isZh ? "$7.99 / 月" : "$7.99 / mo"}
                 badge={isZh ? "最强" : "Best"}
                 active={cur === "ultra"}
                 items={[

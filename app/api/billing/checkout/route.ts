@@ -67,8 +67,9 @@ export async function POST(req: Request) {
     mode: "subscription",
     customer: customerId,
     line_items: [{ price: priceId, quantity: 1 }],
-    success_url: `${baseUrl}/?success=1`,
-    cancel_url: `${baseUrl}/?canceled=1`,
+    success_url: `${baseUrl}/chat?success=1&plan=${plan}`,
+    cancel_url: `${baseUrl}/chat?canceled=1`,
+
     metadata: { userId, plan },
 
     // ⭐ 强烈建议加：把 metadata 放进订阅，后面 webhook 更新套餐更稳
