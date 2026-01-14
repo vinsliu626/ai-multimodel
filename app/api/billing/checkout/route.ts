@@ -64,13 +64,18 @@ export async function POST(req: Request) {
     const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
 
     const checkout = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      customer: customerId,
-      line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${baseUrl}/billing?success=1`,
-      cancel_url: `${baseUrl}/billing?canceled=1`,
-      metadata: { userId, plan },
-    });
+    mode: "subscription",
+    customer: customerId,
+    line_items: [{ price: priceId, quantity: 1 }],
+    success_url: `${baseUrl}/?success=1`,
+    cancel_url: `${baseUrl}/?canceled=1`,
+    metadata: { userId, plan },
+
+    // ⭐ 强烈建议加：把 metadata 放进订阅，后面 webhook 更新套餐更稳
+    subscription_data: { metadata: { userId, plan } },
+  });
+
+
 
     return NextResponse.json({ ok: true, url: checkout.url });
   } catch (e: any) {

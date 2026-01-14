@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
+import { no } from "zod/locales";
 
 /** ===================== Types ===================== */
 type Role = "user" | "assistant";
@@ -1023,8 +1024,8 @@ function NoteUI({
 
   const [recording, setRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<BlobPart[]>([]);
-  const [recordBlob, setRecordBlob] = useState<Blob | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
   const [recordSecs, setRecordSecs] = useState(0);
   const timerRef = useRef<number | null>(null);
 
@@ -1032,13 +1033,28 @@ function NoteUI({
   const [result, setResult] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
+  // ✅ 分片上传会话
+  const [noteId, setNoteId] = useState<string | null>(null);
+  const [uploadedChunks, setUploadedChunks] = useState(0);
+  const [chunkError, setChunkError] = useState<string | null>(null);
+  const [liveTranscript, setLiveTranscript] = useState<string>("");
+
+  // ✅ 串行上传队列 & chunkIndex
+  const uploadingRef = useRef<Promise<void>>(Promise.resolve());
+  const chunkIndexRef = useRef(0);
+
   const canGenerate = useMemo(() => {
     if (locked) return false;
     if (loading || isLoadingGlobal) return false;
+
     if (tab === "upload") return !!file;
-    if (tab === "record") return !!recordBlob;
+
+    // record：必须有 noteId、已经停止录音、且至少上传过 1 个分片，且不能有 chunkError
+    if (tab === "record") return !!noteId && !recording && uploadedChunks > 0 && !chunkError;
+
+    // text
     return text.trim().length > 0;
-  }, [tab, file, recordBlob, text, loading, isLoadingGlobal, locked]);
+  }, [tab, file, text, loading, isLoadingGlobal, locked, noteId, recording, uploadedChunks, chunkError]);
 
   function resetAll() {
     setError(null);
@@ -1052,55 +1068,158 @@ function NoteUI({
     }
   }
 
+  function cleanupStream() {
+    try {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    } catch {}
+    streamRef.current = null;
+  }
+
   async function startRecording() {
     if (locked) {
       setError(isZh ? "请先登录后使用 AI 笔记（Basic 有每周额度）。" : "Please sign in to use AI Notes.");
       return;
     }
+    if (recording || loading || isLoadingGlobal) return;
+
     resetAll();
-    setRecordBlob(null);
+
+    // reset record states
+    setChunkError(null);
+    setUploadedChunks(0);
+    setLiveTranscript("");
     setRecordSecs(0);
+    setNoteId(null);
+
+    uploadingRef.current = Promise.resolve();
+    chunkIndexRef.current = 0;
 
     try {
+      // 1) start session：拿 noteId
+      const startRes = await fetch("/api/ai-note/start", { method: "POST" });
+      const startJson = await startRes.json().catch(() => null);
+      if (!startRes.ok || !startJson?.ok || !startJson?.noteId) {
+        throw new Error(startJson?.error || `start failed: ${startRes.status}`);
+      }
+      const nid = String(startJson.noteId);
+      setNoteId(nid);
+
+      // 2) open mic
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
 
       const preferredTypes = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg"];
       const mimeType = preferredTypes.find((t) => MediaRecorder.isTypeSupported(t));
 
       const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = mr;
-      chunksRef.current = [];
 
       mr.ondataavailable = (e) => {
-        if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
+        if (!e.data || e.data.size === 0) return;
+        if (!nid) return;
+
+        const blob = e.data;
+        const type = blob.type || mr.mimeType || "audio/webm";
+        const ext = type.includes("ogg") ? "ogg" : "webm";
+
+        const thisIndex = chunkIndexRef.current;
+        chunkIndexRef.current += 1;
+
+        const f = new File([blob], `chunk-${thisIndex}.${ext}`, { type });
+
+        // ✅ 串行上传，避免并发堆积
+        uploadingRef.current = uploadingRef.current.then(async () => {
+          try {
+            const fd = new FormData();
+            fd.append("noteId", nid);
+            fd.append("chunkIndex", String(thisIndex));
+            fd.append("file", f, f.name);
+
+            const r = await fetch("/api/ai-note/chunk", { method: "POST", body: fd });
+            // ✅ 先读原始文本（500/HTML 也能看到）
+            const raw = await r.text();
+
+            // ✅ 再尝试解析 JSON
+            let j: any = null;
+            try {
+              j = raw ? JSON.parse(raw) : null;
+            } catch {
+              j = null;
+            }
+
+            if (!r.ok || j?.ok === false) {
+              const backendMsg =
+                j?.error ||
+                j?.message ||
+                (raw ? raw.slice(0, 300) : "") ||
+                `chunk upload failed: ${r.status}`;
+
+              throw new Error(`chunk upload failed (${r.status}) :: ${backendMsg}`);
+            }
+
+            setUploadedChunks((n) => n + 1);
+
+            if (j?.transcript) {
+              setLiveTranscript((prev) => (prev ? prev + "\n" : "") + String(j.transcript));
+            }
+
+          } catch (err: any) {
+            console.error("chunk upload error:", err);
+            setChunkError(err?.message || "chunk upload error");
+          }
+        });
       };
 
-      mr.onstop = () => {
+      mr.onstop = async () => {
         stopTimer();
-        const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
-        setRecordBlob(blob);
-        stream.getTracks().forEach((t) => t.stop());
+
+        // ✅ 等待最后一个 chunk 上传完成
+        try {
+          await uploadingRef.current;
+        } catch {}
+
+        cleanupStream();
+        setRecording(false);
       };
 
-      mr.start();
+      // ✅ 每 30 秒一个 chunk（你也可以改 15s/60s）
+      mr.start(30_000);
       setRecording(true);
 
       timerRef.current = window.setInterval(() => {
         setRecordSecs((s) => s + 1);
       }, 1000);
     } catch (e: any) {
-      setError(e?.message || (isZh ? "无法打开麦克风权限（或浏览器不支持录音）。" : "Cannot access microphone (or browser unsupported)."));
+      console.error("startRecording error:", e);
+      cleanupStream();
+      setRecording(false);
+      setError(
+        e?.message ||
+          (isZh
+            ? "无法打开麦克风权限（或浏览器不支持录音）。"
+            : "Cannot access microphone (or browser unsupported).")
+      );
     }
   }
 
   function stopRecording() {
-    const mr = mediaRecorderRef.current;
-    if (!mr) return;
-    try {
-      mr.stop();
-    } catch {}
+  const mr = mediaRecorderRef.current;
+  if (!mr) return;
+
+  try {
+    // ✅ 先强制吐出最后一块
+    if (mr.state === "recording") {
+      try { mr.requestData(); } catch {}
+    }
+    mr.stop();
+  } catch (e) {
+    console.error("stopRecording error:", e);
+    stopTimer();
+    cleanupStream();
     setRecording(false);
   }
+}
+
 
   function onPickFile(f: File | null) {
     resetAll();
@@ -1123,7 +1242,11 @@ function NoteUI({
     const okMime = !f.type || f.type.startsWith("audio/") || f.type === "video/mp4";
 
     if (!okExt || !okMime) {
-      setError(isZh ? "仅支持常见音频格式：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac" : "Supported: mp3 / wav / m4a / mp4 / webm / ogg / aac / flac");
+      setError(
+        isZh
+          ? "仅支持常见音频格式：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"
+          : "Supported: mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"
+      );
       setFile(null);
       return;
     }
@@ -1138,11 +1261,17 @@ function NoteUI({
     }
     if (!canGenerate) return;
 
+    if (tab === "record" && chunkError) {
+      setError(isZh ? `分片上传出错：${chunkError}` : `Chunk upload error: ${chunkError}`);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setResult("");
 
     try {
+      // ---------- Text: 仍走旧接口 ----------
       if (tab === "text") {
         const res = await fetch("/api/ai-note", {
           method: "POST",
@@ -1151,27 +1280,57 @@ function NoteUI({
         });
 
         const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.ok === false) throw new Error(data?.error || `AI Note API error: ${res.status}`);
-        setResult(String(data?.note ?? data?.result ?? ""));
-      } else {
-        const fd = new FormData();
-        fd.append("inputType", tab);
-
-        if (tab === "upload") {
-          if (!file) throw new Error("Missing file");
-          fd.append("file", file, file.name);
-        } else {
-          if (!recordBlob) throw new Error("Missing recording");
-          const ext = recordBlob.type.includes("ogg") ? "ogg" : "webm";
-          const recFile = new File([recordBlob], `recording.${ext}`, { type: recordBlob.type || "audio/webm" });
-          fd.append("file", recFile, recFile.name);
+        if (!res.ok || data?.ok === false) {
+          throw new Error(data?.error || `AI Note API error: ${res.status}`);
         }
+        setResult(String(data?.note ?? data?.result ?? ""));
+        return;
+      }
+
+      // ---------- Upload: 仍走旧接口 ----------
+      if (tab === "upload") {
+        const fd = new FormData();
+        fd.append("inputType", "upload");
+        if (!file) throw new Error(isZh ? "缺少上传文件" : "Missing file");
+        fd.append("file", file, file.name);
 
         const res = await fetch("/api/ai-note", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.ok === false) throw new Error(data?.error || `AI Note API error: ${res.status}`);
+        if (!res.ok || data?.ok === false) {
+          throw new Error(data?.error || `AI Note API error: ${res.status}`);
+        }
         setResult(String(data?.note ?? data?.result ?? ""));
+        return;
       }
+
+      // ---------- Record: ✅ finalize ----------
+      if (tab === "record") {
+        if (!noteId) {
+          throw new Error(isZh ? "缺少 noteId：请重新开始录音。" : "Missing noteId: please start recording again.");
+        }
+        if (recording) {
+          throw new Error(isZh ? "请先停止录音，再生成笔记。" : "Stop recording before generating notes.");
+        }
+        if (uploadedChunks <= 0) {
+          throw new Error(isZh ? "没有上传任何分片，无法生成。" : "No chunks uploaded yet.");
+        }
+
+        const res = await fetch("/api/ai-note/finalize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ noteId }),
+        });
+
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data?.ok === false) {
+          throw new Error(data?.error || `Finalize error: ${res.status}`);
+        }
+
+        setResult(String(data?.note ?? data?.result ?? ""));
+        return;
+      }
+
+      throw new Error(isZh ? "未知的输入类型" : "Unknown input type");
     } catch (e: any) {
       setError(e?.message || (isZh ? "生成失败。" : "Failed to generate notes."));
     } finally {
@@ -1185,9 +1344,25 @@ function NoteUI({
       <button
         type="button"
         onClick={() => {
-          setTab(k);
-          resetAll();
-        }}
+        // ✅ 切换 tab 前清理录音
+        if (recording) {
+          try {
+            stopRecording();
+          } catch {}
+        }
+        cleanupStream();
+
+        setTab(k);
+        resetAll();
+
+        // 可选：切 tab 时也重置录音相关状态
+        setChunkError(null);
+        setUploadedChunks(0);
+        setLiveTranscript("");
+        setRecordSecs(0);
+        setNoteId(null);
+      }}
+
         className={[
           "h-10 px-5 rounded-full text-sm font-semibold transition",
           active
@@ -1204,8 +1379,15 @@ function NoteUI({
     <div className="flex-1 overflow-hidden px-4 py-4">
       <div className="relative h-full w-full rounded-3xl border border-white/10 bg-gradient-to-b from-slate-950/40 via-slate-900/30 to-slate-950/40 shadow-[0_20px_70px_rgba(0,0,0,0.35)] backdrop-blur-xl overflow-hidden flex flex-col">
         <div className="px-6 py-5 border-b border-white/10">
-          <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-50">{isZh ? "AI 笔记助手" : "AI Note Assistant"}</h2>
-          <p className="mt-2 text-sm text-slate-300">{isZh ? "固定三模型协作：音频/录音转文字后，再生成结构化笔记。" : "Always uses team mode: ASR → structured notes."}</p>
+          <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-50">
+            {isZh ? "AI 笔记助手" : "AI Note Assistant"}
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            {isZh
+              ? "方案 A：录音每 30 秒自动分片上传并转写，停止后 finalize 生成结构化笔记。"
+              : "Plan A: record → upload chunks every 30s → transcribe → finalize to generate notes."}
+          </p>
+
           {locked && (
             <div className="mt-3 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-200">
               {isZh ? "请先登录后使用 AI 笔记（Basic 有每周额度）。" : "Sign in to use AI Notes (Basic has weekly quota)."}
@@ -1215,7 +1397,17 @@ function NoteUI({
 
         {error && (
           <div className="px-6 pt-4">
-            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-200">{error}</div>
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-200">
+              {error}
+            </div>
+          </div>
+        )}
+
+        {chunkError && tab === "record" && (
+          <div className="px-6 pt-4">
+            <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-[12px] text-red-200">
+              {isZh ? `分片上传失败：${chunkError}` : `Chunk upload failed: ${chunkError}`}
+            </div>
           </div>
         )}
 
@@ -1251,19 +1443,23 @@ function NoteUI({
                           : "Upload audio (multi-format) to generate notes"
                         : tab === "record"
                         ? isZh
-                          ? "浏览器录音，生成学习笔记"
-                          : "Record in browser to generate notes"
+                          ? "浏览器录音（自动分片上传），生成学习笔记"
+                          : "Record in browser (auto chunk upload) to generate notes"
                         : isZh
                         ? "粘贴文字内容，生成学习笔记"
                         : "Paste text to generate notes"}
                     </p>
-                    <p className="mt-1 text-sm text-slate-400">{isZh ? "输出自动结构化：要点 / 术语 / 结论 / 复习清单" : "Structured output: key points, terms, summary, review list"}</p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      {isZh ? "输出自动结构化：要点 / 术语 / 结论 / 复习清单" : "Structured output: key points, terms, summary, review list"}
+                    </p>
                   </div>
 
                   <div className="mt-8 rounded-3xl border border-white/10 bg-white/5 p-5">
                     {tab === "upload" && (
                       <div className="space-y-3">
-                        <p className="text-[12px] text-slate-300">{isZh ? "支持：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac" : "Supported: mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"}</p>
+                        <p className="text-[12px] text-slate-300">
+                          {isZh ? "支持：mp3 / wav / m4a / mp4 / webm / ogg / aac / flac" : "Supported: mp3 / wav / m4a / mp4 / webm / ogg / aac / flac"}
+                        </p>
                         <input
                           type="file"
                           accept="audio/*,video/mp4,.mp3,.wav,.m4a,.mp4,.webm,.ogg,.aac,.flac"
@@ -1283,7 +1479,8 @@ function NoteUI({
                       <div className="space-y-4">
                         <div className="flex items-center justify-between">
                           <div className="text-[12px] text-slate-300">
-                            {isZh ? "录音时长：" : "Duration:"} <span className="font-semibold text-slate-100">{recordSecs}s</span>
+                            {isZh ? "录音时长：" : "Duration:"}{" "}
+                            <span className="font-semibold text-slate-100">{recordSecs}s</span>
                           </div>
 
                           <div className="flex items-center gap-2">
@@ -1296,7 +1493,10 @@ function NoteUI({
                                 {isZh ? "开始录音" : "Start"}
                               </button>
                             ) : (
-                              <button onClick={stopRecording} className="h-10 px-5 rounded-full bg-red-500/80 text-white hover:bg-red-500 transition font-semibold">
+                              <button
+                                onClick={stopRecording}
+                                className="h-10 px-5 rounded-full bg-red-500/80 text-white hover:bg-red-500 transition font-semibold"
+                              >
                                 {isZh ? "停止" : "Stop"}
                               </button>
                             )}
@@ -1304,8 +1504,29 @@ function NoteUI({
                         </div>
 
                         <div className="rounded-2xl border border-white/10 bg-slate-950/30 px-3 py-3 text-[12px] text-slate-300">
-                          {recordBlob ? (isZh ? "已录音完成，可直接生成笔记。" : "Recording ready. You can generate notes now.") : isZh ? "点击开始录音，结束后自动保存。" : "Click Start. When you stop, it will be saved automatically."}
+                          {recording
+                            ? isZh
+                              ? `录音中…：${uploadedChunks}`
+                              : `Recording… : ${uploadedChunks}`
+                            : noteId
+                            ? isZh
+                              ? `录音已停止。已上传分片：${uploadedChunks}，可以生成笔记。`
+                              : `Stopped. Uploaded chunks: ${uploadedChunks}. Ready to generate.`
+                            : isZh
+                            ? "点击开始录音，系统会每 30 秒自动上传并转写。"
+                            : "Click Start. It will upload & transcribe every 30s."}
                         </div>
+
+                        {!!liveTranscript.trim() && (
+                          <div className="rounded-2xl border border-white/10 bg-slate-950/30 px-3 py-3">
+                            <div className="text-[12px] text-slate-300 mb-2">
+                              {isZh ? "实时转写（可选显示）" : "Live transcript (optional)"}
+                            </div>
+                            <div className="whitespace-pre-wrap text-[12px] leading-5 text-slate-100 max-h-[200px] overflow-y-auto custom-scrollbar">
+                              {liveTranscript}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -1321,7 +1542,9 @@ function NoteUI({
                           className="w-full h-40 rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
                           disabled={loading || isLoadingGlobal || locked}
                         />
-                        <p className="text-[11px] text-slate-400">{isZh ? "建议：越完整越好（可包含时间点、说话人、章节标题）。" : "Tip: fuller transcript yields better notes."}</p>
+                        <p className="text-[11px] text-slate-400">
+                          {isZh ? "建议：越完整越好（可包含时间点、说话人、章节标题）。" : "Tip: fuller transcript yields better notes."}
+                        </p>
                       </div>
                     )}
                   </div>
@@ -1356,6 +1579,7 @@ function NoteUI({
     </div>
   );
 }
+
 
 /** ===================== Main Page ===================== */
 export default function ChatPage() {
