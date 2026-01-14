@@ -1,0 +1,21 @@
+{
+  "noteId": "8c32489c-682c-4c86-9617-c47b74983bec",
+  "userId": "gcswzh@gmail.com",
+  "createdAt": 1768379216945,
+  "chunks": [
+    {
+      "chunkIndex": 0,
+      "filePath": "C:\\Users\\gcswz\\Desktop\\AI\\ai-multimodel\\.tmp\\ai-note\\8c32489c-682c-4c86-9617-c47b74983bec\\chunks\\chunk-000000.webm",
+      "size": 482195,
+      "mime": "audio/webm;codecs=opus",
+      "createdAt": 1768379247083
+    },
+    {
+      "chunkIndex": 1,
+      "filePath": "C:\\Users\\gcswz\\Desktop\\AI\\ai-multimodel\\.tmp\\ai-note\\8c32489c-682c-4c86-9617-c47b74983bec\\chunks\\chunk-000001.webm",
+      "size": 183555,
+      "mime": "audio/webm;codecs=opus",
+      "createdAt": 1768379258478
+    }
+  ]
+}

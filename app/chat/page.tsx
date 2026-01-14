@@ -1108,8 +1108,9 @@ function NoteUI({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      const preferredTypes = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/ogg"];
+      const preferredTypes = ["audio/ogg;codecs=opus", "audio/ogg", "audio/webm;codecs=opus", "audio/webm"];
       const mimeType = preferredTypes.find((t) => MediaRecorder.isTypeSupported(t));
+
 
       const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = mr;
@@ -1122,10 +1123,13 @@ function NoteUI({
         const type = blob.type || mr.mimeType || "audio/webm";
         const ext = type.includes("ogg") ? "ogg" : "webm";
 
+
         const thisIndex = chunkIndexRef.current;
         chunkIndexRef.current += 1;
 
         const f = new File([blob], `chunk-${thisIndex}.${ext}`, { type });
+        console.log("[chunk upload]", { nid, thisIndex, size: f.size, type: f.type });
+
 
         // ✅ 串行上传，避免并发堆积
         uploadingRef.current = uploadingRef.current.then(async () => {
@@ -1135,7 +1139,17 @@ function NoteUI({
             fd.append("chunkIndex", String(thisIndex));
             fd.append("file", f, f.name);
 
-            const r = await fetch("/api/ai-note/chunk", { method: "POST", body: fd });
+            const url = `/api/ai-note/chunk?noteId=${encodeURIComponent(nid)}&chunkIndex=${thisIndex}`;
+            
+            const r = await fetch(url, {
+              method: "POST",
+              headers: {
+                "x-note-id": nid,
+                "x-chunk-index": String(thisIndex),
+              },
+              body: fd,
+            });
+
             // ✅ 先读原始文本（500/HTML 也能看到）
             const raw = await r.text();
 
@@ -1146,6 +1160,8 @@ function NoteUI({
             } catch {
               j = null;
             }
+            
+            console.log("[chunk upload ok]", { status: r.status, json: j });
 
             if (!r.ok || j?.ok === false) {
               const backendMsg =
@@ -1275,7 +1291,7 @@ function NoteUI({
       if (tab === "text") {
         const res = await fetch("/api/ai-note", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json"},
           body: JSON.stringify({ inputType: "text", text: text.trim() }),
         });
 
@@ -1314,6 +1330,10 @@ function NoteUI({
         if (uploadedChunks <= 0) {
           throw new Error(isZh ? "没有上传任何分片，无法生成。" : "No chunks uploaded yet.");
         }
+
+        try {
+        await uploadingRef.current;
+        } catch {}
 
         const res = await fetch("/api/ai-note/finalize", {
           method: "POST",
@@ -1384,9 +1404,10 @@ function NoteUI({
           </h2>
           <p className="mt-2 text-sm text-slate-300">
             {isZh
-              ? "方案 A：录音每 30 秒自动分片上传并转写，停止后 finalize 生成结构化笔记。"
-              : "Plan A: record → upload chunks every 30s → transcribe → finalize to generate notes."}
+              ? "一键录音或上传音频，自动整理为结构化笔记（要点 / 决策 / 行动项 / 待确认）。"
+              : "Record or upload audio to automatically generate structured notes (key points, decisions, action items, follow-ups)."}
           </p>
+
 
           {locked && (
             <div className="mt-3 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-200">

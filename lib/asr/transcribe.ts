@@ -1,44 +1,39 @@
 // lib/asr/transcribe.ts
 export async function transcribeAudioToText(file: File): Promise<string> {
-  const base = process.env.ASR_URL;
+  const base = process.env.ASR_URL?.trim();
   if (!base) {
-    throw new Error("Missing ASR_URL env. Set ASR_URL in Vercel env vars.");
+    throw Object.assign(new Error("Missing ASR_URL env. Set ASR_URL in Vercel env vars."), {
+      code: "MISSING_ASR_URL",
+    });
   }
 
-  // 统一拼出 endpoint
-  const endpoint = `${base.replace(/\/$/, "")}/transcribe`;
+  // ✅ 统一拼接，避免 ASR_URL 末尾带不带 / 导致路径错
+  const url = base.endsWith("/") ? `${base}transcribe` : `${base}/transcribe`;
 
+  // 这里用 FormData 传文件（最通用）
   const fd = new FormData();
-  fd.append("file", file, file.name || "audio");
+  fd.append("file", file, file.name || "audio.webm");
 
-  const headers: Record<string, string> = {};
-  // 如果 Space 私有：在 Vercel 设置 HF_TOKEN
-  if (process.env.HF_TOKEN) {
-    headers["Authorization"] = `Bearer ${process.env.HF_TOKEN}`;
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "POST", body: fd });
+  } catch (e: any) {
+    throw new Error(`ASR network error: ${e?.message || String(e)}`);
   }
 
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers,
-    body: fd,
-    cache: "no-store",
-  });
-
-  const data: any = await res.json().catch(() => ({}));
-
-  // 先看 HTTP，再看 ok 字段
+  const raw = await res.text();
   if (!res.ok) {
-    const msg =
-      data?.error ||
-      data?.detail ||
-      `ASR HTTP error: ${res.status} ${res.statusText}`;
-    throw new Error(msg);
-  }
-  if (data?.ok === false) {
-    throw new Error(data?.error || "ASR returned ok=false");
+    // ✅ 把 raw 带上，方便你看 ASR 真实返回
+    throw new Error(`ASR HTTP error: ${res.status} ${res.statusText}. body=${raw?.slice(0, 300)}`);
   }
 
-  const text = String(data?.text ?? data?.transcript ?? data?.result ?? "").trim();
-  if (!text) throw new Error("ASR returned empty transcript.");
+  // ✅ 兼容 JSON 返回
+  let json: any = null;
+  try {
+    json = raw ? JSON.parse(raw) : null;
+  } catch {}
+
+  // 你可以让 ASR 返回：{ text: "..." } 或 { transcript: "..." }
+  const text = (json?.text || json?.transcript || raw || "").trim();
   return text;
 }

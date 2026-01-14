@@ -1,0 +1,14 @@
+{
+  "noteId": "1a391b7b-a85c-41ff-8e01-862987e98dc7",
+  "userId": "gcswzh@gmail.com",
+  "createdAt": 1768379210702,
+  "chunks": [
+    {
+      "chunkIndex": 0,
+      "filePath": "C:\\Users\\gcswz\\Desktop\\AI\\ai-multimodel\\.tmp\\ai-note\\1a391b7b-a85c-41ff-8e01-862987e98dc7\\chunks\\chunk-000000.webm",
+      "size": 3059,
+      "mime": "audio/webm;codecs=opus",
+      "createdAt": 1768379211625
+    }
+  ]
+}
