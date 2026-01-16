@@ -23,10 +23,18 @@ export async function getEntitlementStatus(userId: string) {
   // 如果有订阅，就用 Stripe 的 current_period_end 算剩余天数，并同步状态
   if (ent.stripeSubId) {
     try {
-      const sub = await stripe.subscriptions.retrieve(ent.stripeSubId);
+      const subResp = await stripe.subscriptions.retrieve(ent.stripeSubId);
+      const sub: any = (subResp as any).data ?? subResp;
+      
 
       stripeStatus = sub.status;
-      daysLeft = daysLeftFromUnix(sub.current_period_end);
+      const currentPeriodEnd =
+      (sub as any).current_period_end ??
+      (sub as any).current_period_end_at ??
+      null;
+
+      daysLeft = daysLeftFromUnix(currentPeriodEnd);
+
 
       // 如果订阅已经不 active（比如 canceled/unpaid），你可以选择自动降级
       if (sub.status !== "active") {

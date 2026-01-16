@@ -23,9 +23,9 @@ export async function POST(req: Request) {
   const sig = req.headers.get("stripe-signature"); // ✅ 不要 await
   const whsec = process.env.STRIPE_WEBHOOK_SECRET;
 
-  if (!sig || !whsec) {
-    return NextResponse.json({ ok: false, error: "MISSING_WEBHOOK_SECRET" }, { status: 500 });
-  }
+  if (!sig) return NextResponse.json({ ok: false, error: "NO_SIGNATURE" }, { status: 400 });
+  if (!whsec) return NextResponse.json({ ok: false, error: "NO_WEBHOOK_SECRET" }, { status: 500 });
+
 
   const rawBody = await req.text();
 
