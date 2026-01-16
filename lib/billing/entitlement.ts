@@ -1,70 +1,63 @@
-// lib/billing/entitlement.ts
 import { prisma } from "@/lib/prisma";
-import { PLAN_LIMITS, type PlanId } from "./constants";
-import { getUsage } from "./usage";
+import { stripe } from "@/lib/stripe";
 
-export type EntitlementStatus = {
-  ok: true;
-  plan: "basic" | "pro" | "ultra" | "gift";
-  unlimited: boolean;
-
-  detectorWordsPerWeek: number | null;
-  noteSecondsPerWeek: number | null;
-  chatPerDay: number | null;
-
-  usedDetectorWordsThisWeek: number;
-  usedNoteSecondsThisWeek: number;
-  usedChatCountToday: number;
-
-  canSeeSuspiciousSentences: boolean;
-};
-
-export async function ensureUserEntitlementRow(userId: string) {
-  // create if not exists
-  await prisma.userEntitlement.upsert({
-    where: { userId },
-    create: { userId, plan: "basic", unlimited: false },
-    update: {},
-  });
+function daysLeftFromUnix(unixSeconds?: number | null) {
+  if (!unixSeconds) return null;
+  const ms = unixSeconds * 1000 - Date.now();
+  const days = Math.ceil(ms / (1000 * 60 * 60 * 24));
+  return Math.max(0, days);
 }
 
-export async function getEntitlementStatus(userId: string): Promise<EntitlementStatus> {
-  await ensureUserEntitlementRow(userId);
+export async function getEntitlementStatus(userId: string) {
+  const ent = await prisma.userEntitlement.upsert({
+    where: { userId },
+    update: {},
+    create: { userId },
+  });
 
-  const ent = await prisma.userEntitlement.findUnique({ where: { userId } });
-  const usage = await getUsage(userId);
+  // 默认取 DB
+  let plan = ent.plan || "basic";
+  let stripeStatus = ent.stripeStatus || null;
+  let daysLeft: number | null = null;
 
-  const plan = (ent?.plan as PlanId) || "basic";
-  const giftUnlimited = !!ent?.unlimited;
+  // 如果有订阅，就用 Stripe 的 current_period_end 算剩余天数，并同步状态
+  if (ent.stripeSubId) {
+    try {
+      const sub = await stripe.subscriptions.retrieve(ent.stripeSubId);
 
-  if (giftUnlimited) {
-    return {
-      ok: true,
-      plan: "gift",
-      unlimited: true,
-      detectorWordsPerWeek: null,
-      noteSecondsPerWeek: null,
-      chatPerDay: null,
-      ...usage,
-      canSeeSuspiciousSentences: true,
-    };
+      stripeStatus = sub.status;
+      daysLeft = daysLeftFromUnix(sub.current_period_end);
+
+      // 如果订阅已经不 active（比如 canceled/unpaid），你可以选择自动降级
+      if (sub.status !== "active") {
+        // 这里我给你更保守的逻辑：非 active 不立刻降级，只是标记状态
+        // 你想要“到期就变 basic”，建议用 subscription.deleted + invoice.payment_failed 来控制
+      }
+
+      // 同步状态到 DB（可选但推荐）
+      await prisma.userEntitlement.update({
+        where: { userId },
+        data: { stripeStatus: sub.status },
+      });
+    } catch (e) {
+      // Stripe 查不到订阅（可能 test/live 混用或被删），可选择降级
+      await prisma.userEntitlement.update({
+        where: { userId },
+        data: { plan: "basic", unlimited: false, stripeSubId: null, stripeStatus: "missing" },
+      });
+      plan = "basic";
+      stripeStatus = "missing";
+    }
   }
 
-  const limits = PLAN_LIMITS[plan] ?? PLAN_LIMITS.basic;
-
-  const unlimited =
-    limits.detectorWordsPerWeek === null &&
-    limits.noteSecondsPerWeek === null &&
-    limits.chatPerDay === null;
-
+  // 你说的“打印用户xxx，Pro，20天”
+  // 这里直接返回，前端显示即可
   return {
     ok: true,
+    userId,
     plan,
-    unlimited,
-    detectorWordsPerWeek: limits.detectorWordsPerWeek,
-    noteSecondsPerWeek: limits.noteSecondsPerWeek,
-    chatPerDay: limits.chatPerDay,
-    ...usage,
-    canSeeSuspiciousSentences: limits.canSeeSuspiciousSentences,
+    stripeStatus,
+    daysLeft, // 可能为 null（例如 basic 或查不到订阅）
+    unlimited: ent.unlimited,
   };
 }
