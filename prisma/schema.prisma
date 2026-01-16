@@ -46,8 +46,8 @@ model UserEntitlement {
   userId String @unique
   // user  User  @relation(fields: [userId], references: [id]) // 先注释掉，等 User 模型确定后再加
 
-  plan      String  @default("basic")
-  unlimited Boolean @default(false)
+  plan         String  @default("basic")
+  unlimited    Boolean @default(false)
 
   detectorWordsPerWeek Int?
   noteSecondsPerWeek   Int?
@@ -60,8 +60,8 @@ model UserEntitlement {
   canSeeSuspiciousSentences Boolean @default(false)
 
   stripeCustomerId String?
-  stripeSubId      String?
-  stripeStatus     String?
+  stripeSubId String?
+  stripeStatus String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -26,7 +26,7 @@ export default function Home() {
                 Multi-Model AI
               </p>
               <p className="text-sm font-semibold">
-                {isZh ? "多模型 AI 工作台" : "Multi-Model AI Workspace"}
+                {isZh ? "AI 辅导" : "AI Tutor"}
               </p>
             </div>
           </div>

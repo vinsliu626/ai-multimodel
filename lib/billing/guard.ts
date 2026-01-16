@@ -1,5 +1,7 @@
 // lib/billing/guard.ts
 import { prisma } from "@/lib/prisma";
+import { stripe } from "@/lib/stripe";
+
 
 export type QuotaAction = "chat" | "detector" | "note";
 
@@ -102,18 +104,91 @@ export async function assertQuotaOrThrow(input: {
   const { userId, action } = input;
   const amount = Math.max(1, Math.floor(input.amount || 1));
 
-  // ✅ 本地开发绕过（强烈建议只在本地用）
   if (process.env.DEV_BYPASS_QUOTA === "true") return;
 
   // 1) 读用户权益（没有就当 basic）
-  const ent = await prisma.userEntitlement.findUnique({ where: { userId } });
-  const plan = (ent?.plan as "basic" | "pro" | "ultra") || "basic";
-  const isUnlimited = Boolean(ent?.unlimited);
+  const ent = await prisma.userEntitlement.upsert({
+    where: { userId },
+    update: {},
+    create: { userId },
+  });
 
-  // 2) gift unlimited 直接放行；Ultra 全放行
+  let plan = (ent.plan as "basic" | "pro" | "ultra") || "basic";
+  const isUnlimited = Boolean(ent.unlimited);
+
+  // ✅ 2) 订阅有效性校验（核心：欠费不能用）
+  // 规则：只要 plan 不是 basic，就必须保证 stripeStatus=active（或通过 Stripe 实时确认）
+  if (plan !== "basic" && ent.stripeSubId) {
+    try {
+      const subResp = await stripe.subscriptions.retrieve(ent.stripeSubId);
+      const sub: any = (subResp as any).data ?? subResp;
+
+      const status = (sub.status as string | undefined) ?? null;
+
+      // 同步 DB 的 stripeStatus（推荐）
+      if (status && status !== ent.stripeStatus) {
+        await prisma.userEntitlement.update({
+          where: { userId },
+          data: { stripeStatus: status },
+        });
+      }
+
+      // 🔥 非 active：直接拒绝本次请求（你要的不合理情况就不会发生）
+      if (status !== "active") {
+        // 可选：同时把用户降级 basic（让前端立刻显示 basic）
+        await prisma.userEntitlement.update({
+          where: { userId },
+          data: {
+            plan: "basic",
+            unlimited: false,
+            canSeeSuspiciousSentences: false,
+            detectorWordsPerWeek: WEEKLY_LIMITS.basic.detector_words,
+            noteSecondsPerWeek: WEEKLY_LIMITS.basic.note_seconds,
+            chatPerDay: DAILY_CHAT_LIMIT.basic,
+          },
+        });
+
+        throw new QuotaError(
+          "PAYMENT_REQUIRED",
+          "Subscription inactive (payment failed/canceled). Please renew to continue.",
+          402
+        );
+      }
+    } catch (e) {
+      // Stripe 查不到订阅：也拒绝，并降级
+      await prisma.userEntitlement.update({
+        where: { userId },
+        data: {
+          plan: "basic",
+          unlimited: false,
+          stripeSubId: null,
+          stripeStatus: "missing",
+          canSeeSuspiciousSentences: false,
+          detectorWordsPerWeek: WEEKLY_LIMITS.basic.detector_words,
+          noteSecondsPerWeek: WEEKLY_LIMITS.basic.note_seconds,
+          chatPerDay: DAILY_CHAT_LIMIT.basic,
+        },
+      });
+
+      throw new QuotaError("PAYMENT_REQUIRED", "Subscription missing. Please renew.", 402);
+    }
+  } else if (plan !== "basic" && !ent.stripeSubId) {
+    // 有人 plan=pro/ultra 但没有订阅 id：也不该允许
+    await prisma.userEntitlement.update({
+      where: { userId },
+      data: { plan: "basic", unlimited: false },
+    });
+    plan = "basic";
+    throw new QuotaError("PAYMENT_REQUIRED", "No active subscription found. Please subscribe.", 402);
+  }
+
+  // ✅ 3) gift unlimited 直接放行；Ultra 全放行
   if (isUnlimited || plan === "ultra") return;
 
-  // 3) 查窗口内已用量
+  // ✅ 4) Pro chat 无限：直接放行 chat
+  if (plan === "pro" && action === "chat") return;
+
+  // 5) 查窗口内已用量
   const usageType = usageTypeOf(action);
   const since = windowStartOf(action);
 
@@ -133,7 +208,6 @@ export async function assertQuotaOrThrow(input: {
     const remain = Math.max(0, Math.floor(limit - used));
     const code = errorCodeOf(action);
 
-    // 给前端更好显示：剩余/周期等
     throw new QuotaError(
       code,
       `Quota exceeded: ${usageType}. used=${used}, limit=${limit}, remaining=${remain}`,

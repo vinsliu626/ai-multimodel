@@ -2,7 +2,8 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
-import { no } from "zod/locales";
+import { useSearchParams } from "next/navigation";
+
 
 /** ===================== Types ===================== */
 type Role = "user" | "assistant";
@@ -57,6 +58,12 @@ function formatSecondsToHrs(sec: number) {
   if (h < 1) return `${Math.round((sec / 60) * 10) / 10}m`;
   return `${Math.round(h * 10) / 10}h`;
 }
+
+function formatLimitSeconds(sec: number | null) {
+  if (sec === null) return "∞";
+  return formatSecondsToHrs(sec);
+}
+
 
 function planLabel(plan: PlanId, isZh: boolean) {
   if (plan === "gift") return isZh ? "礼包无限制" : "Gift Unlimited";
@@ -271,6 +278,7 @@ function PlanModal({
   ent,
   onOpenRedeem,
   onManageBilling,
+  refreshEnt,
 }: {
   open: boolean;
   onClose: () => void;
@@ -279,6 +287,7 @@ function PlanModal({
   ent: Entitlement | null;
   onOpenRedeem: () => void;
   onManageBilling: (plan: "pro" | "ultra") => void;
+  refreshEnt: () => Promise<void> | void;
 }) {
   if (!open) return null;
 
@@ -338,16 +347,22 @@ function PlanModal({
       </ul>
 
       <button
-        onClick={onClick}
-        className={[
-          "mt-4 w-full h-10 rounded-2xl font-semibold text-sm transition",
-          active
-            ? "bg-white/10 text-slate-200 border border-white/10 hover:bg-white/15"
-            : "bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-400 text-white shadow-md shadow-blue-500/30 hover:brightness-110",
-        ].join(" ")}
-      >
-        {cta}
-      </button>
+      onClick={onClick}
+      className={[
+        "mt-4 w-full h-10 rounded-2xl font-semibold text-sm transition",
+        active
+          ? "bg-white/10 text-slate-200 border border-white/10 hover:bg-white/15"
+          : // 非当前：根据套餐决定按钮风格
+            title.toLowerCase().includes("basic")
+          ? // ✅ Basic：克制、干净
+            "bg-white/5 text-slate-100 border border-white/12 hover:bg-white/10 hover:border-white/20"
+          : // Pro/Ultra：保持你的霓虹渐变
+            "bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-400 text-white shadow-md shadow-blue-500/30 hover:brightness-110",
+      ].join(" ")}
+    >
+      {cta}
+    </button>
+
     </div>
   );
 
@@ -398,7 +413,7 @@ function PlanModal({
                       {isZh ? "本周笔记：" : "Notes this week: "}
                       <span className="text-slate-200">
                         {formatSecondsToHrs(ent.usedNoteSecondsThisWeek)}/
-                        {formatSecondsToHrs(ent.noteSecondsPerWeek ?? 0)}
+                        {formatLimitSeconds(ent.noteSecondsPerWeek)}
                       </span>
                       {" · "}
                       {isZh ? "今日聊天：" : "Chat today: "}
@@ -427,65 +442,94 @@ function PlanModal({
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="rounded-3xl p-[1px] mm-pro-border">
-            <div className="rounded-3xl border border-white/10 bg-slate-950/50 backdrop-blur-xl p-4">
-              <Card
-                title="Pro"
-                price={isZh ? "$5.99 / 月" : "$5.99 / mo"}
-                badge={isZh ? "推荐" : "Popular"}
-                active={cur === "pro"}
-                items={[
-                  isZh ? "AI 检测器：15000 词/周" : "AI Detector: 15000 words/week",
-                  isZh ? "AI 笔记：15 小时/周" : "AI Notes: 15 hours/week",
-                  isZh ? "可疑句子列表（商用体验）" : "Suspicious sentence list",
-                  isZh ? "多模型聊天：无限制" : "Multi-model chat: unlimited",
-                ]}
-                cta={
-                  cur === "pro"
-                    ? (isZh ? "管理订阅" : "Manage")
-                    : sessionExists
-                    ? (isZh ? "升级到 Pro" : "Upgrade to Pro")
-                    : (isZh ? "登录后升级" : "Sign in to upgrade")
-                }
-                onClick={() => {
-                  if (!sessionExists) return signIn();
-                  onManageBilling("pro");
-                }}
-              />
-            </div>
-          </div>
-
-          <div className="rounded-3xl p-[1px] mm-ultra-border">
-            <div className="rounded-3xl border border-white/10 bg-slate-950/50 backdrop-blur-xl p-4">
-              <Card
-                title="Ultra Pro"
-                price={isZh ? "$7.99 / 月" : "$7.99 / mo"}
-                badge={isZh ? "最强" : "Best"}
-                active={cur === "ultra"}
-                items={[
-                  isZh ? "AI 检测器：无限制" : "AI Detector: unlimited",
-                  isZh ? "AI 笔记：无限制" : "AI Notes: unlimited",
-                  isZh ? "多模型聊天：无限制" : "Multi-model chat: unlimited",
-                  isZh ? "所有功能解锁" : "Everything unlocked",
-                ]}
-                cta={
-                  cur === "ultra"
-                    ? (isZh ? "管理订阅" : "Manage")
-                    : sessionExists
-                    ? (isZh ? "升级到 Ultra" : "Upgrade to Ultra")
-                    : (isZh ? "登录后升级" : "Sign in to upgrade")
-                }
-                onClick={() => {
-                  if (!sessionExists) return signIn();
-                  onManageBilling("ultra");
-                }}
-              />
-            </div>
-          </div>
+         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Basic */}
+      <div className="rounded-3xl p-[1px] mm-basic-border">
+        <div className="rounded-3xl border border-white/10 bg-slate-950/50 backdrop-blur-xl p-4">
+          <Card
+            title={isZh ? "Basic（免费）" : "Basic (Free)"}
+            price={isZh ? "免费" : "Free"}
+            badge={isZh ? "入门" : "Starter"}
+            active={cur === "basic"}
+            items={[
+              isZh ? "AI 检测器：5000 词/周" : "AI Detector: 5000 words/week",
+              isZh ? "AI 笔记：2 小时/周" : "AI Notes: 2 hours/week",
+              isZh ? "聊天：10 次/天" : "Chat: 10/day",
+            ]}
+            cta={
+              cur === "basic"
+                ? (isZh ? "当前套餐" : "Current")
+                : (isZh ? "切换到 Basic" : "Switch to Basic")
+            }
+            onClick={async () => {
+              if (!sessionExists) return signIn();
+              // 如果你支持降级（建议做个 API /api/billing/reset 或 /api/billing/downgrade）
+              // 这里先只刷新并关闭
+              await refreshEnt();
+              onClose();
+            }}
+          />
         </div>
+      </div>
 
+      {/* Pro */}
+      <div className="rounded-3xl p-[1px] mm-pro-border">
+        <div className="rounded-3xl border border-white/10 bg-slate-950/50 backdrop-blur-xl p-4">
+          <Card
+            title="Pro"
+            price={isZh ? "$5.99 / 月" : "$5.99 / mo"}
+            badge={isZh ? "推荐" : "Popular"}
+            active={cur === "pro"}
+            items={[
+              isZh ? "AI 检测器：15000 词/周" : "AI Detector: 15000 words/week",
+              isZh ? "AI 笔记：15 小时/周" : "AI Notes: 15 hours/week",
+              isZh ? "可疑句子列表" : "Suspicious sentence list",
+              isZh ? "多模型聊天：无限制" : "Multi-model chat: unlimited",
+            ]}
+            cta={
+              cur === "pro"
+                ? (isZh ? "管理订阅" : "Manage")
+                : sessionExists
+                ? (isZh ? "升级到 Pro" : "Upgrade to Pro")
+                : (isZh ? "登录后升级" : "Sign in to upgrade")
+            }
+            onClick={() => {
+              if (!sessionExists) return signIn();
+              onManageBilling("pro");
+            }}
+          />
+        </div>
+      </div>
 
+      {/* Ultra */}
+      <div className="rounded-3xl p-[1px] mm-ultra-border">
+        <div className="rounded-3xl border border-white/10 bg-slate-950/50 backdrop-blur-xl p-4">
+          <Card
+            title="Ultra Pro"
+            price={isZh ? "$7.99 / 月" : "$7.99 / mo"}
+            badge={isZh ? "最强" : "Best"}
+            active={cur === "ultra"}
+            items={[
+              isZh ? "AI 检测器：无限制" : "AI Detector: unlimited",
+              isZh ? "AI 笔记：无限制" : "AI Notes: unlimited",
+              isZh ? "多模型聊天：无限制" : "Multi-model chat: unlimited",
+              isZh ? "所有功能解锁" : "Everything unlocked",
+            ]}
+            cta={
+              cur === "ultra"
+                ? (isZh ? "管理订阅" : "Manage")
+                : sessionExists
+                ? (isZh ? "升级到 Ultra" : "Upgrade to Ultra")
+                : (isZh ? "登录后升级" : "Sign in to upgrade")
+            }
+            onClick={() => {
+              if (!sessionExists) return signIn();
+              onManageBilling("ultra");
+            }}
+          />
+        </div>
+      </div>
+    </div>
                   <div className="mt-4 text-[11px] text-slate-500">
                     {isZh
                       ? "提示：付款用 Stripe 最省事；礼包码适合早期内测/推广。"
@@ -576,6 +620,96 @@ function RedeemModal({
     </div>
   );
 }
+
+function SettingsModal({
+  open,
+  onClose,
+  isZh,
+  theme,
+  setTheme,
+  lang,
+  setLang,
+}: {
+  open: boolean;
+  onClose: () => void;
+  isZh: boolean;
+  theme: "dark" | "light";
+  setTheme: (t: "dark" | "light") => void;
+  lang: Lang;
+  setLang: (l: Lang) => void;
+  
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[95] bg-black/60 flex items-center justify-center p-4">
+      <div className="w-full max-w-lg rounded-3xl border border-white/10 bg-slate-950 shadow-2xl">
+        <div className="px-5 py-4 border-b border-white/10 flex items-center justify-between">
+          <p className="text-sm font-semibold text-slate-50">{isZh ? "设置" : "Settings"}</p>
+          <button
+            onClick={onClose}
+            className="h-9 w-9 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition flex items-center justify-center text-slate-200"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="px-5 py-5 space-y-5">
+          {/* Theme */}
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold text-slate-50">{isZh ? "主题" : "Theme"}</div>
+                <div className="text-xs text-slate-400 mt-1">{isZh ? "切换黑/白背景" : "Switch between Dark / Light"}</div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setTheme("dark")}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold border ${
+                    theme === "dark" ? "bg-white/15 border-white/20 text-white" : "bg-white/5 border-white/10 text-slate-300"
+                  }`}
+                >
+                  {isZh ? "黑" : "Dark"}
+                </button>
+                <button
+                  onClick={() => setTheme("light")}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold border ${
+                    theme === "light" ? "bg-white/15 border-white/20 text-white" : "bg-white/5 border-white/10 text-slate-300"
+                  }`}
+                >
+                  {isZh ? "白" : "Light"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Language */}
+          <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold text-slate-50">{isZh ? "语言" : "Language"}</div>
+                <div className="text-xs text-slate-400 mt-1">{isZh ? "默认英文，按需切换" : "Default is English"}</div>
+              </div>
+              <select
+                value={lang}
+                onChange={(e) => setLang(e.target.value as Lang)}
+                className="h-10 rounded-xl bg-slate-900 border border-white/15 px-3 text-sm text-slate-100"
+              >
+                <option value="en">English</option>
+                <option value="zh">中文</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="text-[11px] text-slate-500">
+            {isZh ? "提示：设置会保存在本地浏览器。" : "Tip: Settings are saved in your browser."}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 /** ===================== Entitlement Hook ===================== */
 function useEntitlement(sessionExists: boolean) {
@@ -1736,14 +1870,18 @@ export default function ChatPage() {
   const sessionExists = !!session;
   const effectiveSessionExists = sessionExists;
   const effectiveSession = session;
+  const searchParams = useSearchParams();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const [lang, setLang] = useState<Lang>("zh");
+  const [lang, setLang] = useState<Lang>("en");
   const isZh = lang === "zh";
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
 
   const [mode, setMode] = useState<Mode>("single");
   const [modelKind, setModelKind] = useState<ModelKind>("fast");
@@ -1778,6 +1916,15 @@ export default function ChatPage() {
   const detectorLocked = !sessionExists;
   const noteLocked = !sessionExists;
 
+  useEffect(() => {
+    const success = searchParams.get("success");
+    const canceled = searchParams.get("canceled");
+    if (success === "1" || canceled === "1") {
+      refreshEnt();
+      setPlanOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1808,6 +1955,32 @@ export default function ChatPage() {
     loadSessions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionExists]);
+
+    // ===== Settings persistence (lang/theme) =====
+  useEffect(() => {
+    try {
+      const savedLang = (localStorage.getItem("lang") as Lang) || "en";
+      const savedTheme = (localStorage.getItem("theme") as "dark" | "light") || "dark";
+      setLang(savedLang);
+      setTheme(savedTheme);
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("lang", lang);
+    } catch {}
+  }, [lang]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("theme", theme);
+    } catch {}
+    // Tailwind darkMode = 'class'
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }, [theme]);
+
 
   async function handleSelectSession(sessionId: string) {
     if (!sessionExists) return;
@@ -2013,7 +2186,14 @@ export default function ChatPage() {
 
 
   return (
-  <main className="h-screen w-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100 overflow-hidden">
+      <main
+      className={[
+        "h-screen w-screen text-slate-100 overflow-hidden",
+        theme === "dark"
+          ? "bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950"
+          : "bg-gradient-to-b from-slate-50 via-white to-slate-100 text-slate-900",
+      ].join(" ")}
+    >
     <PlanPillStyles />
     <div className="h-full w-full border border-white/10 bg-white/5 shadow-[0_18px_60px_rgba(15,23,42,0.8)] backdrop-blur-xl flex">
 
@@ -2038,6 +2218,15 @@ export default function ChatPage() {
               <div className="leading-tight">
                 <p className="text-xs uppercase tracking-widest text-slate-400">Multi-Model</p>
                 <p className="text-sm font-semibold text-slate-50">{isZh ? "AI 工作台" : "AI Workspace"}</p>
+                    <button
+                      onClick={() => {
+                        setSettingsOpen(true);
+                      }}
+                      className="absolute right-3 bottom-3 w-10 h-10 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition flex items-center justify-center"
+                      title={isZh ? "设置" : "Settings"}
+                    >
+                      ⚙️
+                    </button>
               </div>
             </div>
 
@@ -2134,7 +2323,10 @@ export default function ChatPage() {
               isZh={isZh}
               plan={ent?.plan ?? "basic"}
               unlimited={!!ent?.unlimited}
-              onClick={() => setPlanOpen(true)}
+              onClick={() => {
+                refreshEnt();
+                setPlanOpen(true);
+              }}
             />
           </div>
 
@@ -2193,22 +2385,7 @@ export default function ChatPage() {
                 {isZh ? "套餐" : "Plan"}
               </button>
 
-              {/* Language */}
-              <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-white/5 border border-white/10 text-[11px]">
-                <span className="text-slate-300 mr-1">🌐</span>
-                <button
-                  onClick={() => setLang("zh")}
-                  className={`px-2 py-0.5 rounded-full transition ${isZh ? "bg-slate-100 text-slate-900 text-[11px] font-medium" : "text-slate-300 hover:text-white"}`}
-                >
-                  中
-                </button>
-                <button
-                  onClick={() => setLang("en")}
-                  className={`px-2 py-0.5 rounded-full transition ${!isZh ? "bg-slate-100 text-slate-900 text-[11px] font-medium" : "text-slate-300 hover:text-white"}`}
-                >
-                  EN
-                </button>
-              </div>
+              
 
               {/* Auth */}
               <div className="flex items-center gap-2">
@@ -2320,6 +2497,8 @@ export default function ChatPage() {
           setRedeemOpen(true);
         }}
         onManageBilling={manageBilling}
+        refreshEnt={refreshEnt}
+
       />
 
       {/* Redeem modal */}
@@ -2331,6 +2510,17 @@ export default function ChatPage() {
         loading={redeemLoading}
         error={redeemError}
       />
+      <SettingsModal
+      open={settingsOpen}
+      onClose={() => setSettingsOpen(false)}
+      isZh={isZh}
+      theme={theme}
+      setTheme={setTheme}
+      lang={lang}
+      setLang={setLang}
+    />
+
+      
     </main>
   );
 }
