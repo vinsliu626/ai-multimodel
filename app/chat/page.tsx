@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 
@@ -1865,7 +1865,7 @@ function NoteUI({
 
 
 /** ===================== Main Page ===================== */
-export default function ChatPage() {
+function ChatPageInner() {
   const { data: session, status } = useSession();
   const sessionExists = !!session;
   const effectiveSessionExists = sessionExists;
@@ -1933,6 +1933,8 @@ export default function ChatPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  
 
   async function loadSessions() {
     if (!sessionExists) {
@@ -2522,5 +2524,13 @@ export default function ChatPage() {
 
       
     </main>
+  );
+}
+
+export default function ChatPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-slate-400">Loading…</div>}>
+      <ChatPageInner />
+    </Suspense>
   );
 }
