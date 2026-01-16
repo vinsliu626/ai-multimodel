@@ -17,12 +17,20 @@ export type NoteMeta = {
   chunks: NoteChunkMeta[];
 };
 
-const ROOT = process.env.AI_NOTE_TMP_DIR || path.join(process.cwd(), ".tmp", "ai-note");
+// Vercel / Serverless: only /tmp is writable
+const BASE =
+  process.env.AI_NOTE_TMP_DIR
+    ? process.env.AI_NOTE_TMP_DIR
+    : process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME
+    ? "/tmp"
+    : process.cwd();
+
+const ROOT = path.join(BASE, ".tmp", "ai-note");
 const META_DIR = path.join(ROOT, "meta");
 
 async function ensureDirs() {
-  await fs.mkdir(META_DIR, { recursive: true });
   await fs.mkdir(ROOT, { recursive: true });
+  await fs.mkdir(META_DIR, { recursive: true });
 }
 
 function metaFile(noteId: string) {
