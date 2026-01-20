@@ -1,11 +1,7 @@
-// app/api/ai-note/chunk/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import fs from "node:fs/promises";
-import path from "node:path";
-
-import { getNote, addChunk, getNoteRootDir } from "@/lib/aiNote/noteStore";
+import { prisma } from "@/lib/prisma";
 import { transcribeAudioToText } from "@/lib/asr/transcribe";
 
 export const runtime = "nodejs";
@@ -35,15 +31,6 @@ function bad(code: ApiErrCode, status = 400, message?: string, extra?: Record<st
   );
 }
 
-function safeExtByMime(mime: string) {
-  const m = (mime || "").toLowerCase();
-  if (m.includes("ogg")) return "ogg";
-  if (m.includes("wav")) return "wav";
-  if (m.includes("mpeg")) return "mp3";
-  if (m.includes("mp4")) return "mp4";
-  return "webm";
-}
-
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
@@ -69,59 +56,61 @@ export async function POST(req: Request) {
     }
     if (!(file instanceof File)) return bad("MISSING_FILE", 400, "Missing file");
 
-    // 3MB 限制（你之前的逻辑）
+    // 3MB chunk 限制（你原本的逻辑）
     const MAX_CHUNK_BYTES = 3 * 1024 * 1024;
     if (file.size > MAX_CHUNK_BYTES) {
       return bad("CHUNK_TOO_LARGE", 413, `Chunk too large. Max ${MAX_CHUNK_BYTES} bytes.`);
     }
 
-    // ✅ 必须：先确认 note 存在且归属正确
-    const meta = await getNote(noteId);
-    if (!meta) return bad("NOTE_NOT_FOUND", 404);
-    if (meta.userId !== userId) return bad("FORBIDDEN", 403);
+    // ✅ DB 校验 note 存在 & 属于当前用户
+    const sessRow = await prisma.aiNoteSession.findUnique({
+      where: { id: noteId },
+      select: { userId: true },
+    });
 
-    // ✅ 1) 落盘保存 chunk 文件
-    const root = getNoteRootDir(noteId);              // .tmp/ai-note/<noteId>
-    const chunkDir = path.join(root, "chunks");       // .tmp/ai-note/<noteId>/chunks
-    await fs.mkdir(chunkDir, { recursive: true });
+    if (!sessRow) return bad("NOTE_NOT_FOUND", 404);
+    if (sessRow.userId !== userId) return bad("FORBIDDEN", 403);
 
     const mime = file.type || "audio/webm";
-    const ext = safeExtByMime(mime);
-    const filename = `chunk-${String(chunkIndex).padStart(6, "0")}.${ext}`;
-    const filePath = path.join(chunkDir, filename);
 
+    // ✅ 读二进制
     let buf: Buffer;
     try {
       const ab = await file.arrayBuffer();
       buf = Buffer.from(ab);
-      await fs.writeFile(filePath, buf);
     } catch (e: any) {
-      return bad("SAVE_FAILED", 500, e?.message || "Failed to save chunk", { filePath });
+      return bad("SAVE_FAILED", 500, e?.message || "Failed to read chunk into buffer");
     }
 
-    // ✅ 2) 写 meta：这是 NO_CHUNKS 的关键！
-    await addChunk(noteId, {
-      chunkIndex,
-      filePath,
-      size: file.size,
-      mime,
-      createdAt: Date.now(),
+    // ✅ 存 DB（幂等：同 index 覆盖）
+    await prisma.aiNoteChunk.upsert({
+      where: { noteId_chunkIndex: { noteId, chunkIndex } },
+      update: {
+        mime,
+        size: file.size,
+        data: buf,
+      },
+      create: {
+        noteId,
+        chunkIndex,
+        mime,
+        size: file.size,
+        data: buf,
+      },
     });
 
-    // ✅ 3) 可选：做 ASR（失败也别影响 chunks 入库，否则 finalize 永远没 chunk）
+    // ✅ 可选：做 ASR（失败不阻断）
     let transcript = "";
     try {
-      // 这里直接用原 File 调 ASR；你也可以用落盘后的 buf 再构造
-      transcript = String(await transcribeAudioToText(file) || "").trim();
+      transcript = String((await transcribeAudioToText(file)) || "").trim();
     } catch (e: any) {
-      // 不阻断：让 finalize 至少能跑 concat/segment
       console.warn("[ai-note/chunk] ASR failed but chunk saved:", e?.message || e);
       return ok({
         noteId,
         chunkIndex,
         saved: true,
-        transcript: "",
         asrOk: false,
+        transcript: "",
         warning: "ASR_FAILED_BUT_CHUNK_SAVED",
       });
     }
@@ -130,9 +119,9 @@ export async function POST(req: Request) {
       noteId,
       chunkIndex,
       saved: true,
+      asrOk: true,
       transcript,
       transcriptChars: transcript.length,
-      asrOk: true,
     });
   } catch (e: any) {
     console.error("[ai-note/chunk] error:", e);

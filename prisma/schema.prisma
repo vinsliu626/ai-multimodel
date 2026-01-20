@@ -102,3 +102,30 @@ model UsageEvent {
   @@index([userId, type, createdAt])
   @@index([createdAt])
 }
+
+model AiNoteSession {
+  id        String   @id // noteId (uuid)
+  userId    String
+  createdAt DateTime @default(now())
+
+  chunks AiNoteChunk[]
+
+  @@index([userId, createdAt])
+}
+
+model AiNoteChunk {
+  id         String   @id @default(cuid())
+  noteId     String
+  chunkIndex Int
+  mime       String
+  size       Int
+  data       Bytes
+  createdAt  DateTime @default(now())
+
+  session AiNoteSession @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@unique([noteId, chunkIndex])
+  @@index([noteId])
+}
+
+

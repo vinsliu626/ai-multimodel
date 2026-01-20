@@ -1,16 +1,16 @@
-// app/api/ai-note/finalize/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import { spawn } from "node:child_process";
 
-import { getNote, deleteNote } from "@/lib/aiNote/noteStore";
 import { transcribeAudioToText } from "@/lib/asr/transcribe";
 import { runAiNotePipeline } from "@/lib/aiNote/pipeline";
 
-// 你已有的 chunked 总结逻辑（保留）
+// ---- your existing helpers (kept) ----
 function countWords(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
@@ -89,16 +89,8 @@ function run(cmd: string, args: string[]) {
   });
 }
 
-/**
- * ✅ B-1：finalize 支持多路拿 noteId
- * 优先级：JSON body.noteId → query ?noteId= → header x-note-id
- *
- * 注意：Request body 只能读一次，所以这里读完 body 就直接 return { noteId, body }
- */
 async function readBodyAndNoteId(req: Request): Promise<{ noteId: string; body: any }> {
   let body: any = null;
-
-  // 1) JSON body
   try {
     body = await req.json();
   } catch {
@@ -107,26 +99,20 @@ async function readBodyAndNoteId(req: Request): Promise<{ noteId: string; body: 
   const fromBody = String(body?.noteId || "").trim();
   if (fromBody) return { noteId: fromBody, body };
 
-  // 2) query
   try {
     const url = new URL(req.url);
     const q = String(url.searchParams.get("noteId") || "").trim();
     if (q) return { noteId: q, body };
-  } catch {
-    // ignore
-  }
+  } catch {}
 
-  // 3) header
   const h = String(req.headers.get("x-note-id") || "").trim();
   if (h) return { noteId: h, body };
 
   return { noteId: "", body };
 }
 
-// concat.txt 的单引号转义
+// ffmpeg concat list escaping
 function escForFfmpegConcat(p: string) {
-  // ffmpeg concat 文件格式：file 'path'
-  // 单引号要写成 '\'' 这种（等价于：结束字符串 + 转义单引号 + 继续字符串）
   return p.replace(/'/g, `'\\''`);
 }
 
@@ -137,57 +123,70 @@ export async function POST(req: Request) {
     if (!userId) return bad("AUTH_REQUIRED", 401);
 
     const { noteId } = await readBodyAndNoteId(req);
-    if (!noteId) {
-      console.log("[ai-note/finalize] MISSING_NOTE_ID", {
-        url: req.url,
-        xNoteId: req.headers.get("x-note-id"),
-      });
-      return bad("MISSING_NOTE_ID", 400);
-    }
+    if (!noteId) return bad("MISSING_NOTE_ID", 400);
 
-    console.log("[ai-note/finalize] noteId=", noteId, "pid=", process.pid);
+    const sessRow = await prisma.aiNoteSession.findUnique({
+      where: { id: noteId },
+      select: { userId: true },
+    });
+    if (!sessRow) return bad("NOTE_NOT_FOUND", 404);
+    if (sessRow.userId !== userId) return bad("FORBIDDEN", 403);
 
-    const meta = await getNote(noteId);
+    const chunks = await prisma.aiNoteChunk.findMany({
+      where: { noteId },
+      orderBy: { chunkIndex: "asc" },
+      select: { chunkIndex: true, mime: true, size: true, data: true },
+    });
 
-    // ✅ 关键 debug：你现在 NO_CHUNKS，就必须先确认 meta 到底是什么
-    console.log("[ai-note/finalize] meta exists=", !!meta, "userId=", meta?.userId, "chunks=", meta?.chunks?.length);
-
-    if (!meta) return bad("NOTE_NOT_FOUND", 404);
-    if (meta.userId !== userId) return bad("FORBIDDEN", 403);
-
-    const chunks = (meta.chunks || []).slice().sort((a, b) => a.chunkIndex - b.chunkIndex);
-
-    // ✅ 如果 NO_CHUNKS：把 meta 文件信息打出来（方便你立刻定位 chunk 根本没写进去）
     if (chunks.length === 0) {
-      console.log("[ai-note/finalize] NO_CHUNKS meta=", meta);
-      return bad("NO_CHUNKS", 400, "No chunks uploaded.", {
-        noteId,
-        chunks: 0,
-        hint:
-          "meta.chunks is empty. This means /api/ai-note/chunk did NOT call noteStore.addChunk() successfully (or wrote to a different tmp dir).",
-      });
+      return bad("NO_CHUNKS", 400, "No chunks uploaded.", { noteId });
     }
 
-    // ✅ 强烈建议：校验 chunkIndex 连续（避免丢分片）
+    // 连续性校验
     for (let i = 0; i < chunks.length; i++) {
       if (chunks[i].chunkIndex !== i) {
-        return bad("CHUNKS_NOT_CONTIGUOUS", 400, `Chunks not contiguous. Expect ${i}, got ${chunks[i].chunkIndex}`, {
-          got: chunks.map((c) => c.chunkIndex),
-        });
+        return bad(
+          "CHUNKS_NOT_CONTIGUOUS",
+          400,
+          `Chunks not contiguous. Expect ${i}, got ${chunks[i].chunkIndex}`,
+          { got: chunks.map((c) => c.chunkIndex) }
+        );
       }
     }
 
-    // 工作目录
-    const noteDir = path.dirname(chunks[0].filePath);
-    const workDir = path.join(noteDir, "_work");
+    // ✅ 单请求工作目录：/tmp (os.tmpdir()) 是可写的
+    const workDir = path.join(os.tmpdir(), "ai-note", noteId, "work");
     await fs.mkdir(workDir, { recursive: true });
 
-    // 1) concat list
+    // 把 DB chunks 写到临时文件（ffmpeg 需要文件路径）
+    const chunkDir = path.join(workDir, "chunks");
+    await fs.mkdir(chunkDir, { recursive: true });
+
+    const chunkPaths: string[] = [];
+    for (const c of chunks) {
+      // 不同 mime 可能是 webm/ogg/mp4 等，这里统一扩展名先用 webm 兜底
+      const ext =
+        (c.mime || "").includes("ogg")
+          ? "ogg"
+          : (c.mime || "").includes("wav")
+          ? "wav"
+          : (c.mime || "").includes("mpeg")
+          ? "mp3"
+          : (c.mime || "").includes("mp4")
+          ? "mp4"
+          : "webm";
+
+      const p = path.join(chunkDir, `chunk-${String(c.chunkIndex).padStart(6, "0")}.${ext}`);
+      await fs.writeFile(p, Buffer.from(c.data));
+      chunkPaths.push(p);
+    }
+
+    // concat list
     const listPath = path.join(workDir, "concat.txt");
-    const lines = chunks.map((c) => `file '${escForFfmpegConcat(String(c.filePath))}'`).join("\n");
+    const lines = chunkPaths.map((p) => `file '${escForFfmpegConcat(p)}'`).join("\n");
     await fs.writeFile(listPath, lines, "utf-8");
 
-    // 2) concat → full.wav（统一 wav/16k/mono，显式禁用视频/字幕轨更稳）
+    // concat -> full.wav (mono/16k)
     const fullWav = path.join(workDir, "full.wav");
     try {
       await run("ffmpeg", [
@@ -211,7 +210,7 @@ export async function POST(req: Request) {
       return bad("FFMPEG_FAILED", 500, e?.message || "ffmpeg concat failed");
     }
 
-    // 3) 切段：每 600 秒（10 分钟）一个 wav
+    // segment 10min
     const segPattern = path.join(workDir, "seg-%03d.wav");
     try {
       await run("ffmpeg", [
@@ -237,22 +236,15 @@ export async function POST(req: Request) {
       return bad("FFMPEG_FAILED", 500, e?.message || "ffmpeg segment failed");
     }
 
-    // 4) 逐段 ASR
     const files = (await fs.readdir(workDir))
       .filter((n) => n.startsWith("seg-") && n.endsWith(".wav"))
       .sort();
 
-    // ✅ 这也打出来，确认 segment 确实生成了
-    console.log("[ai-note/finalize] segments =", files.length, files.slice(0, 3));
-
     let transcriptAll = "";
 
-    // Node 里 File/Blob 是否存在（Node 18+ 通常 OK）
     const HasFile = typeof (globalThis as any).File !== "undefined";
     const HasBlob = typeof (globalThis as any).Blob !== "undefined";
-
     if (!HasFile || !HasBlob) {
-      // 你现在 runtime=nodejs，如果这里报错说明你 Node 太老（或环境不带 File）
       return bad("FILE_NOT_SUPPORTED_IN_NODE", 500, "global File/Blob is not available in this Node runtime.");
     }
 
@@ -274,7 +266,6 @@ export async function POST(req: Request) {
 
     if (!transcriptAll.trim()) return bad("ASR_FAILED", 502, "ASR returned empty transcript");
 
-    // 5) 跑笔记 pipeline（超长走 chunked）
     const note =
       transcriptAll.length > 30_000
         ? await runAiNotePipelineChunked(transcriptAll)
@@ -282,8 +273,9 @@ export async function POST(req: Request) {
 
     const seconds = estimateSecondsByTranscript(transcriptAll);
 
-    // 6) 清理 meta（按你策略：这里只删 meta）
-    await deleteNote(noteId);
+    // ✅ 清理 DB：session + chunks
+    await prisma.aiNoteChunk.deleteMany({ where: { noteId } });
+    await prisma.aiNoteSession.delete({ where: { id: noteId } });
 
     return NextResponse.json({
       ok: true,
