@@ -10,6 +10,89 @@ import { spawn } from "node:child_process";
 import { transcribeAudioToText } from "@/lib/asr/transcribe";
 import { runAiNotePipeline } from "@/lib/aiNote/pipeline";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+// ✅ 关键：延长 Vercel 函数最大执行时长（上限受套餐影响）
+export const maxDuration = 300;
+
+type ApiErr =
+  | "AUTH_REQUIRED"
+  | "MISSING_NOTE_ID"
+  | "NOTE_NOT_FOUND"
+  | "FORBIDDEN"
+  | "NO_CHUNKS"
+  | "CHUNKS_NOT_CONTIGUOUS"
+  | "FFMPEG_FAILED"
+  | "ASR_FAILED"
+  | "LLM_FAILED"
+  | "INTERNAL_ERROR"
+  | "FILE_NOT_SUPPORTED_IN_NODE"
+  | "TIMEOUT";
+
+function bad(code: ApiErr, status = 400, message?: string, extra?: Record<string, any>) {
+  return NextResponse.json(
+    { ok: false, error: code, message: message ?? code, ...(extra ? { extra } : {}) },
+    { status }
+  );
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`TIMEOUT:${label}:${ms}ms`)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      }
+    );
+  });
+}
+
+function run(cmd: string, args: string[]) {
+  return new Promise<void>((resolve, reject) => {
+    const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    let err = "";
+    p.stdout.on("data", (d) => (out += d.toString()));
+    p.stderr.on("data", (d) => (err += d.toString()));
+    p.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`ffmpeg failed (${code}): ${(err || out).slice(0, 6000)}`));
+    });
+  });
+}
+
+async function readBodyAndNoteId(req: Request): Promise<{ noteId: string; body: any }> {
+  let body: any = null;
+  try {
+    body = await req.json();
+  } catch {
+    body = null;
+  }
+  const fromBody = String(body?.noteId || "").trim();
+  if (fromBody) return { noteId: fromBody, body };
+
+  try {
+    const url = new URL(req.url);
+    const q = String(url.searchParams.get("noteId") || "").trim();
+    if (q) return { noteId: q, body };
+  } catch {}
+
+  const h = String(req.headers.get("x-note-id") || "").trim();
+  if (h) return { noteId: h, body };
+
+  return { noteId: "", body };
+}
+
+function escForFfmpegConcat(p: string) {
+  return p.replace(/'/g, `'\\''`);
+}
+
 // ---- your existing helpers (kept) ----
 function countWords(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
@@ -53,70 +136,23 @@ ${merged}`
   return final;
 }
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-type ApiErr =
-  | "AUTH_REQUIRED"
-  | "MISSING_NOTE_ID"
-  | "NOTE_NOT_FOUND"
-  | "FORBIDDEN"
-  | "NO_CHUNKS"
-  | "CHUNKS_NOT_CONTIGUOUS"
-  | "FFMPEG_FAILED"
-  | "ASR_FAILED"
-  | "INTERNAL_ERROR"
-  | "FILE_NOT_SUPPORTED_IN_NODE";
-
-function bad(code: ApiErr, status = 400, message?: string, extra?: Record<string, any>) {
-  return NextResponse.json(
-    { ok: false, error: code, message: message ?? code, ...(extra ? { extra } : {}) },
-    { status }
-  );
-}
-
-function run(cmd: string, args: string[]) {
-  return new Promise<void>((resolve, reject) => {
-    const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
-    let out = "";
-    let err = "";
-    p.stdout.on("data", (d) => (out += d.toString()));
-    p.stderr.on("data", (d) => (err += d.toString()));
-    p.on("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`ffmpeg failed (${code}): ${(err || out).slice(0, 6000)}`));
-    });
+// ✅ 小并发池
+async function mapPool<T, R>(items: T[], concurrency: number, fn: (x: T, idx: number) => Promise<R>) {
+  const res: R[] = new Array(items.length);
+  let i = 0;
+  const workers = new Array(Math.max(1, concurrency)).fill(0).map(async () => {
+    while (true) {
+      const idx = i++;
+      if (idx >= items.length) return;
+      res[idx] = await fn(items[idx], idx);
+    }
   });
-}
-
-async function readBodyAndNoteId(req: Request): Promise<{ noteId: string; body: any }> {
-  let body: any = null;
-  try {
-    body = await req.json();
-  } catch {
-    body = null;
-  }
-  const fromBody = String(body?.noteId || "").trim();
-  if (fromBody) return { noteId: fromBody, body };
-
-  try {
-    const url = new URL(req.url);
-    const q = String(url.searchParams.get("noteId") || "").trim();
-    if (q) return { noteId: q, body };
-  } catch {}
-
-  const h = String(req.headers.get("x-note-id") || "").trim();
-  if (h) return { noteId: h, body };
-
-  return { noteId: "", body };
-}
-
-// ffmpeg concat list escaping
-function escForFfmpegConcat(p: string) {
-  return p.replace(/'/g, `'\\''`);
+  await Promise.all(workers);
+  return res;
 }
 
 export async function POST(req: Request) {
+  const t0 = Date.now();
   try {
     const session = await getServerSession(authOptions);
     const userId = (session as any)?.user?.id as string | undefined;
@@ -124,6 +160,8 @@ export async function POST(req: Request) {
 
     const { noteId } = await readBodyAndNoteId(req);
     if (!noteId) return bad("MISSING_NOTE_ID", 400);
+
+    console.log("[ai-note/finalize] start noteId=", noteId);
 
     const sessRow = await prisma.aiNoteSession.findUnique({
       where: { id: noteId },
@@ -138,33 +176,26 @@ export async function POST(req: Request) {
       select: { chunkIndex: true, mime: true, size: true, data: true },
     });
 
-    if (chunks.length === 0) {
-      return bad("NO_CHUNKS", 400, "No chunks uploaded.", { noteId });
-    }
+    if (chunks.length === 0) return bad("NO_CHUNKS", 400, "No chunks uploaded.", { noteId });
 
-    // 连续性校验
     for (let i = 0; i < chunks.length; i++) {
       if (chunks[i].chunkIndex !== i) {
-        return bad(
-          "CHUNKS_NOT_CONTIGUOUS",
-          400,
-          `Chunks not contiguous. Expect ${i}, got ${chunks[i].chunkIndex}`,
-          { got: chunks.map((c) => c.chunkIndex) }
-        );
+        return bad("CHUNKS_NOT_CONTIGUOUS", 400, `Chunks not contiguous. Expect ${i}, got ${chunks[i].chunkIndex}`, {
+          got: chunks.map((c) => c.chunkIndex),
+        });
       }
     }
 
-    // ✅ 单请求工作目录：/tmp (os.tmpdir()) 是可写的
     const workDir = path.join(os.tmpdir(), "ai-note", noteId, "work");
     await fs.mkdir(workDir, { recursive: true });
 
-    // 把 DB chunks 写到临时文件（ffmpeg 需要文件路径）
     const chunkDir = path.join(workDir, "chunks");
     await fs.mkdir(chunkDir, { recursive: true });
 
+    console.log("[ai-note/finalize] chunks=", chunks.length, "tmpDir=", workDir);
+
     const chunkPaths: string[] = [];
     for (const c of chunks) {
-      // 不同 mime 可能是 webm/ogg/mp4 等，这里统一扩展名先用 webm 兜底
       const ext =
         (c.mime || "").includes("ogg")
           ? "ogg"
@@ -181,15 +212,14 @@ export async function POST(req: Request) {
       chunkPaths.push(p);
     }
 
-    // concat list
     const listPath = path.join(workDir, "concat.txt");
     const lines = chunkPaths.map((p) => `file '${escForFfmpegConcat(p)}'`).join("\n");
     await fs.writeFile(listPath, lines, "utf-8");
 
-    // concat -> full.wav (mono/16k)
     const fullWav = path.join(workDir, "full.wav");
-    try {
-      await run("ffmpeg", [
+    console.log("[ai-note/finalize] ffmpeg concat...");
+    await withTimeout(
+      run("ffmpeg", [
         "-y",
         "-f",
         "concat",
@@ -205,15 +235,18 @@ export async function POST(req: Request) {
         "-ar",
         "16000",
         fullWav,
-      ]);
-    } catch (e: any) {
-      return bad("FFMPEG_FAILED", 500, e?.message || "ffmpeg concat failed");
-    }
+      ]),
+      120_000,
+      "ffmpeg_concat"
+    ).catch((e: any) => {
+      throw Object.assign(new Error(e?.message || String(e)), { _code: "FFMPEG_FAILED" });
+    });
 
     // segment 10min
     const segPattern = path.join(workDir, "seg-%03d.wav");
-    try {
-      await run("ffmpeg", [
+    console.log("[ai-note/finalize] ffmpeg segment...");
+    await withTimeout(
+      run("ffmpeg", [
         "-y",
         "-i",
         fullWav,
@@ -231,51 +264,60 @@ export async function POST(req: Request) {
         "-ar",
         "16000",
         segPattern,
-      ]);
-    } catch (e: any) {
-      return bad("FFMPEG_FAILED", 500, e?.message || "ffmpeg segment failed");
-    }
+      ]),
+      120_000,
+      "ffmpeg_segment"
+    ).catch((e: any) => {
+      throw Object.assign(new Error(e?.message || String(e)), { _code: "FFMPEG_FAILED" });
+    });
 
-    const files = (await fs.readdir(workDir))
-      .filter((n) => n.startsWith("seg-") && n.endsWith(".wav"))
-      .sort();
-
-    let transcriptAll = "";
+    const files = (await fs.readdir(workDir)).filter((n) => n.startsWith("seg-") && n.endsWith(".wav")).sort();
+    console.log("[ai-note/finalize] segments=", files.length, "elapsed(ms)=", Date.now() - t0);
 
     const HasFile = typeof (globalThis as any).File !== "undefined";
     const HasBlob = typeof (globalThis as any).Blob !== "undefined";
-    if (!HasFile || !HasBlob) {
-      return bad("FILE_NOT_SUPPORTED_IN_NODE", 500, "global File/Blob is not available in this Node runtime.");
-    }
+    if (!HasFile || !HasBlob) return bad("FILE_NOT_SUPPORTED_IN_NODE", 500, "global File/Blob not available.");
 
-    for (const fname of files) {
+    // ✅ 并发 ASR（默认 2；可用 env 调整）
+    const asrConcurrency = Math.max(1, Number.parseInt(process.env.AI_NOTE_ASR_CONCURRENCY || "2", 10) || 2);
+    const asrTimeoutMs = Math.max(10_000, Number.parseInt(process.env.AI_NOTE_ASR_TIMEOUT_MS || "60000", 10) || 60_000);
+
+    console.log("[ai-note/finalize] ASR concurrency=", asrConcurrency, "timeoutMs=", asrTimeoutMs);
+
+    const texts = await mapPool(files, asrConcurrency, async (fname) => {
       const p = path.join(workDir, fname);
       const buf = await fs.readFile(p);
-
       const blob = new Blob([buf], { type: "audio/wav" });
       const f = new File([blob], fname, { type: "audio/wav" });
 
-      try {
-        const t = await transcribeAudioToText(f);
-        const clean = String(t || "").trim();
-        if (clean) transcriptAll += (transcriptAll ? "\n" : "") + clean;
-      } catch (e: any) {
-        return bad("ASR_FAILED", 502, e?.message || "ASR failed");
-      }
-    }
+      const t = await withTimeout(Promise.resolve(transcribeAudioToText(f)), asrTimeoutMs, `asr_${fname}`);
+      return String(t || "").trim();
+    }).catch((e: any) => {
+      throw Object.assign(new Error(e?.message || String(e)), { _code: "ASR_FAILED" });
+    });
 
-    if (!transcriptAll.trim()) return bad("ASR_FAILED", 502, "ASR returned empty transcript");
+    const transcriptAll = texts.filter(Boolean).join("\n").trim();
+    if (!transcriptAll) return bad("ASR_FAILED", 502, "ASR returned empty transcript");
 
-    const note =
-      transcriptAll.length > 30_000
-        ? await runAiNotePipelineChunked(transcriptAll)
-        : await runAiNotePipeline(transcriptAll);
+    console.log("[ai-note/finalize] transcript chars=", transcriptAll.length, "elapsed(ms)=", Date.now() - t0);
+
+    // ✅ LLM pipeline 也加超时
+    const llmTimeoutMs = Math.max(30_000, Number.parseInt(process.env.AI_NOTE_LLM_TIMEOUT_MS || "120000", 10) || 120_000);
+
+    const note = await withTimeout(
+      transcriptAll.length > 30_000 ? runAiNotePipelineChunked(transcriptAll) : runAiNotePipeline(transcriptAll),
+      llmTimeoutMs,
+      "llm_pipeline"
+    ).catch((e: any) => {
+      throw Object.assign(new Error(e?.message || String(e)), { _code: "LLM_FAILED" });
+    });
 
     const seconds = estimateSecondsByTranscript(transcriptAll);
 
-    // ✅ 清理 DB：session + chunks
     await prisma.aiNoteChunk.deleteMany({ where: { noteId } });
     await prisma.aiNoteSession.delete({ where: { id: noteId } });
+
+    console.log("[ai-note/finalize] done elapsed(ms)=", Date.now() - t0);
 
     return NextResponse.json({
       ok: true,
@@ -284,9 +326,19 @@ export async function POST(req: Request) {
       transcriptChars: transcriptAll.length,
       segments: files.length,
       chunks: chunks.length,
+      elapsedMs: Date.now() - t0,
     });
   } catch (e: any) {
-    console.error("[ai-note/finalize] error:", e);
-    return bad("INTERNAL_ERROR", 500, e?.message || "Internal error");
+    const msg = e?.message || String(e);
+    console.error("[ai-note/finalize] error:", msg);
+
+    if (String(msg).startsWith("TIMEOUT:")) {
+      return bad("TIMEOUT", 504, msg);
+    }
+    if (e?._code === "FFMPEG_FAILED") return bad("FFMPEG_FAILED", 500, msg);
+    if (e?._code === "ASR_FAILED") return bad("ASR_FAILED", 502, msg);
+    if (e?._code === "LLM_FAILED") return bad("LLM_FAILED", 502, msg);
+
+    return bad("INTERNAL_ERROR", 500, msg);
   }
 }

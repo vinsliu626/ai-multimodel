@@ -1,13 +1,13 @@
+// app/api/ai-note/chunk/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { transcribeAudioToText } from "@/lib/asr/transcribe";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type ApiErrCode =
+type ApiErr =
   | "AUTH_REQUIRED"
   | "UNSUPPORTED_CONTENT_TYPE"
   | "MISSING_NOTE_ID"
@@ -17,18 +17,10 @@ type ApiErrCode =
   | "NOTE_NOT_FOUND"
   | "FORBIDDEN"
   | "CHUNK_TOO_LARGE"
-  | "SAVE_FAILED"
-  | "ASR_FAILED"
   | "INTERNAL_ERROR";
 
-function ok(data: Record<string, any>) {
-  return NextResponse.json({ ok: true, ...data });
-}
-function bad(code: ApiErrCode, status = 400, message?: string, extra?: Record<string, any>) {
-  return NextResponse.json(
-    { ok: false, error: code, message: message ?? code, ...(extra ? { extra } : {}) },
-    { status }
-  );
+function bad(code: ApiErr, status = 400, message?: string) {
+  return NextResponse.json({ ok: false, error: code, message: message ?? code }, { status });
 }
 
 export async function POST(req: Request) {
@@ -38,9 +30,7 @@ export async function POST(req: Request) {
     if (!userId) return bad("AUTH_REQUIRED", 401);
 
     const ct = req.headers.get("content-type") || "";
-    if (!ct.includes("multipart/form-data")) {
-      return bad("UNSUPPORTED_CONTENT_TYPE", 415, "Expected multipart/form-data");
-    }
+    if (!ct.includes("multipart/form-data")) return bad("UNSUPPORTED_CONTENT_TYPE", 415, "Expected multipart/form-data");
 
     const fd = await req.formData();
     const noteId = String(fd.get("noteId") || "").trim();
@@ -49,80 +39,35 @@ export async function POST(req: Request) {
 
     if (!noteId) return bad("MISSING_NOTE_ID", 400);
     if (!chunkIndexStr) return bad("MISSING_CHUNK_INDEX", 400);
-
     const chunkIndex = Number.parseInt(chunkIndexStr, 10);
-    if (!Number.isFinite(chunkIndex) || chunkIndex < 0) {
-      return bad("INVALID_CHUNK_INDEX", 400, "Invalid chunkIndex");
-    }
-    if (!(file instanceof File)) return bad("MISSING_FILE", 400, "Missing file");
+    if (!Number.isFinite(chunkIndex) || chunkIndex < 0) return bad("INVALID_CHUNK_INDEX", 400);
 
-    // 3MB chunk 限制（你原本的逻辑）
+    if (!(file instanceof File)) return bad("MISSING_FILE", 400);
+
+    // 你原来 3MB 限制保留
     const MAX_CHUNK_BYTES = 3 * 1024 * 1024;
-    if (file.size > MAX_CHUNK_BYTES) {
-      return bad("CHUNK_TOO_LARGE", 413, `Chunk too large. Max ${MAX_CHUNK_BYTES} bytes.`);
-    }
+    if (file.size > MAX_CHUNK_BYTES) return bad("CHUNK_TOO_LARGE", 413, `Max ${MAX_CHUNK_BYTES} bytes`);
 
-    // ✅ DB 校验 note 存在 & 属于当前用户
-    const sessRow = await prisma.aiNoteSession.findUnique({
-      where: { id: noteId },
-      select: { userId: true },
-    });
+    const sess = await prisma.aiNoteSession.findUnique({ where: { id: noteId }, select: { userId: true } });
+    if (!sess) return bad("NOTE_NOT_FOUND", 404);
+    if (sess.userId !== userId) return bad("FORBIDDEN", 403);
 
-    if (!sessRow) return bad("NOTE_NOT_FOUND", 404);
-    if (sessRow.userId !== userId) return bad("FORBIDDEN", 403);
+    const ab = await file.arrayBuffer();
+    const data = Buffer.from(ab);
 
-    const mime = file.type || "audio/webm";
-
-    // ✅ 读二进制
-    let buf: Buffer;
-    try {
-      const ab = await file.arrayBuffer();
-      buf = Buffer.from(ab);
-    } catch (e: any) {
-      return bad("SAVE_FAILED", 500, e?.message || "Failed to read chunk into buffer");
-    }
-
-    // ✅ 存 DB（幂等：同 index 覆盖）
     await prisma.aiNoteChunk.upsert({
       where: { noteId_chunkIndex: { noteId, chunkIndex } },
-      update: {
-        mime,
-        size: file.size,
-        data: buf,
-      },
+      update: { mime: file.type || "audio/webm", size: file.size, data },
       create: {
         noteId,
         chunkIndex,
-        mime,
+        mime: file.type || "audio/webm",
         size: file.size,
-        data: buf,
+        data,
       },
     });
 
-    // ✅ 可选：做 ASR（失败不阻断）
-    let transcript = "";
-    try {
-      transcript = String((await transcribeAudioToText(file)) || "").trim();
-    } catch (e: any) {
-      console.warn("[ai-note/chunk] ASR failed but chunk saved:", e?.message || e);
-      return ok({
-        noteId,
-        chunkIndex,
-        saved: true,
-        asrOk: false,
-        transcript: "",
-        warning: "ASR_FAILED_BUT_CHUNK_SAVED",
-      });
-    }
-
-    return ok({
-      noteId,
-      chunkIndex,
-      saved: true,
-      asrOk: true,
-      transcript,
-      transcriptChars: transcript.length,
-    });
+    return NextResponse.json({ ok: true, noteId, chunkIndex, saved: true });
   } catch (e: any) {
     console.error("[ai-note/chunk] error:", e);
     return bad("INTERNAL_ERROR", 500, e?.message || "Internal error");

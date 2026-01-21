@@ -1295,6 +1295,11 @@ function NoteUI({
   const [result, setResult] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
 
+    // ✅ finalize progress (record only)
+  const [finalizeStage, setFinalizeStage] = useState<string>("idle"); // idle|asr|summarize|merge|done|failed
+  const [finalizeProgress, setFinalizeProgress] = useState<number>(0);
+
+
   // ✅ 分片上传会话
   const [noteId, setNoteId] = useState<string | null>(null);
   const [uploadedChunks, setUploadedChunks] = useState(0);
@@ -1352,6 +1357,9 @@ function NoteUI({
     setLiveTranscript("");
     setRecordSecs(0);
     setNoteId(null);
+    setFinalizeStage("idle");
+    setFinalizeProgress(0);
+
 
     uploadingRef.current = Promise.resolve();
     chunkIndexRef.current = 0;
@@ -1597,19 +1605,64 @@ function NoteUI({
         await uploadingRef.current;
         } catch {}
 
-        const res = await fetch("/api/ai-note/finalize", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ noteId }),
-        });
+                // ✅ step-based finalize: avoids long request timeouts
+        setFinalizeStage("asr");
+        setFinalizeProgress(0);
 
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || data?.ok === false) {
-          throw new Error(data?.error || `Finalize error: ${res.status}`);
+        const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+        let safety = 0;
+        while (true) {
+          safety += 1;
+          if (safety > 2000) throw new Error(isZh ? "处理步数过多，已中止。" : "Too many steps, aborted.");
+
+          const r = await fetch("/api/ai-note/finalize-step", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ noteId }),
+          });
+
+          // 先读 raw，防止 500 时 json parse 崩
+          const raw = await r.text();
+          let j: any = null;
+          try {
+            j = raw ? JSON.parse(raw) : null;
+          } catch {
+            j = null;
+          }
+
+          if (!r.ok || j?.ok === false) {
+            const msg =
+              j?.error ||
+              j?.message ||
+              (raw ? raw.slice(0, 300) : "") ||
+              `Finalize-step error: ${r.status}`;
+            setFinalizeStage("failed");
+            throw new Error(msg);
+          }
+
+          const stage = String(j?.stage || "asr");
+          const prog = Number.isFinite(j?.progress) ? Number(j.progress) : 0;
+
+          setFinalizeStage(stage);
+          setFinalizeProgress(prog);
+
+          // done -> note
+          if (stage === "done") {
+            setFinalizeProgress(100);
+            setResult(String(j?.note ?? j?.result ?? ""));
+            return;
+          }
+
+          // failed
+          if (stage === "failed") {
+            throw new Error(j?.error || (isZh ? "处理失败。" : "Failed."));
+          }
+
+          // 避免请求太频繁
+          await sleep(800);
         }
 
-        setResult(String(data?.note ?? data?.result ?? ""));
-        return;
       }
 
       throw new Error(isZh ? "未知的输入类型" : "Unknown input type");
@@ -1630,6 +1683,8 @@ function NoteUI({
         if (recording) {
           try {
             stopRecording();
+            setFinalizeStage("idle");
+            setFinalizeProgress(0);
           } catch {}
         }
         cleanupStream();
@@ -1784,6 +1839,23 @@ function NoteUI({
                               </button>
                             )}
                           </div>
+
+                          {/* ✅ Finalize progress (record only) */}
+                          {loading && tab === "record" && noteId && (
+                            <div className="rounded-2xl border border-white/10 bg-slate-950/30 px-3 py-3">
+                              <div className="flex items-center justify-between text-[12px] text-slate-300">
+                                <span>
+                                  {isZh ? "处理中：" : "Processing: "}
+                                  <span className="ml-1 font-semibold text-slate-100">{finalizeStage}</span>
+                                </span>
+                                <span className="font-semibold text-slate-100">{Math.round(finalizeProgress)}%</span>
+                              </div>
+                              <div className="mt-2 h-2 rounded-full bg-white/10 overflow-hidden">
+                                <div className="h-full bg-white/30" style={{ width: `${Math.round(finalizeProgress)}%` }} />
+                              </div>
+                            </div>
+                          )}
+
                         </div>
 
                         <div className="rounded-2xl border border-white/10 bg-slate-950/30 px-3 py-3 text-[12px] text-slate-300">
@@ -2534,3 +2606,5 @@ export default function ChatPage() {
     </Suspense>
   );
 }
+
+

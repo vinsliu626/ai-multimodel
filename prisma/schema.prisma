@@ -1,5 +1,3 @@
-// prisma/schema.prisma
-
 generator client {
   provider        = "prisma-client-js"
   binaryTargets   = ["native", "rhel-openssl-3.0.x"]
@@ -46,8 +44,8 @@ model UserEntitlement {
   userId String @unique
   // user  User  @relation(fields: [userId], references: [id]) // 先注释掉，等 User 模型确定后再加
 
-  plan         String  @default("basic")
-  unlimited    Boolean @default(false)
+  plan      String  @default("basic")
+  unlimited Boolean @default(false)
 
   detectorWordsPerWeek Int?
   noteSecondsPerWeek   Int?
@@ -60,8 +58,8 @@ model UserEntitlement {
   canSeeSuspiciousSentences Boolean @default(false)
 
   stripeCustomerId String?
-  stripeSubId String?
-  stripeStatus String?
+  stripeSubId      String?
+  stripeStatus     String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -70,7 +68,7 @@ model UserEntitlement {
 model GiftCode {
   code      String   @id
   isActive  Boolean  @default(true)
-  maxUses   Int?     // null = unlimited uses
+  maxUses   Int? // null = unlimited uses
   usedCount Int      @default(0)
   createdAt DateTime @default(now())
 
@@ -95,7 +93,7 @@ model GiftCodeRedemption {
 model UsageEvent {
   id        String   @id @default(cuid())
   userId    String
-  type      String   // detector_words | note_seconds | chat_count
+  type      String // detector_words | note_seconds | chat_count
   amount    Int
   createdAt DateTime @default(now())
 
@@ -103,12 +101,19 @@ model UsageEvent {
   @@index([createdAt])
 }
 
+/**
+ * ===================== AI Note =====================
+ */
 model AiNoteSession {
-  id        String   @id // noteId (uuid)
+  id        String   @id
   userId    String
   createdAt DateTime @default(now())
 
-  chunks AiNoteChunk[]
+  chunks      AiNoteChunk[]
+  transcripts AiNoteTranscript[]
+  summaries   AiNoteSummaryPart[]
+  job         AiNoteJob?          @relation(fields: [aiNoteJobId], references: [id])
+  aiNoteJobId String?
 
   @@index([userId, createdAt])
 }
@@ -128,4 +133,40 @@ model AiNoteChunk {
   @@index([noteId])
 }
 
+model AiNoteTranscript {
+  id         String   @id @default(cuid())
+  noteId     String
+  chunkIndex Int
+  text       String
+  createdAt  DateTime @default(now())
 
+  session AiNoteSession @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@unique([noteId, chunkIndex])
+  @@index([noteId])
+}
+
+model AiNoteSummaryPart {
+  id        String   @id @default(cuid())
+  noteId    String
+  partIndex Int
+  text      String
+  createdAt DateTime @default(now())
+
+  session AiNoteSession @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@unique([noteId, partIndex])
+  @@index([noteId])
+}
+
+model AiNoteJob {
+  id            String          @id @default(cuid())
+  noteId        String          @unique
+  userId        String
+  stage         String          @default("asr")
+  progress      Int             @default(0)
+  error         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  AiNoteSession AiNoteSession[]
+}
