@@ -169,4 +169,6 @@ model AiNoteJob {
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   AiNoteSession AiNoteSession[]
+
+  
 }

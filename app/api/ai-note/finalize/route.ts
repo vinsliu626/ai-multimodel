@@ -56,16 +56,23 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 function run(cmd: string, args: string[]) {
   return new Promise<void>((resolve, reject) => {
     const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+
     let out = "";
     let err = "";
+
+    // ✅ 关键：ffmpeg 不存在时会走这里
+    p.on("error", (e) => reject(new Error(`spawn ${cmd} failed: ${e.message}`)));
+
     p.stdout.on("data", (d) => (out += d.toString()));
     p.stderr.on("data", (d) => (err += d.toString()));
+
     p.on("close", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`ffmpeg failed (${code}): ${(err || out).slice(0, 6000)}`));
     });
   });
 }
+
 
 async function readBodyAndNoteId(req: Request): Promise<{ noteId: string; body: any }> {
   let body: any = null;
@@ -212,35 +219,43 @@ export async function POST(req: Request) {
       chunkPaths.push(p);
     }
 
-    const listPath = path.join(workDir, "concat.txt");
-    const lines = chunkPaths.map((p) => `file '${escForFfmpegConcat(p)}'`).join("\n");
-    await fs.writeFile(listPath, lines, "utf-8");
+    // ✅ 1) 二进制拼接：把 MediaRecorder timeslice chunks 拼成一个完整 webm
+const fullWebm = path.join(workDir, "full.webm");
 
-    const fullWav = path.join(workDir, "full.wav");
-    console.log("[ai-note/finalize] ffmpeg concat...");
-    await withTimeout(
-      run("ffmpeg", [
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        listPath,
-        "-vn",
-        "-sn",
-        "-dn",
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        fullWav,
-      ]),
-      120_000,
-      "ffmpeg_concat"
-    ).catch((e: any) => {
-      throw Object.assign(new Error(e?.message || String(e)), { _code: "FFMPEG_FAILED" });
-    });
+// 用 stream 追加写入（不会一次把全部读进内存）
+const fh = await fs.open(fullWebm, "w");
+try {
+  for (const p of chunkPaths) {
+    const b = await fs.readFile(p);
+    await fh.write(b);
+  }
+} finally {
+  await fh.close();
+}
+
+// ✅ 2) 再让 ffmpeg 从完整 webm 转 wav（这一步才会稳定）
+const fullWav = path.join(workDir, "full.wav");
+console.log("[ai-note/finalize] ffmpeg webm->wav...");
+await withTimeout(
+  run("ffmpeg", [
+    "-y",
+    "-i",
+    fullWebm,
+    "-vn",
+    "-sn",
+    "-dn",
+    "-ac",
+    "1",
+    "-ar",
+    "16000",
+    fullWav,
+  ]),
+  120_000,
+  "ffmpeg_webm_to_wav"
+).catch((e: any) => {
+  throw Object.assign(new Error(e?.message || String(e)), { _code: "FFMPEG_FAILED" });
+});
+
 
     // segment 10min
     const segPattern = path.join(workDir, "seg-%03d.wav");
@@ -285,16 +300,29 @@ export async function POST(req: Request) {
     console.log("[ai-note/finalize] ASR concurrency=", asrConcurrency, "timeoutMs=", asrTimeoutMs);
 
     const texts = await mapPool(files, asrConcurrency, async (fname) => {
-      const p = path.join(workDir, fname);
-      const buf = await fs.readFile(p);
-      const blob = new Blob([buf], { type: "audio/wav" });
-      const f = new File([blob], fname, { type: "audio/wav" });
+    const p = path.join(workDir, fname);
+    const buf = await fs.readFile(p);
 
-      const t = await withTimeout(Promise.resolve(transcribeAudioToText(f)), asrTimeoutMs, `asr_${fname}`);
-      return String(t || "").trim();
-    }).catch((e: any) => {
-      throw Object.assign(new Error(e?.message || String(e)), { _code: "ASR_FAILED" });
-    });
+    // ✅ 更稳：用 Uint8Array 包一下（某些环境 Blob 对 Buffer 兼容更差）
+    const blob = new Blob([new Uint8Array(buf)], { type: "audio/wav" });
+
+    // ✅ 更稳：上传给 ASR 的 filename 固定
+    const safeName = "audio.wav";
+
+    const t = await withTimeout(
+    Promise.resolve(
+      transcribeAudioToText(blob, { filename: "audio.wav", mime: "audio/wav", vad_filter:false, beam_size:5, })
+    ),
+    asrTimeoutMs,
+    `asr_${fname}`
+);
+
+
+    return String(t || "").trim();
+  }).catch((e: any) => {
+    throw Object.assign(new Error(e?.message || String(e)), { _code: "ASR_FAILED" });
+  });
+
 
     const transcriptAll = texts.filter(Boolean).join("\n").trim();
     if (!transcriptAll) return bad("ASR_FAILED", 502, "ASR returned empty transcript");

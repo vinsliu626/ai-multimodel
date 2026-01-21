@@ -5,6 +5,8 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { transcribeAudioToText } from "@/lib/asr/transcribe";
 import { runAiNotePipeline } from "@/lib/aiNote/pipeline";
+import { Buffer } from "node:buffer";
+
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,22 +40,44 @@ function chunkText(text: string, maxChars = 12000, overlap = 800) {
   return chunks;
 }
 
-/**
- * ✅ 不用 undici：我们给 transcribeAudioToText 一个“File-like”对象
- * 只要它内部用到的是 arrayBuffer()/type/name 这种能力，就能跑。
- */
-function makeFileLike(buf: Buffer, name: string, type: string) {
-  return {
-    name,
-    type,
-    size: buf.length,
-    async arrayBuffer() {
-      // Buffer -> ArrayBuffer
-      const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
-      return ab as ArrayBuffer;
-    },
-  } as any;
+function extFromMime(mime: string) {
+  const m = (mime || "").toLowerCase();
+  if (m.includes("ogg")) return "ogg";
+  if (m.includes("wav")) return "wav";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("mp4") || m.includes("m4a")) return "mp4";
+  return "webm";
 }
+
+/**
+ * ✅ 关键：把 Prisma Bytes（可能是 Buffer / Uint8Array / {type:'Buffer',data:[]} / Array<number>）
+ * 统一转换成 Buffer，避免 Buffer.from(object) 变成 "[object Object]" 的垃圾数据。
+ */
+function bytesToBuffer(data: any): Buffer {
+  if (!data) throw new Error("chunk.data is empty");
+
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof Uint8Array) return Buffer.from(data);
+  if (data instanceof ArrayBuffer) return Buffer.from(new Uint8Array(data));
+  if (Array.isArray(data)) return Buffer.from(data);
+
+  // Prisma/JSON 化后：{ type:"Buffer", data:[...] }
+  if (data && typeof data === "object" && data.type === "Buffer" && Array.isArray(data.data)) {
+    return Buffer.from(data.data);
+  }
+
+  // 如果你曾经把 bytes encode 成 base64 字符串存进去
+  if (typeof data === "string") {
+    try {
+      return Buffer.from(data, "base64");
+    } catch {
+      return Buffer.from(data, "utf8");
+    }
+  }
+
+  throw new Error(`Unsupported bytes type for chunk.data: typeof=${typeof data} ctor=${data?.constructor?.name}`);
+}
+
 
 export async function POST(req: Request) {
   try {
@@ -72,7 +96,6 @@ export async function POST(req: Request) {
     if (!sess) return bad("NOTE_NOT_FOUND", 404);
     if (sess.userId !== userId) return bad("FORBIDDEN", 403);
 
-    // --- load chunks ---
     const chunks = await prisma.aiNoteChunk.findMany({
       where: { noteId },
       orderBy: { chunkIndex: "asc" },
@@ -80,7 +103,6 @@ export async function POST(req: Request) {
     });
     if (chunks.length === 0) return bad("NO_CHUNKS", 400);
 
-    // contiguous check
     for (let i = 0; i < chunks.length; i++) {
       if (chunks[i].chunkIndex !== i) {
         return bad("CHUNKS_NOT_CONTIGUOUS", 400, `Expect ${i}, got ${chunks[i].chunkIndex}`, {
@@ -89,7 +111,6 @@ export async function POST(req: Request) {
       }
     }
 
-    // --- job state ---
     const job = await prisma.aiNoteJob.upsert({
       where: { noteId },
       update: {},
@@ -97,7 +118,7 @@ export async function POST(req: Request) {
       select: { stage: true, progress: true },
     });
 
-    // --- stage 1: ASR ---
+    // ---------------- stage 1: ASR ----------------
     if (job.stage === "asr") {
       const done = await prisma.aiNoteTranscript.findMany({
         where: { noteId },
@@ -106,33 +127,84 @@ export async function POST(req: Request) {
       const doneSet = new Set(done.map((d) => d.chunkIndex));
       const pending = chunks.filter((c) => !doneSet.has(c.chunkIndex));
 
-      const MAX_PER_CALL = 1;
+      const MAX_PER_CALL = 1; // 可改 2（但先别，避免超时）
       const batch = pending.slice(0, MAX_PER_CALL);
 
       for (const c of batch) {
-        try {
-          const buf = Buffer.from(c.data);
-          const mime = c.mime || "audio/webm";
-          const ext = mime.includes("ogg") ? "ogg" : mime.includes("mp4") ? "mp4" : "webm";
-          const fileLike = makeFileLike(buf, `chunk-${String(c.chunkIndex).padStart(6, "0")}.${ext}`, mime);
+  try {
+    const mime = c.mime || "audio/webm";
+    const ext = extFromMime(mime);
+    const filename = `chunk-${String(c.chunkIndex).padStart(6, "0")}.${ext}`;
 
-          const t = await transcribeAudioToText(fileLike);
-          const text = String(t || "").trim();
+    const buf = bytesToBuffer(c.data);
 
-          await prisma.aiNoteTranscript.upsert({
-            where: { noteId_chunkIndex: { noteId, chunkIndex: c.chunkIndex } },
-            update: { text },
-            create: { noteId, chunkIndex: c.chunkIndex, text },
-          });
-        } catch (e: any) {
-          console.error("[ai-note/finalize-step] ASR failed:", e);
-          await prisma.aiNoteJob.update({
-            where: { noteId },
-            data: { stage: "failed", error: e?.message || "ASR_FAILED" },
-          });
-          return bad("ASR_FAILED", 502, e?.message || "ASR failed");
-        }
+    const headHex16 = buf.subarray(0, 16).toString("hex");
+    console.log("CHUNK DEBUG", {
+      chunkIndex: c.chunkIndex,
+      mime,
+      byteLen: buf.length,
+      headHex: headHex16,
+    });
+
+    // ✅ 如果是 webm，但不是 EBML header 开头，说明它不是一个完整可解码的 webm 文件（多半是 MediaRecorder 分片）
+    // EBML header: 1a45dfa3
+    if (mime.includes("webm")) {
+      const head4 = buf.subarray(0, 4).toString("hex");
+      if (head4 !== "1a45dfa3") {
+        throw new Error(
+          `Chunk ${c.chunkIndex} is not a standalone WebM (missing EBML header). ` +
+          `This happens with MediaRecorder timeslice chunks. ` +
+          `Use server-side concat (your /finalize route) instead of per-chunk ASR. head=${head4}`
+        );
       }
+    }
+
+    console.log("[ai-note/finalize-step] ASR start", {
+      noteId,
+      chunkIndex: c.chunkIndex,
+      mime,
+      bytes: buf.length,
+      filename,
+      asrUrl: process.env.ASR_URL ? "set" : "missing",
+    });
+
+    const text = await transcribeAudioToText(buf, {
+      filename,
+      mime,
+      vad_filter: false, // ✅ 先关掉，避免 NO_SPEECH_DETECTED
+      beam_size: 5,
+    });
+
+    console.log("[ai-note/finalize-step] ASR ok", {
+      noteId,
+      chunkIndex: c.chunkIndex,
+      textChars: text.length,
+    });
+
+    await prisma.aiNoteTranscript.upsert({
+      where: { noteId_chunkIndex: { noteId, chunkIndex: c.chunkIndex } },
+      update: { text },
+      create: { noteId, chunkIndex: c.chunkIndex, text },
+    });
+  } catch (e: any) {
+  const msg = String(e?.message || e);
+  if (msg.includes("NO_SPEECH_DETECTED")) {
+    await prisma.aiNoteTranscript.upsert({
+      where: { noteId_chunkIndex: { noteId, chunkIndex: c.chunkIndex } },
+      update: { text: "" },
+      create: { noteId, chunkIndex: c.chunkIndex, text: "" },
+    });
+    continue; // ✅ 跳过该 chunk，不失败
+  }
+
+
+    return bad("ASR_FAILED", 502, msg);
+  }
+}
+
+
+      
+
 
       const afterCount = await prisma.aiNoteTranscript.count({ where: { noteId } });
       const progress = Math.floor((afterCount / chunks.length) * 70);
@@ -154,7 +226,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // --- stage 2: summarize ---
+    // ---------------- stage 2: summarize ----------------
     if (job.stage === "summarize") {
       const partsDone = await prisma.aiNoteSummaryPart.count({ where: { noteId } });
 
@@ -163,6 +235,7 @@ export async function POST(req: Request) {
         orderBy: { chunkIndex: "asc" },
         select: { text: true },
       });
+
       const transcriptAll = trs.map((x) => x.text).join("\n").trim();
       const pieces = chunkText(transcriptAll, 12000, 800);
 
@@ -211,7 +284,7 @@ ${c}`
       });
     }
 
-    // --- stage 3: merge ---
+    // ---------------- stage 3: merge ----------------
     if (job.stage === "merge") {
       const parts = await prisma.aiNoteSummaryPart.findMany({
         where: { noteId },
@@ -237,7 +310,19 @@ ${merged}`
       return NextResponse.json({ ok: true, stage: "done", progress: 100 });
     }
 
-    return NextResponse.json({ ok: false, stage: "failed", progress: job.progress });
+    // failed: return job error for debugging
+  const failedJob = await prisma.aiNoteJob.findUnique({
+    where: { noteId },
+    select: { progress: true, error: true, stage: true },
+  });
+
+  return NextResponse.json({
+    ok: false,
+    stage: failedJob?.stage ?? "failed",
+    progress: failedJob?.progress ?? job.progress,
+    error: failedJob?.error ?? null,
+  });
+
   } catch (e: any) {
     console.error("[ai-note/finalize-step] error:", e);
     return bad("INTERNAL_ERROR", 500, e?.message || "Internal error");
