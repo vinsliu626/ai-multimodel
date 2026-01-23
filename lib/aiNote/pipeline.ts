@@ -22,24 +22,32 @@ const OutlineSchema = z.object({
         id: z.string().min(1),
         heading: z.string().min(1),
         summary: z.string().min(1),
-        keyPoints: z.array(z.string().min(1)).min(2),
-        sourceText: z.string().min(20),
+
+        // ✅ 放宽：允许 0 个（模型有时会给空）
+        keyPoints: z.array(z.string().min(1)).default([]),
+
+        // ✅ 放宽：允许短句（比如 “Thanks for watching.”）
+        sourceText: z.string().min(1),
       })
     )
     .min(1),
 });
 
+
 const SectionNotesSchema = z.object({
   id: z.string().min(1),
   heading: z.string().min(1),
-  bullets: z.array(z.string().min(1)).min(5).max(10),
-  keyTerms: z
-    .array(z.object({ term: z.string().min(1), definition: z.string().min(1) }))
-    .min(3)
-    .max(8),
-  examples: z.array(z.string().min(1)).max(5),
-  actionItems: z.array(z.string().min(1)).max(5),
+
+  // ✅ bullets 允许更少：短段落可能就 2-4 条
+  bullets: z.array(z.string().min(1)).min(2).max(12),
+
+  // ✅ 关键：keyTerms 允许 1-8（别再卡死 min(3)）
+  keyTerms: z.array(z.object({ term: z.string().min(1), definition: z.string().min(1) })).min(1).max(10),
+
+  examples: z.array(z.string().min(1)).max(8).default([]),
+  actionItems: z.array(z.string().min(1)).max(8).default([]),
 });
+
 
 const FinalNoteSchema = z.object({
   title: z.string().min(1),
@@ -78,6 +86,33 @@ function stripCodeFences(s: string) {
   }
   return t;
 }
+
+function ensureMinKeyTerms(
+  obj: { keyTerms: { term: string; definition: string }[]; heading: string; bullets: string[] },
+  min = 3
+) {
+  const out = Array.isArray(obj.keyTerms) ? obj.keyTerms.filter((x) => x?.term && x?.definition) : [];
+
+  // 用 heading/bullets 兜底补词条
+  const text = `${obj.heading}\n${(obj.bullets || []).join("\n")}`.toLowerCase();
+
+  const candidates: { term: string; definition: string }[] = [];
+
+  if (text.includes("variable")) candidates.push({ term: "Variable", definition: "A named value that can change." });
+  if (text.includes("constant")) candidates.push({ term: "Constant", definition: "A named value that does not change." });
+  if (text.includes("data")) candidates.push({ term: "Data", definition: "Information stored and processed by a program." });
+  if (text.includes("value")) candidates.push({ term: "Value", definition: "The actual content stored in a variable/constant." });
+
+  for (const c of candidates) {
+    if (out.length >= min) break;
+    if (!out.some((x) => x.term.toLowerCase() === c.term.toLowerCase())) out.push(c);
+  }
+
+  while (out.length < min) out.push({ term: "Key term", definition: "Important concept from this section." });
+
+  return out.slice(0, 10);
+}
+
 
 function stripThinkBlocks(s: string) {
   return s.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
@@ -141,6 +176,32 @@ function parseJsonFromModel<T>(raw: string): T {
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
+
+function ensureMinKeyPoints(section: { summary: string; sourceText: string; keyPoints?: string[] }, min = 2) {
+  const kp = Array.isArray(section.keyPoints) ? section.keyPoints.filter(Boolean) : [];
+
+  if (kp.length >= min) return kp.slice(0, 8);
+
+  // 从 summary + sourceText 抽句子当 keyPoints
+  const base = `${section.summary}\n${section.sourceText}`.trim();
+
+  const candidates = base
+    .split(/[\n\.!\?]+/g)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const out = [...kp];
+  for (const c of candidates) {
+    if (out.length >= min) break;
+    if (!out.includes(c)) out.push(c);
+  }
+
+  // 最后兜底：硬塞两个
+  while (out.length < min) out.push("Key point");
+
+  return out.slice(0, 8);
+}
+
 
 /**
  * ✅ HF Router 调用包装：处理 503/HTML/网络抖动，指数退避重试
@@ -212,7 +273,10 @@ async function callSectionNotesRobust(args: {
     const obj1 = parseJsonFromModel<SectionNotes>(raw1);
     const parsed1 = SectionNotesSchema.safeParse(obj1);
     if (!parsed1.success) throw new Error("SectionNotes schema mismatch");
-    return parsed1.data;
+    const fixed = parsed1.data;
+    fixed.keyTerms = ensureMinKeyTerms(fixed, 3);
+    return fixed;
+
   } catch (e1) {
     // 2) HF hard retry (force JSON)
     try {
@@ -261,7 +325,9 @@ async function callSectionNotesRobust(args: {
       const obj2 = parseJsonFromModel<SectionNotes>(raw2);
       const parsed2 = SectionNotesSchema.safeParse(obj2);
       if (!parsed2.success) throw new Error("SectionNotes schema mismatch after hard retry");
-      return parsed2.data;
+      const fixed2 = parsed2.data;
+      fixed2.keyTerms = ensureMinKeyTerms(fixed2, 3);
+      return fixed2;
     } catch (e2) {
       // 3) fallback: Groq
       const fallbackRaw = await callGroqChat(
@@ -324,6 +390,25 @@ async function callFinalMergeRobust(args: {
 /** ===================== Main Pipeline ===================== */
 export async function runAiNotePipeline(rawText: string): Promise<string> {
   const text = normalizeInput(rawText);
+
+  // ✅ 超短文本：不走复杂 3-step pipeline，直接简单总结（更稳）
+if (text.length < 200) {
+  const groqKey = mustEnv("GROQ_API_KEY");
+  const raw = await callGroqChat(
+    groqKey,
+    FAST_MODEL,
+    [
+      { role: "system", content: "You write concise meeting notes in Markdown." },
+      {
+        role: "user",
+        content: `Make a short note from the text. Output markdown only.\n\nText:\n${text}`,
+      },
+    ],
+    { temperature: 0 }
+  );
+  return raw.trim();
+}
+
   if (text.length < 20) throw new Error("Text too short");
 
   const groqKey = mustEnv("GROQ_API_KEY");
@@ -337,7 +422,17 @@ export async function runAiNotePipeline(rawText: string): Promise<string> {
   if (!outlineParsed.success) {
     throw new Error(`Outline JSON schema mismatch.\nRaw:\n${outlineRawText}`);
   }
+
   const outline = outlineParsed.data;
+
+  // ✅ normalize：补 keyPoints，避免空数组导致后面 sectionNotes 质量差
+  outline.sections = outline.sections.map((s) => ({
+    ...s,
+    keyPoints: ensureMinKeyPoints(s, 2),
+    // ✅ sourceText 也保证不是空
+    sourceText: (s.sourceText || s.summary || "").trim() || " ",
+  }));
+
 
   // ---------------- Step 2: Section Notes (HF with retry + fallback) ----------------
   const sectionNotes: SectionNotes[] = [];
