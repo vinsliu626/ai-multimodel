@@ -1616,7 +1616,7 @@ function NoteUI({
           safety += 1;
           if (safety > 2000) throw new Error(isZh ? "处理步数过多，已中止。" : "Too many steps, aborted.");
 
-          const r = await fetch("/api/ai-note/finalize-step", {
+          const r = await fetch("/api/ai-note/finalize", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ noteId }),
@@ -1636,7 +1636,7 @@ function NoteUI({
               j?.error ||
               j?.message ||
               (raw ? raw.slice(0, 300) : "") ||
-              `Finalize-step error: ${r.status}`;
+              `Finalize error: ${r.status}`;
             setFinalizeStage("failed");
             throw new Error(msg);
           }

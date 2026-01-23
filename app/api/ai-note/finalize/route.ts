@@ -1,19 +1,22 @@
+// app/api/ai-note/finalize/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+
+import ffmpegPath from "ffmpeg-static";
+
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { spawn } from "node:child_process";
+import { Buffer } from "node:buffer";
 
 import { transcribeAudioToText } from "@/lib/asr/transcribe";
 import { runAiNotePipeline } from "@/lib/aiNote/pipeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-// ✅ 关键：延长 Vercel 函数最大执行时长（上限受套餐影响）
 export const maxDuration = 300;
 
 type ApiErr =
@@ -53,16 +56,21 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
+/**
+ * ✅ 用 ffmpeg-static 的二进制路径（Vercel 上没有系统 ffmpeg）
+ */
+const FFMPEG_BIN = ffmpegPath as unknown as string;
+
 function run(cmd: string, args: string[]) {
   return new Promise<void>((resolve, reject) => {
+    if (!cmd) return reject(new Error("ffmpegPath is empty. Did you install ffmpeg-static?"));
+
     const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
 
     let out = "";
     let err = "";
 
-    // ✅ 关键：ffmpeg 不存在时会走这里
-    p.on("error", (e) => reject(new Error(`spawn ${cmd} failed: ${e.message}`)));
-
+    p.on("error", (e) => reject(new Error(`spawn ffmpeg failed: ${e.message}`)));
     p.stdout.on("data", (d) => (out += d.toString()));
     p.stderr.on("data", (d) => (err += d.toString()));
 
@@ -72,7 +80,6 @@ function run(cmd: string, args: string[]) {
     });
   });
 }
-
 
 async function readBodyAndNoteId(req: Request): Promise<{ noteId: string; body: any }> {
   let body: any = null;
@@ -96,11 +103,6 @@ async function readBodyAndNoteId(req: Request): Promise<{ noteId: string; body: 
   return { noteId: "", body };
 }
 
-function escForFfmpegConcat(p: string) {
-  return p.replace(/'/g, `'\\''`);
-}
-
-// ---- your existing helpers (kept) ----
 function countWords(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
@@ -143,7 +145,7 @@ ${merged}`
   return final;
 }
 
-// ✅ 小并发池
+// 并发池
 async function mapPool<T, R>(items: T[], concurrency: number, fn: (x: T, idx: number) => Promise<R>) {
   const res: R[] = new Array(items.length);
   let i = 0;
@@ -158,6 +160,26 @@ async function mapPool<T, R>(items: T[], concurrency: number, fn: (x: T, idx: nu
   return res;
 }
 
+// Prisma bytes -> Buffer
+function bytesToBuffer(data: any): Buffer {
+  if (!data) throw new Error("chunk.data is empty");
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof Uint8Array) return Buffer.from(data);
+  if (data instanceof ArrayBuffer) return Buffer.from(new Uint8Array(data));
+  if (Array.isArray(data)) return Buffer.from(data);
+  if (data && typeof data === "object" && data.type === "Buffer" && Array.isArray(data.data)) {
+    return Buffer.from(data.data);
+  }
+  if (typeof data === "string") {
+    try {
+      return Buffer.from(data, "base64");
+    } catch {
+      return Buffer.from(data, "utf8");
+    }
+  }
+  throw new Error(`Unsupported bytes type: typeof=${typeof data} ctor=${data?.constructor?.name}`);
+}
+
 export async function POST(req: Request) {
   const t0 = Date.now();
   try {
@@ -169,6 +191,7 @@ export async function POST(req: Request) {
     if (!noteId) return bad("MISSING_NOTE_ID", 400);
 
     console.log("[ai-note/finalize] start noteId=", noteId);
+    console.log("[ai-note/finalize] ffmpegPath=", FFMPEG_BIN || "(empty)");
 
     const sessRow = await prisma.aiNoteSession.findUnique({
       where: { id: noteId },
@@ -180,9 +203,8 @@ export async function POST(req: Request) {
     const chunks = await prisma.aiNoteChunk.findMany({
       where: { noteId },
       orderBy: { chunkIndex: "asc" },
-      select: { chunkIndex: true, mime: true, size: true, data: true },
+      select: { chunkIndex: true, mime: true, data: true },
     });
-
     if (chunks.length === 0) return bad("NO_CHUNKS", 400, "No chunks uploaded.", { noteId });
 
     for (let i = 0; i < chunks.length; i++) {
@@ -196,73 +218,51 @@ export async function POST(req: Request) {
     const workDir = path.join(os.tmpdir(), "ai-note", noteId, "work");
     await fs.mkdir(workDir, { recursive: true });
 
-    const chunkDir = path.join(workDir, "chunks");
-    await fs.mkdir(chunkDir, { recursive: true });
-
-    console.log("[ai-note/finalize] chunks=", chunks.length, "tmpDir=", workDir);
-
-    const chunkPaths: string[] = [];
-    for (const c of chunks) {
-      const ext =
-        (c.mime || "").includes("ogg")
-          ? "ogg"
-          : (c.mime || "").includes("wav")
-          ? "wav"
-          : (c.mime || "").includes("mpeg")
-          ? "mp3"
-          : (c.mime || "").includes("mp4")
-          ? "mp4"
-          : "webm";
-
-      const p = path.join(chunkDir, `chunk-${String(c.chunkIndex).padStart(6, "0")}.${ext}`);
-      await fs.writeFile(p, Buffer.from(c.data));
-      chunkPaths.push(p);
+    // 1) 拼接完整 webm（适配 MediaRecorder timeslice）
+    const fullWebm = path.join(workDir, "full.webm");
+    const fh = await fs.open(fullWebm, "w");
+    try {
+      for (const c of chunks) {
+        const buf = bytesToBuffer(c.data);
+        await fh.write(buf);
+      }
+    } finally {
+      await fh.close();
     }
 
-    // ✅ 1) 二进制拼接：把 MediaRecorder timeslice chunks 拼成一个完整 webm
-const fullWebm = path.join(workDir, "full.webm");
+    // 2) ffmpeg：webm -> wav（用 ffmpeg-static）
+    const fullWav = path.join(workDir, "full.wav");
+    console.log("[ai-note/finalize] ffmpeg webm->wav...");
+    await withTimeout(
+      run(FFMPEG_BIN, [
+        "-y",
+        "-hide_banner",
+        "-i",
+        fullWebm,
+        "-vn",
+        "-sn",
+        "-dn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+        fullWav,
+      ]),
+      120_000,
+      "ffmpeg_webm_to_wav"
+    ).catch((e: any) => {
+      throw Object.assign(new Error(e?.message || String(e)), { _code: "FFMPEG_FAILED" });
+    });
 
-// 用 stream 追加写入（不会一次把全部读进内存）
-const fh = await fs.open(fullWebm, "w");
-try {
-  for (const p of chunkPaths) {
-    const b = await fs.readFile(p);
-    await fh.write(b);
-  }
-} finally {
-  await fh.close();
-}
-
-// ✅ 2) 再让 ffmpeg 从完整 webm 转 wav（这一步才会稳定）
-const fullWav = path.join(workDir, "full.wav");
-console.log("[ai-note/finalize] ffmpeg webm->wav...");
-await withTimeout(
-  run("ffmpeg", [
-    "-y",
-    "-i",
-    fullWebm,
-    "-vn",
-    "-sn",
-    "-dn",
-    "-ac",
-    "1",
-    "-ar",
-    "16000",
-    fullWav,
-  ]),
-  120_000,
-  "ffmpeg_webm_to_wav"
-).catch((e: any) => {
-  throw Object.assign(new Error(e?.message || String(e)), { _code: "FFMPEG_FAILED" });
-});
-
-
-    // segment 10min
+    // 3) segment 10min
     const segPattern = path.join(workDir, "seg-%03d.wav");
     console.log("[ai-note/finalize] ffmpeg segment...");
     await withTimeout(
-      run("ffmpeg", [
+      run(FFMPEG_BIN, [
         "-y",
+        "-hide_banner",
         "-i",
         fullWav,
         "-vn",
@@ -278,6 +278,8 @@ await withTimeout(
         "1",
         "-ar",
         "16000",
+        "-c:a",
+        "pcm_s16le",
         segPattern,
       ]),
       120_000,
@@ -286,50 +288,58 @@ await withTimeout(
       throw Object.assign(new Error(e?.message || String(e)), { _code: "FFMPEG_FAILED" });
     });
 
-    const files = (await fs.readdir(workDir)).filter((n) => n.startsWith("seg-") && n.endsWith(".wav")).sort();
+    const files = (await fs.readdir(workDir))
+      .filter((n) => n.startsWith("seg-") && n.endsWith(".wav"))
+      .sort();
+
     console.log("[ai-note/finalize] segments=", files.length, "elapsed(ms)=", Date.now() - t0);
 
-    const HasFile = typeof (globalThis as any).File !== "undefined";
     const HasBlob = typeof (globalThis as any).Blob !== "undefined";
-    if (!HasFile || !HasBlob) return bad("FILE_NOT_SUPPORTED_IN_NODE", 500, "global File/Blob not available.");
+    if (!HasBlob) return bad("FILE_NOT_SUPPORTED_IN_NODE", 500, "global Blob not available.");
 
-    // ✅ 并发 ASR（默认 2；可用 env 调整）
     const asrConcurrency = Math.max(1, Number.parseInt(process.env.AI_NOTE_ASR_CONCURRENCY || "2", 10) || 2);
     const asrTimeoutMs = Math.max(10_000, Number.parseInt(process.env.AI_NOTE_ASR_TIMEOUT_MS || "60000", 10) || 60_000);
 
     console.log("[ai-note/finalize] ASR concurrency=", asrConcurrency, "timeoutMs=", asrTimeoutMs);
 
     const texts = await mapPool(files, asrConcurrency, async (fname) => {
-    const p = path.join(workDir, fname);
-    const buf = await fs.readFile(p);
+      const p = path.join(workDir, fname);
+      const buf = await fs.readFile(p);
+      const blob = new Blob([new Uint8Array(buf)], { type: "audio/wav" });
 
-    // ✅ 更稳：用 Uint8Array 包一下（某些环境 Blob 对 Buffer 兼容更差）
-    const blob = new Blob([new Uint8Array(buf)], { type: "audio/wav" });
+      try {
+        const t = await withTimeout(
+          transcribeAudioToText(blob, {
+            filename: fname,
+            mime: "audio/wav",
+          } as any),
+          asrTimeoutMs,
+          `asr_${fname}`
+        );
+        return String(t || "").trim();
+      } catch (e: any) {
+        const msg = String(e?.message || e);
 
-    // ✅ 更稳：上传给 ASR 的 filename 固定
-    const safeName = "audio.wav";
+        if (
+          msg.includes("NO_SPEECH_DETECTED") ||
+          msg.includes("EMPTY_TRANSCRIPT") ||
+          msg.includes("AUDIO_TOO_SHORT_OR_EMPTY")
+        ) {
+          console.warn("[ai-note/finalize] segment no speech -> skip", { fname, msg });
+          return "";
+        }
 
-    const t = await withTimeout(
-    Promise.resolve(
-      transcribeAudioToText(blob, { filename: "audio.wav", mime: "audio/wav", vad_filter:false, beam_size:5, })
-    ),
-    asrTimeoutMs,
-    `asr_${fname}`
-);
-
-
-    return String(t || "").trim();
-  }).catch((e: any) => {
-    throw Object.assign(new Error(e?.message || String(e)), { _code: "ASR_FAILED" });
-  });
-
+        throw e;
+      }
+    }).catch((e: any) => {
+      throw Object.assign(new Error(e?.message || String(e)), { _code: "ASR_FAILED" });
+    });
 
     const transcriptAll = texts.filter(Boolean).join("\n").trim();
-    if (!transcriptAll) return bad("ASR_FAILED", 502, "ASR returned empty transcript");
+    if (!transcriptAll) return bad("ASR_FAILED", 422, "NO_SPEECH_DETECTED: transcript is empty");
 
     console.log("[ai-note/finalize] transcript chars=", transcriptAll.length, "elapsed(ms)=", Date.now() - t0);
 
-    // ✅ LLM pipeline 也加超时
     const llmTimeoutMs = Math.max(30_000, Number.parseInt(process.env.AI_NOTE_LLM_TIMEOUT_MS || "120000", 10) || 120_000);
 
     const note = await withTimeout(
@@ -357,12 +367,10 @@ await withTimeout(
       elapsedMs: Date.now() - t0,
     });
   } catch (e: any) {
-    const msg = e?.message || String(e);
+    const msg = String(e?.message || e);
     console.error("[ai-note/finalize] error:", msg);
 
-    if (String(msg).startsWith("TIMEOUT:")) {
-      return bad("TIMEOUT", 504, msg);
-    }
+    if (String(msg).startsWith("TIMEOUT:")) return bad("TIMEOUT", 504, msg);
     if (e?._code === "FFMPEG_FAILED") return bad("FFMPEG_FAILED", 500, msg);
     if (e?._code === "ASR_FAILED") return bad("ASR_FAILED", 502, msg);
     if (e?._code === "LLM_FAILED") return bad("LLM_FAILED", 502, msg);
