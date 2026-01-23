@@ -4,8 +4,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
-import ffmpegPath from "ffmpeg-static";
-
+import fssync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -56,16 +55,72 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
+/** ✅ 从一堆候选路径里找第一个存在的 */
+function firstExisting(paths: string[]) {
+  for (const p of paths) {
+    try {
+      if (p && fssync.existsSync(p)) return p;
+    } catch {}
+  }
+  return "";
+}
+
+/** ✅ Linux 上 ffmpeg-static 有时没可执行权限，需要 chmod +x */
+async function ensureExecutable(binPath: string) {
+  if (!binPath) return;
+  if (process.platform === "win32") return;
+  try {
+    // 尝试加可执行
+    await fs.chmod(binPath, 0o755);
+  } catch {
+    // ignore
+  }
+}
+
 /**
- * ✅ 用 ffmpeg-static 的二进制路径（Vercel 上没有系统 ffmpeg）
+ * ✅ 运行时找 ffmpeg（兼容 Vercel Linux + Next standalone）
+ * - 你也可以在 Vercel 环境变量里设置 FFMPEG_PATH 直接指定
  */
-const FFMPEG_BIN = ffmpegPath as unknown as string;
+function getFfmpegBin() {
+  const envPath = (process.env.FFMPEG_PATH || "").trim();
+  if (envPath && fssync.existsSync(envPath)) return envPath;
 
-function run(cmd: string, args: string[]) {
+  const cwd = process.cwd(); // Vercel 通常是 /var/task
+  const isWin = process.platform === "win32";
+  const exe = isWin ? "ffmpeg.exe" : "ffmpeg";
+
+  const candidates = [
+    // local dev / normal node_modules
+    path.join(cwd, "node_modules", "ffmpeg-static", exe),
+    path.join(cwd, "node_modules", "ffmpeg-static", "bin", exe),
+
+    // Next standalone output
+    path.join(cwd, ".next", "standalone", "node_modules", "ffmpeg-static", exe),
+    path.join(cwd, ".next", "standalone", "node_modules", "ffmpeg-static", "bin", exe),
+
+    // Vercel build output (有些项目会在这里)
+    path.join(cwd, ".vercel", "output", "functions", "api", "node_modules", "ffmpeg-static", exe),
+    path.join(cwd, ".vercel", "output", "functions", "api", "node_modules", "ffmpeg-static", "bin", exe),
+
+    // Vercel runtime 常见
+    path.join("/var/task", "node_modules", "ffmpeg-static", exe),
+    path.join("/var/task", "node_modules", "ffmpeg-static", "bin", exe),
+    path.join("/var/task", ".next", "standalone", "node_modules", "ffmpeg-static", exe),
+    path.join("/var/task", ".next", "standalone", "node_modules", "ffmpeg-static", "bin", exe),
+  ];
+
+  const found = firstExisting(candidates);
+  if (!found) {
+    throw new Error(`FFMPEG not found. Tried:\n${candidates.join("\n")}`);
+  }
+  return found;
+}
+
+function run(cmd: string, args: string[], cwd?: string) {
   return new Promise<void>((resolve, reject) => {
-    if (!cmd) return reject(new Error("ffmpegPath is empty. Did you install ffmpeg-static?"));
+    if (!cmd) return reject(new Error("ffmpeg cmd is empty"));
 
-    const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const p = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], cwd });
 
     let out = "";
     let err = "";
@@ -76,7 +131,10 @@ function run(cmd: string, args: string[]) {
 
     p.on("close", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(`ffmpeg failed (${code}): ${(err || out).slice(0, 6000)}`));
+      else {
+        const body = (err || out).slice(0, 9000);
+        reject(new Error(`ffmpeg failed (${code}): ${body}`));
+      }
     });
   });
 }
@@ -190,8 +248,11 @@ export async function POST(req: Request) {
     const { noteId } = await readBodyAndNoteId(req);
     if (!noteId) return bad("MISSING_NOTE_ID", 400);
 
+    const ffmpegBin = getFfmpegBin();
+    await ensureExecutable(ffmpegBin);
+
     console.log("[ai-note/finalize] start noteId=", noteId);
-    console.log("[ai-note/finalize] ffmpegPath=", FFMPEG_BIN || "(empty)");
+    console.log("[ai-note/finalize] ffmpeg=", ffmpegBin);
 
     const sessRow = await prisma.aiNoteSession.findUnique({
       where: { id: noteId },
@@ -230,26 +291,11 @@ export async function POST(req: Request) {
       await fh.close();
     }
 
-    // 2) ffmpeg：webm -> wav（用 ffmpeg-static）
+    // 2) ffmpeg：webm -> wav
     const fullWav = path.join(workDir, "full.wav");
     console.log("[ai-note/finalize] ffmpeg webm->wav...");
     await withTimeout(
-      run(FFMPEG_BIN, [
-        "-y",
-        "-hide_banner",
-        "-i",
-        fullWebm,
-        "-vn",
-        "-sn",
-        "-dn",
-        "-ac",
-        "1",
-        "-ar",
-        "16000",
-        "-c:a",
-        "pcm_s16le",
-        fullWav,
-      ]),
+      run(ffmpegBin, ["-y", "-hide_banner", "-i", fullWebm, "-vn", "-sn", "-dn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", fullWav]),
       120_000,
       "ffmpeg_webm_to_wav"
     ).catch((e: any) => {
@@ -260,7 +306,7 @@ export async function POST(req: Request) {
     const segPattern = path.join(workDir, "seg-%03d.wav");
     console.log("[ai-note/finalize] ffmpeg segment...");
     await withTimeout(
-      run(FFMPEG_BIN, [
+      run(ffmpegBin, [
         "-y",
         "-hide_banner",
         "-i",
@@ -288,10 +334,7 @@ export async function POST(req: Request) {
       throw Object.assign(new Error(e?.message || String(e)), { _code: "FFMPEG_FAILED" });
     });
 
-    const files = (await fs.readdir(workDir))
-      .filter((n) => n.startsWith("seg-") && n.endsWith(".wav"))
-      .sort();
-
+    const files = (await fs.readdir(workDir)).filter((n) => n.startsWith("seg-") && n.endsWith(".wav")).sort();
     console.log("[ai-note/finalize] segments=", files.length, "elapsed(ms)=", Date.now() - t0);
 
     const HasBlob = typeof (globalThis as any).Blob !== "undefined";
@@ -309,10 +352,7 @@ export async function POST(req: Request) {
 
       try {
         const t = await withTimeout(
-          transcribeAudioToText(blob, {
-            filename: fname,
-            mime: "audio/wav",
-          } as any),
+          transcribeAudioToText(blob, { filename: fname, mime: "audio/wav" } as any),
           asrTimeoutMs,
           `asr_${fname}`
         );
@@ -320,11 +360,7 @@ export async function POST(req: Request) {
       } catch (e: any) {
         const msg = String(e?.message || e);
 
-        if (
-          msg.includes("NO_SPEECH_DETECTED") ||
-          msg.includes("EMPTY_TRANSCRIPT") ||
-          msg.includes("AUDIO_TOO_SHORT_OR_EMPTY")
-        ) {
+        if (msg.includes("NO_SPEECH_DETECTED") || msg.includes("EMPTY_TRANSCRIPT") || msg.includes("AUDIO_TOO_SHORT_OR_EMPTY")) {
           console.warn("[ai-note/finalize] segment no speech -> skip", { fname, msg });
           return "";
         }
@@ -373,7 +409,12 @@ export async function POST(req: Request) {
     if (String(msg).startsWith("TIMEOUT:")) return bad("TIMEOUT", 504, msg);
     if (e?._code === "FFMPEG_FAILED") return bad("FFMPEG_FAILED", 500, msg);
     if (e?._code === "ASR_FAILED") return bad("ASR_FAILED", 502, msg);
-    if (e?._code === "LLM_FAILED") return bad("LLM_FAILED", 502, msg);
+
+    if (e?._code === "LLM_FAILED") {
+      // ✅ 不要把整段 HTML 503 全吐给前端
+      const short = msg.slice(0, 900);
+      return bad("LLM_FAILED", 503, `LLM temporary unavailable (HF). Retry later. details: ${short}`);
+    }
 
     return bad("INTERNAL_ERROR", 500, msg);
   }
