@@ -1,7 +1,7 @@
 generator client {
   provider        = "prisma-client-js"
-  binaryTargets   = ["native", "rhel-openssl-3.0.x"]
   previewFeatures = ["driverAdapters"]
+  binaryTargets   = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -9,69 +9,57 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/**
- * ===================== Chat =====================
- */
+/// *
+///  * ===================== Chat =====================
 model ChatSession {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   userId    String
-  title     String   @default("新的对话")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  messages ChatMessage[]
+  title     String        @default("新的对话")
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  messages  ChatMessage[]
 
   @@index([userId, updatedAt])
 }
 
 model ChatMessage {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
   chatSessionId String
   role          String
   content       String
-  createdAt     DateTime @default(now())
-
-  chatSession ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+  chatSession   ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
 
   @@index([chatSessionId, createdAt])
 }
 
-/**
- * ===================== Billing / Plans =====================
- */
+/// *
+///  * ===================== Billing / Plans =====================
 model UserEntitlement {
-  id     String @id @default(cuid())
-  userId String @unique
-  // user  User  @relation(fields: [userId], references: [id]) // 先注释掉，等 User 模型确定后再加
-
-  plan      String  @default("basic")
-  unlimited Boolean @default(false)
-
-  detectorWordsPerWeek Int?
-  noteSecondsPerWeek   Int?
-  chatPerDay           Int?
-
-  usedDetectorWordsThisWeek Int @default(0)
-  usedNoteSecondsThisWeek   Int @default(0)
-  usedChatCountToday        Int @default(0)
-
-  canSeeSuspiciousSentences Boolean @default(false)
-
-  stripeCustomerId String?
-  stripeSubId      String?
-  stripeStatus     String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  userId                    String   @unique
+  plan                      String   @default("basic")
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+  stripeCustomerId          String?
+  stripeStatus              String?
+  stripeSubId               String?
+  id                        String   @id @default(cuid())
+  canSeeSuspiciousSentences Boolean  @default(false)
+  chatPerDay                Int?
+  detectorWordsPerWeek      Int?
+  noteSecondsPerWeek        Int?
+  unlimited                 Boolean  @default(false)
+  usedChatCountToday        Int      @default(0)
+  usedDetectorWordsThisWeek Int      @default(0)
+  usedNoteSecondsThisWeek   Int      @default(0)
 }
 
 model GiftCode {
-  code      String   @id
-  isActive  Boolean  @default(true)
-  maxUses   Int? // null = unlimited uses
-  usedCount Int      @default(0)
-  createdAt DateTime @default(now())
-
+  code        String               @id
+  isActive    Boolean              @default(true)
+  maxUses     Int?
+  usedCount   Int                  @default(0)
+  createdAt   DateTime             @default(now())
   redemptions GiftCodeRedemption[]
 
   @@index([isActive])
@@ -82,8 +70,7 @@ model GiftCodeRedemption {
   code      String
   userId    String
   createdAt DateTime @default(now())
-
-  giftCode GiftCode @relation(fields: [code], references: [code], onDelete: Restrict)
+  giftCode  GiftCode @relation(fields: [code], references: [code])
 
   @@unique([code, userId])
   @@index([userId])
@@ -93,7 +80,7 @@ model GiftCodeRedemption {
 model UsageEvent {
   id        String   @id @default(cuid())
   userId    String
-  type      String // detector_words | note_seconds | chat_count
+  type      String
   amount    Int
   createdAt DateTime @default(now())
 
@@ -101,63 +88,54 @@ model UsageEvent {
   @@index([createdAt])
 }
 
-/**
- * ===================== AI Note =====================
- */
+/// *
+///  * ===================== AI Note =====================
 model AiNoteSession {
-  id        String   @id
-  userId    String
-  status    String   @default("processing") // processing | done | failed
-  result    String?  // 最终笔记 markdown
-  error     String?  // 失败原因
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  chunks      AiNoteChunk[]
-  transcripts AiNoteTranscript[]
-  summaries   AiNoteSummaryPart[]
-  job         AiNoteJob?          @relation(fields: [aiNoteJobId], references: [id])
+  id          String              @id @default(cuid())
+  userId      String
+  createdAt   DateTime            @default(now())
   aiNoteJobId String?
+  chunks      AiNoteChunk[]
+  job         AiNoteJob?          @relation(fields: [aiNoteJobId], references: [id])
+  summaries   AiNoteSummaryPart[]
+  transcripts AiNoteTranscript[]
 
   @@index([userId, createdAt])
 }
 
 model AiNoteChunk {
-  id         String   @id @default(cuid())
+  id         String        @id @default(cuid())
   noteId     String
   chunkIndex Int
   mime       String
   size       Int
   data       Bytes
-  createdAt  DateTime @default(now())
-
-  session AiNoteSession @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  createdAt  DateTime      @default(now())
+  session    AiNoteSession @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@unique([noteId, chunkIndex])
   @@index([noteId])
 }
 
 model AiNoteTranscript {
-  id         String   @id @default(cuid())
+  id         String        @id @default(cuid())
   noteId     String
   chunkIndex Int
   text       String
-  createdAt  DateTime @default(now())
-
-  session AiNoteSession @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  createdAt  DateTime      @default(now())
+  session    AiNoteSession @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@unique([noteId, chunkIndex])
   @@index([noteId])
 }
 
 model AiNoteSummaryPart {
-  id        String   @id @default(cuid())
+  id        String        @id @default(cuid())
   noteId    String
   partIndex Int
   text      String
-  createdAt DateTime @default(now())
-
-  session AiNoteSession @relation(fields: [noteId], references: [id], onDelete: Cascade)
+  createdAt DateTime      @default(now())
+  session   AiNoteSession @relation(fields: [noteId], references: [id], onDelete: Cascade)
 
   @@unique([noteId, partIndex])
   @@index([noteId])
@@ -170,9 +148,7 @@ model AiNoteJob {
   stage         String          @default("asr")
   progress      Int             @default(0)
   error         String?
-  createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
+  createdAt     DateTime        @default(now())
   AiNoteSession AiNoteSession[]
-
-  
 }
