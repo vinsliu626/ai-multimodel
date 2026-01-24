@@ -1,8 +1,6 @@
 import { z } from "zod";
 import { outlinePrompt, sectionNotesPrompt, finalMergePrompt } from "./prompts";
 
-import type { OutlineSection as OutlineResult, SectionNotes, FinalNote } from "./types";
-
 import { callGroqChat } from "@/lib/ai/providers/groq";
 import { callHfRouterChat } from "@/lib/ai/providers/hfRouter";
 
@@ -33,7 +31,6 @@ const OutlineSchema = z.object({
     .min(1),
 });
 
-
 const SectionNotesSchema = z.object({
   id: z.string().min(1),
   heading: z.string().min(1),
@@ -41,32 +38,49 @@ const SectionNotesSchema = z.object({
   // ✅ bullets 允许更少：短段落可能就 2-4 条
   bullets: z.array(z.string().min(1)).min(2).max(12),
 
-  // ✅ 关键：keyTerms 允许 1-8（别再卡死 min(3)）
-  keyTerms: z.array(z.object({ term: z.string().min(1), definition: z.string().min(1) })).min(1).max(10),
+  // ✅ 关键：keyTerms 允许 0-10（fallback/短内容可能只有 0-2 个）
+  keyTerms: z
+    .array(z.object({ term: z.string().min(1), definition: z.string().min(1) }))
+    .min(0)
+    .max(10)
+    .default([]),
 
   examples: z.array(z.string().min(1)).max(8).default([]),
   actionItems: z.array(z.string().min(1)).max(8).default([]),
 });
 
-
 const FinalNoteSchema = z.object({
-  title: z.string().min(1),
-  tldr: z.array(z.string().min(1)).min(2).max(8),
+  title: z.string().min(1).default("Notes"),
+
+  // ✅ 放宽：fallback 模型经常给很多条
+  tldr: z.array(z.string().min(1)).min(0).max(50).default([]),
+
   outline: z
     .array(
       z.object({
         heading: z.string().min(1),
-        bullets: z.array(z.string().min(1)).min(2),
+        bullets: z.array(z.string().min(1)).min(0).max(60).default([]),
       })
     )
-    .min(1),
+    .min(0)
+    .default([]),
+
   keyTerms: z
     .array(z.object({ term: z.string().min(1), definition: z.string().min(1) }))
-    .min(3),
-  reviewChecklist: z.array(z.string().min(1)).min(3).max(12),
-  quiz: z.array(z.object({ q: z.string().min(1), a: z.string().min(1) })).min(3).max(10),
-  markdown: z.string().min(20),
+    .min(0)
+    .max(50)
+    .default([]),
+
+  reviewChecklist: z.array(z.string().min(1)).min(0).max(50).default([]),
+  quiz: z.array(z.object({ q: z.string().min(1), a: z.string().min(1) })).min(0).max(50).default([]),
+
+  // ✅ 允许缺失，后面兜底生成
+  markdown: z.string().min(0).default(""),
 });
+
+type OutlineResult = z.infer<typeof OutlineSchema>;
+type SectionNotes = z.infer<typeof SectionNotesSchema>;
+type FinalNote = z.infer<typeof FinalNoteSchema>;
 
 /** ===================== Helpers ===================== */
 function normalizeInput(text: string) {
@@ -86,33 +100,6 @@ function stripCodeFences(s: string) {
   }
   return t;
 }
-
-function ensureMinKeyTerms(
-  obj: { keyTerms: { term: string; definition: string }[]; heading: string; bullets: string[] },
-  min = 3
-) {
-  const out = Array.isArray(obj.keyTerms) ? obj.keyTerms.filter((x) => x?.term && x?.definition) : [];
-
-  // 用 heading/bullets 兜底补词条
-  const text = `${obj.heading}\n${(obj.bullets || []).join("\n")}`.toLowerCase();
-
-  const candidates: { term: string; definition: string }[] = [];
-
-  if (text.includes("variable")) candidates.push({ term: "Variable", definition: "A named value that can change." });
-  if (text.includes("constant")) candidates.push({ term: "Constant", definition: "A named value that does not change." });
-  if (text.includes("data")) candidates.push({ term: "Data", definition: "Information stored and processed by a program." });
-  if (text.includes("value")) candidates.push({ term: "Value", definition: "The actual content stored in a variable/constant." });
-
-  for (const c of candidates) {
-    if (out.length >= min) break;
-    if (!out.some((x) => x.term.toLowerCase() === c.term.toLowerCase())) out.push(c);
-  }
-
-  while (out.length < min) out.push({ term: "Key term", definition: "Important concept from this section." });
-
-  return out.slice(0, 10);
-}
-
 
 function stripThinkBlocks(s: string) {
   return s.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
@@ -179,12 +166,9 @@ function sleep(ms: number) {
 
 function ensureMinKeyPoints(section: { summary: string; sourceText: string; keyPoints?: string[] }, min = 2) {
   const kp = Array.isArray(section.keyPoints) ? section.keyPoints.filter(Boolean) : [];
+  if (kp.length >= min) return kp.slice(0, 12);
 
-  if (kp.length >= min) return kp.slice(0, 8);
-
-  // 从 summary + sourceText 抽句子当 keyPoints
   const base = `${section.summary}\n${section.sourceText}`.trim();
-
   const candidates = base
     .split(/[\n\.!\?]+/g)
     .map((s) => s.trim())
@@ -195,24 +179,143 @@ function ensureMinKeyPoints(section: { summary: string; sourceText: string; keyP
     if (out.length >= min) break;
     if (!out.includes(c)) out.push(c);
   }
-
-  // 最后兜底：硬塞两个
   while (out.length < min) out.push("Key point");
-
-  return out.slice(0, 8);
+  return out.slice(0, 12);
 }
 
+function ensureMinKeyTerms(
+  obj: { heading: string; bullets: string[]; keyTerms?: { term: string; definition: string }[] },
+  min = 3
+) {
+  const out = Array.isArray(obj.keyTerms) ? obj.keyTerms.filter((x) => x?.term && x?.definition) : [];
+
+  const text = `${obj.heading}\n${(obj.bullets || []).join("\n")}`.toLowerCase();
+  const candidates: { term: string; definition: string }[] = [];
+
+  if (text.includes("variable")) candidates.push({ term: "Variable", definition: "A named value that can change." });
+  if (text.includes("constant")) candidates.push({ term: "Constant", definition: "A named value that does not change." });
+  if (text.includes("data")) candidates.push({ term: "Data", definition: "Information stored and processed by a program." });
+  if (text.includes("value")) candidates.push({ term: "Value", definition: "The content stored in a variable/constant." });
+
+  for (const c of candidates) {
+    if (out.length >= min) break;
+    if (!out.some((x) => x.term.toLowerCase() === c.term.toLowerCase())) out.push(c);
+  }
+  while (out.length < min) out.push({ term: "Key term", definition: "Important concept from this section." });
+
+  return out.slice(0, 10);
+}
+
+function ensureSectionNotes(note: any): SectionNotes {
+  const id = String(note?.id || "section-1");
+  const heading = String(note?.heading || "Section");
+
+  const bullets = Array.isArray(note?.bullets) ? note.bullets.filter(Boolean) : [];
+  const safeBullets = bullets.length >= 2 ? bullets.slice(0, 12) : ["(No content)", "(No content)"];
+
+  const keyTermsRaw = Array.isArray(note?.keyTerms) ? note.keyTerms : [];
+  const fixedKeyTerms = ensureMinKeyTerms({ heading, bullets: safeBullets, keyTerms: keyTermsRaw }, 3);
+
+  const examples = Array.isArray(note?.examples) ? note.examples.filter(Boolean).slice(0, 8) : [];
+  const actionItems = Array.isArray(note?.actionItems) ? note.actionItems.filter(Boolean).slice(0, 8) : [];
+
+  const obj: SectionNotes = {
+    id,
+    heading,
+    bullets: safeBullets,
+    keyTerms: fixedKeyTerms,
+    examples,
+    actionItems,
+  };
+
+  // 再走一次 schema（保证最终一定符合）
+  const parsed = SectionNotesSchema.safeParse(obj);
+  if (!parsed.success) {
+    // 极端兜底
+    return {
+      id,
+      heading,
+      bullets: ["(No content)", "(No content)"],
+      keyTerms: fixedKeyTerms,
+      examples: [],
+      actionItems: [],
+    };
+  }
+  return parsed.data;
+}
+
+function ensureFinalNote(note: any): FinalNote {
+  const title = String(note?.title || "Notes").trim() || "Notes";
+
+  const tldr = Array.isArray(note?.tldr) ? note.tldr.filter(Boolean).slice(0, 8) : [];
+  const outlineRaw = Array.isArray(note?.outline) ? note.outline : [];
+
+  const safeOutline =
+    outlineRaw.length > 0
+      ? outlineRaw
+          .map((x: any) => ({
+            heading: String(x?.heading || "Section").trim() || "Section",
+            bullets: Array.isArray(x?.bullets) ? x.bullets.filter(Boolean).slice(0, 12) : [],
+          }))
+          .filter((x: any) => x.bullets.length > 0)
+      : [
+          {
+            heading: "Summary",
+            bullets: tldr.length ? tldr : ["(No content)"],
+          },
+        ];
+
+  const keyTerms = Array.isArray(note?.keyTerms) ? note.keyTerms : [];
+  const reviewChecklist = Array.isArray(note?.reviewChecklist) ? note.reviewChecklist.slice(0, 12) : [];
+  const quiz = Array.isArray(note?.quiz) ? note.quiz.slice(0, 10) : [];
+
+  let markdown = String(note?.markdown || "").trim();
+
+  if (!markdown) {
+    markdown = [
+      `# ${title}`,
+      ``,
+      `## TL;DR`,
+      ...(tldr.length ? tldr.map((x: string) => `- ${x}`) : ["- (empty)"]),
+      ``,
+      `## Outline`,
+      ...safeOutline.flatMap((sec: any) => [`### ${sec.heading}`, ...sec.bullets.map((b: string) => `- ${b}`), ``]),
+      keyTerms.length
+        ? [`## Key Terms`, ...keyTerms.slice(0, 10).map((k: any) => `- **${k.term}**: ${k.definition}`), ``].join("\n")
+        : ``,
+      reviewChecklist.length
+        ? [`## Review Checklist`, ...reviewChecklist.map((x: string) => `- ${x}`), ``].join("\n")
+        : ``,
+      quiz.length
+        ? [
+            `## Quick Quiz`,
+            ...quiz.map((qa: any, i: number) => `**Q${i + 1}.** ${qa.q}\n\n**A${i + 1}.** ${qa.a}\n`),
+          ].join("\n")
+        : ``,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  const obj: FinalNote = {
+    title,
+    tldr: tldr.length ? tldr : ["(empty)"],
+    outline: safeOutline,
+    keyTerms,
+    reviewChecklist,
+    quiz,
+    markdown,
+  };
+
+  const parsed = FinalNoteSchema.safeParse(obj);
+  if (!parsed.success) return { ...obj, markdown };
+  return parsed.data;
+}
 
 /**
  * ✅ HF Router 调用包装：处理 503/HTML/网络抖动，指数退避重试
  */
-async function callHfRouterChatRobust(
-  hfToken: string,
-  model: string,
-  messages: any,
-  opts: any,
-  label: string
-) {
+async function callHfRouterChatRobust(hfToken: string, model: string, messages: any, opts: any, label: string) {
   const maxTry = Number.parseInt(process.env.AI_NOTE_HF_RETRIES || "4", 10) || 4;
   let lastErr: any = null;
 
@@ -220,17 +323,14 @@ async function callHfRouterChatRobust(
     try {
       const raw = await callHfRouterChat(hfToken, model, messages, opts);
 
-      // 有时 provider 不 throw，但返回 HTML（你现在遇到的 503 页面）
       if (typeof raw === "string" && looksLikeHtml(raw)) {
         throw new Error(`HF Router returned HTML (likely 503). label=${label}`);
       }
-
       return raw;
     } catch (e: any) {
       lastErr = e;
       const msg = String(e?.message || e);
 
-      // 只对这些情况重试：503 / Service Unavailable / HTML / fetch失败
       const retryable =
         msg.includes("503") ||
         msg.toLowerCase().includes("service unavailable") ||
@@ -241,8 +341,10 @@ async function callHfRouterChatRobust(
 
       if (!retryable || attempt === maxTry) break;
 
-      const backoff = Math.min(8000, 500 * Math.pow(2, attempt - 1)); // 500,1000,2000,4000...
-      console.warn(`[aiNote/pipeline] HF retry ${attempt}/${maxTry} label=${label} backoff=${backoff}ms msg=${msg.slice(0, 160)}`);
+      const backoff = Math.min(8000, 500 * Math.pow(2, attempt - 1));
+      console.warn(
+        `[aiNote/pipeline] HF retry ${attempt}/${maxTry} label=${label} backoff=${backoff}ms msg=${msg.slice(0, 160)}`
+      );
       await sleep(backoff);
     }
   }
@@ -273,11 +375,9 @@ async function callSectionNotesRobust(args: {
     const obj1 = parseJsonFromModel<SectionNotes>(raw1);
     const parsed1 = SectionNotesSchema.safeParse(obj1);
     if (!parsed1.success) throw new Error("SectionNotes schema mismatch");
-    const fixed = parsed1.data;
-    fixed.keyTerms = ensureMinKeyTerms(fixed, 3);
-    return fixed;
 
-  } catch (e1) {
+    return ensureSectionNotes(parsed1.data);
+  } catch {
     // 2) HF hard retry (force JSON)
     try {
       const hardMessages = [
@@ -303,10 +403,10 @@ async function callSectionNotesRobust(args: {
             `}`,
             ``,
             `Constraints:`,
-            `- bullets: 5-10`,
+            `- bullets: 2-12`,
             `- keyTerms: 3-8`,
-            `- examples: 0-5`,
-            `- actionItems: 0-5`,
+            `- examples: 0-8`,
+            `- actionItems: 0-8`,
             ``,
             `Source text:`,
             sourceText,
@@ -325,10 +425,9 @@ async function callSectionNotesRobust(args: {
       const obj2 = parseJsonFromModel<SectionNotes>(raw2);
       const parsed2 = SectionNotesSchema.safeParse(obj2);
       if (!parsed2.success) throw new Error("SectionNotes schema mismatch after hard retry");
-      const fixed2 = parsed2.data;
-      fixed2.keyTerms = ensureMinKeyTerms(fixed2, 3);
-      return fixed2;
-    } catch (e2) {
+
+      return ensureSectionNotes(parsed2.data);
+    } catch {
       // 3) fallback: Groq
       const fallbackRaw = await callGroqChat(
         groqKey,
@@ -338,81 +437,50 @@ async function callSectionNotesRobust(args: {
       );
 
       const obj3 = parseJsonFromModel<SectionNotes>(fallbackRaw);
-      const parsed3 = SectionNotesSchema.safeParse(obj3);
-      if (!parsed3.success) {
-        throw new Error(`SectionNotes fallback (Groq) schema mismatch.\nRaw:\n${fallbackRaw}`);
-      }
-      return parsed3.data;
+      // 先不强依赖 schema，先兜底补齐再 parse
+      return ensureSectionNotes(obj3);
     }
   }
 }
 
 /** ===================== Final Merge robust (HF retry + fallback Groq) ===================== */
-async function callFinalMergeRobust(args: {
-  hfToken: string;
-  groqKey: string;
-  mergedInput: any;
-}): Promise<FinalNote> {
+async function callFinalMergeRobust(args: { hfToken: string; groqKey: string; mergedInput: any }): Promise<FinalNote> {
   const { hfToken, groqKey, mergedInput } = args;
 
   // HF first
   try {
-    const raw = await callHfRouterChatRobust(
-      hfToken,
-      HF_KIMI_MODEL,
-      finalMergePrompt(mergedInput),
-      { temperature: 0 },
-      "final-merge"
-    );
-
+    const raw = await callHfRouterChatRobust(hfToken, HF_KIMI_MODEL, finalMergePrompt(mergedInput), { temperature: 0 }, "final-merge");
     const obj = parseJsonFromModel<FinalNote>(raw);
-    const parsed = FinalNoteSchema.safeParse(obj);
-    if (!parsed.success) throw new Error("FinalNote schema mismatch");
-    return parsed.data;
-  } catch (e1) {
+    return ensureFinalNote(obj);
+  } catch {
     // fallback Groq
-    const raw2 = await callGroqChat(
-      groqKey,
-      FAST_MODEL,
-      finalMergePrompt(mergedInput),
-      { temperature: 0 }
-    );
-
+    const raw2 = await callGroqChat(groqKey, FAST_MODEL, finalMergePrompt(mergedInput), { temperature: 0 });
     const obj2 = parseJsonFromModel<FinalNote>(raw2);
-    const parsed2 = FinalNoteSchema.safeParse(obj2);
-    if (!parsed2.success) {
-      throw new Error(`FinalNote fallback (Groq) schema mismatch.\nRaw:\n${raw2}`);
-    }
-    return parsed2.data;
+    return ensureFinalNote(obj2);
   }
 }
 
 /** ===================== Main Pipeline ===================== */
 export async function runAiNotePipeline(rawText: string): Promise<string> {
   const text = normalizeInput(rawText);
-
-  // ✅ 超短文本：不走复杂 3-step pipeline，直接简单总结（更稳）
-if (text.length < 200) {
-  const groqKey = mustEnv("GROQ_API_KEY");
-  const raw = await callGroqChat(
-    groqKey,
-    FAST_MODEL,
-    [
-      { role: "system", content: "You write concise meeting notes in Markdown." },
-      {
-        role: "user",
-        content: `Make a short note from the text. Output markdown only.\n\nText:\n${text}`,
-      },
-    ],
-    { temperature: 0 }
-  );
-  return raw.trim();
-}
-
   if (text.length < 20) throw new Error("Text too short");
 
   const groqKey = mustEnv("GROQ_API_KEY");
   const hfToken = mustEnv("HF_TOKEN");
+
+  // ✅ 超短文本：不走复杂 pipeline，直接 markdown（更稳）
+  if (text.length < 200) {
+    const raw = await callGroqChat(
+      groqKey,
+      FAST_MODEL,
+      [
+        { role: "system", content: "You write concise notes in Markdown." },
+        { role: "user", content: `Make a short note from the text. Output Markdown only.\n\nText:\n${text}` },
+      ],
+      { temperature: 0 }
+    );
+    return String(raw || "").trim();
+  }
 
   // ---------------- Step 1: Outline (Groq) ----------------
   const outlineRawText = await callGroqChat(groqKey, FAST_MODEL, outlinePrompt(text), { temperature: 0 });
@@ -425,16 +493,14 @@ if (text.length < 200) {
 
   const outline = outlineParsed.data;
 
-  // ✅ normalize：补 keyPoints，避免空数组导致后面 sectionNotes 质量差
+  // ✅ normalize sections：补 keyPoints/sourceText
   outline.sections = outline.sections.map((s) => ({
     ...s,
     keyPoints: ensureMinKeyPoints(s, 2),
-    // ✅ sourceText 也保证不是空
-    sourceText: (s.sourceText || s.summary || "").trim() || " ",
+    sourceText: (s.sourceText || s.summary || " ").trim() || " ",
   }));
 
-
-  // ---------------- Step 2: Section Notes (HF with retry + fallback) ----------------
+  // ---------------- Step 2: Section Notes ----------------
   const sectionNotes: SectionNotes[] = [];
   for (const s of outline.sections) {
     const notes = await callSectionNotesRobust({
@@ -447,18 +513,17 @@ if (text.length < 200) {
     sectionNotes.push(notes);
   }
 
-  // ---------------- Step 3: Final Merge (HF with retry + fallback) ----------------
+  // ---------------- Step 3: Final Merge ----------------
   const mergedInput = {
     title: outline.title,
     sections: outline.sections.map((s) => ({
       heading: s.heading,
       summary: s.summary,
       keyPoints: s.keyPoints,
-      notes: sectionNotes.find((n) => n.id === s.id)!,
+      notes: sectionNotes.find((n) => n.id === s.id) || null,
     })),
   };
 
   const finalNote = await callFinalMergeRobust({ hfToken, groqKey, mergedInput });
-
   return finalNote.markdown;
 }

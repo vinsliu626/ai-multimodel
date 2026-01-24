@@ -1413,10 +1413,7 @@ function NoteUI({
             
             const r = await fetch(url, {
               method: "POST",
-              headers: {
-                "x-note-id": nid,
-                "x-chunk-index": String(thisIndex),
-              },
+              credentials: "include",
               body: fd,
             });
 
@@ -1488,7 +1485,7 @@ function NoteUI({
     }
   }
 
-  function stopRecording() {
+  async function stopRecording() {
   const mr = mediaRecorderRef.current;
   if (!mr) return;
 
@@ -1496,6 +1493,7 @@ function NoteUI({
     // ✅ 先强制吐出最后一块
     if (mr.state === "recording") {
       try { mr.requestData(); } catch {}
+      await new Promise((r) => setTimeout(r, 0));
     }
     mr.stop();
   } catch (e) {
@@ -1606,62 +1604,42 @@ function NoteUI({
         } catch {}
 
                 // ✅ step-based finalize: avoids long request timeouts
-        setFinalizeStage("asr");
-        setFinalizeProgress(0);
+        // ✅ finalize: single request (backend returns stage=done)
+setFinalizeStage("asr");
+setFinalizeProgress(10);
 
-        const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const r = await fetch("/api/ai-note/finalize", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ noteId }),
+});
 
-        let safety = 0;
-        while (true) {
-          safety += 1;
-          if (safety > 2000) throw new Error(isZh ? "处理步数过多，已中止。" : "Too many steps, aborted.");
+const raw = await r.text();
+let j: any = null;
+try {
+  j = raw ? JSON.parse(raw) : null;
+} catch {
+  j = null;
+}
 
-          const r = await fetch("/api/ai-note/finalize", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ noteId }),
-          });
+if (!r.ok || j?.ok === false) {
+  const msg =
+    j?.error ||
+    j?.message ||
+    (raw ? raw.slice(0, 300) : "") ||
+    `Finalize error: ${r.status}`;
+  setFinalizeStage("failed");
+  setFinalizeProgress(0);
+  throw new Error(msg);
+}
 
-          // 先读 raw，防止 500 时 json parse 崩
-          const raw = await r.text();
-          let j: any = null;
-          try {
-            j = raw ? JSON.parse(raw) : null;
-          } catch {
-            j = null;
-          }
+// ✅ 后端会给 stage/progress；没给也没关系
+setFinalizeStage(String(j?.stage || "done"));
+setFinalizeProgress(Number.isFinite(j?.progress) ? Number(j.progress) : 100);
 
-          if (!r.ok || j?.ok === false) {
-            const msg =
-              j?.error ||
-              j?.message ||
-              (raw ? raw.slice(0, 300) : "") ||
-              `Finalize error: ${r.status}`;
-            setFinalizeStage("failed");
-            throw new Error(msg);
-          }
-
-          const stage = String(j?.stage || "asr");
-          const prog = Number.isFinite(j?.progress) ? Number(j.progress) : 0;
-
-          setFinalizeStage(stage);
-          setFinalizeProgress(prog);
-
-          // done -> note
-          if (stage === "done") {
-            setFinalizeProgress(100);
-            setResult(String(j?.note ?? j?.result ?? ""));
-            return;
-          }
-
-          // failed
-          if (stage === "failed") {
-            throw new Error(j?.error || (isZh ? "处理失败。" : "Failed."));
-          }
-
-          // 避免请求太频繁
-          await sleep(800);
-        }
+// ✅ 成功：展示笔记
+setResult(String(j?.note ?? j?.result ?? ""));
+return;
 
       }
 

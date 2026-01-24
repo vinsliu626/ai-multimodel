@@ -107,7 +107,11 @@ model UsageEvent {
 model AiNoteSession {
   id        String   @id
   userId    String
+  status    String   @default("processing") // processing | done | failed
+  result    String?  // 最终笔记 markdown
+  error     String?  // 失败原因
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   chunks      AiNoteChunk[]
   transcripts AiNoteTranscript[]
