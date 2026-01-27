@@ -10,7 +10,7 @@ datasource db {
 }
 
 /// *
-///  * ===================== Chat =====================
+/// * ===================== Chat =====================
 model ChatSession {
   id        String        @id @default(cuid())
   userId    String
@@ -34,7 +34,7 @@ model ChatMessage {
 }
 
 /// *
-///  * ===================== Billing / Plans =====================
+/// * ===================== Billing / Plans =====================
 model UserEntitlement {
   userId                    String   @unique
   plan                      String   @default("basic")
@@ -52,6 +52,13 @@ model UserEntitlement {
   usedChatCountToday        Int      @default(0)
   usedDetectorWordsThisWeek Int      @default(0)
   usedNoteSecondsThisWeek   Int      @default(0)
+
+  currentPeriodEnd  DateTime?
+  cancelAtPeriodEnd Boolean? @default(false)
+  unlimitedSource   String?
+  dailyUsageKey     String?
+  weeklyUsageKey    String?
+
 }
 
 model GiftCode {
@@ -89,7 +96,7 @@ model UsageEvent {
 }
 
 /// *
-///  * ===================== AI Note =====================
+/// * ===================== AI Note =====================
 model AiNoteSession {
   id          String              @id @default(cuid())
   userId      String

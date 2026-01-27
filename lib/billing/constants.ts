@@ -19,7 +19,7 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
   pro: {
     detectorWordsPerWeek: 15000,
     noteSecondsPerWeek: 15 * 3600,
-    chatPerDay: null, // unlimited chat
+    chatPerDay: null,
     canSeeSuspiciousSentences: true,
   },
   ultra: {

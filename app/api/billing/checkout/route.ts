@@ -17,7 +17,6 @@ async function ensureCustomerId(userId: string) {
 
   let customerId = ent.stripeCustomerId;
 
-  // 没有就创建
   if (!customerId) {
     const c = await stripe.customers.create({ metadata: { userId } });
     await prisma.userEntitlement.update({
@@ -27,12 +26,10 @@ async function ensureCustomerId(userId: string) {
     return c.id;
   }
 
-  // 有就验证存在（避免 test/live 混用导致 No such customer）
   try {
     await stripe.customers.retrieve(customerId);
     return customerId;
   } catch {
-    // 不存在 => 重建
     const c = await stripe.customers.create({ metadata: { userId } });
     await prisma.userEntitlement.update({
       where: { userId },
@@ -46,7 +43,6 @@ export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
     const userId = (session as any)?.user?.id as string | undefined;
-
     if (!userId) {
       return NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 });
     }
@@ -61,8 +57,7 @@ export async function POST(req: Request) {
         { status: 500 }
       );
     }
-
-    if (!priceId.startsWith("price_")) {
+    if (!String(priceId).startsWith("price_")) {
       return NextResponse.json(
         { ok: false, error: "INVALID_PRICE_ID", message: `Expected price_..., got ${priceId}` },
         { status: 500 }
@@ -70,7 +65,6 @@ export async function POST(req: Request) {
     }
 
     const customerId = await ensureCustomerId(userId);
-
     const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
 
     const checkout = await stripe.checkout.sessions.create({
@@ -80,17 +74,15 @@ export async function POST(req: Request) {
       success_url: `${baseUrl}/chat?success=1&plan=${plan}`,
       cancel_url: `${baseUrl}/chat?canceled=1`,
       metadata: { userId, plan },
-      subscription_data: { metadata: { userId, plan } },
+      subscription_data: {
+        metadata: { userId, plan }, // 辅助，但 webhook 不靠它定 plan
+      },
     });
 
     return NextResponse.json({ ok: true, url: checkout.url });
   } catch (e: any) {
     return NextResponse.json(
-      {
-        ok: false,
-        error: "CHECKOUT_CREATE_FAILED",
-        message: e?.message || String(e),
-      },
+      { ok: false, error: "CHECKOUT_CREATE_FAILED", message: e?.message || String(e) },
       { status: 500 }
     );
   }
