@@ -134,8 +134,6 @@ export async function POST(req: Request) {
 
         // 同步订阅信息（period end 等）
         let currentPeriodEnd: Date | null = null;
-        let cancelAtPeriodEnd: boolean = false;
-        let stripeStatus: string = "active";
         let cancelAtPeriodEnd: boolean | null = null as any;
         let stripeStatus: string | null = "active";
 
