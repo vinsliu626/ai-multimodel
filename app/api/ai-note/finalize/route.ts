@@ -14,6 +14,10 @@ import { Buffer } from "node:buffer";
 import { transcribeAudioToText } from "@/lib/asr/transcribe";
 import { runAiNotePipeline } from "@/lib/aiNote/pipeline";
 
+// ✅ NEW
+import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
+import { addUsageEvent } from "@/lib/billing/usage";
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -66,7 +70,6 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   });
 }
 
-/** 从候选路径里找第一个存在的 */
 function firstExisting(paths: string[]) {
   for (const p of paths) {
     try {
@@ -76,7 +79,6 @@ function firstExisting(paths: string[]) {
   return "";
 }
 
-/** Linux 上 ffmpeg-static 有时没可执行权限，需要 chmod +x */
 async function ensureExecutable(binPath: string) {
   if (!binPath) return;
   if (process.platform === "win32") return;
@@ -85,10 +87,6 @@ async function ensureExecutable(binPath: string) {
   } catch {}
 }
 
-/**
- * 运行时找 ffmpeg（兼容 Vercel Linux + Next standalone）
- * - 也可以在 Vercel 环境变量里设置 FFMPEG_PATH 直接指定
- */
 function getFfmpegBin() {
   const envPath = (process.env.FFMPEG_PATH || "").trim();
   if (envPath && fssync.existsSync(envPath)) return envPath;
@@ -100,13 +98,10 @@ function getFfmpegBin() {
   const candidates = [
     path.join(cwd, "node_modules", "ffmpeg-static", exe),
     path.join(cwd, "node_modules", "ffmpeg-static", "bin", exe),
-
     path.join(cwd, ".next", "standalone", "node_modules", "ffmpeg-static", exe),
     path.join(cwd, ".next", "standalone", "node_modules", "ffmpeg-static", "bin", exe),
-
     path.join(cwd, ".vercel", "output", "functions", "api", "node_modules", "ffmpeg-static", exe),
     path.join(cwd, ".vercel", "output", "functions", "api", "node_modules", "ffmpeg-static", "bin", exe),
-
     path.join("/var/task", "node_modules", "ffmpeg-static", exe),
     path.join("/var/task", "node_modules", "ffmpeg-static", "bin", exe),
     path.join("/var/task", ".next", "standalone", "node_modules", "ffmpeg-static", exe),
@@ -207,7 +202,6 @@ ${merged}`
   return final;
 }
 
-// 并发池
 async function mapPool<T, R>(items: T[], concurrency: number, fn: (x: T, idx: number) => Promise<R>) {
   const res: R[] = new Array(items.length);
   let i = 0;
@@ -222,7 +216,6 @@ async function mapPool<T, R>(items: T[], concurrency: number, fn: (x: T, idx: nu
   return res;
 }
 
-// Prisma bytes -> Buffer
 function bytesToBuffer(data: any): Buffer {
   if (!data) throw new Error("chunk.data is empty");
   if (Buffer.isBuffer(data)) return data;
@@ -260,11 +253,9 @@ export async function POST(req: Request) {
     console.log("[ai-note/finalize] start noteId=", noteId);
     console.log("[ai-note/finalize] ffmpeg=", ffmpegBin);
 
-    // ✅ 先把“是否存在”直接查清楚（用于 NOTE_NOT_FOUND debug）
     const sessExists = await prisma.aiNoteSession.count({ where: { id: noteId } });
     const chunksCount0 = await prisma.aiNoteChunk.count({ where: { noteId } });
 
-    // 如果两者都没有：直接返回（这就是你当前错误）
     if (sessExists === 0 && chunksCount0 === 0) {
       return bad("NOTE_NOT_FOUND", 404, "NOTE_NOT_FOUND (no session & no chunks)", {
         noteId,
@@ -275,7 +266,6 @@ export async function POST(req: Request) {
       });
     }
 
-    // ✅ session 不存在但 chunks 存在：补 session
     let sessRow = await prisma.aiNoteSession.findUnique({
       where: { id: noteId },
       select: { userId: true },
@@ -306,7 +296,6 @@ export async function POST(req: Request) {
 
     if (sessRow.userId !== userId) return bad("FORBIDDEN", 403, "FORBIDDEN", { noteId });
 
-    // ✅ 拉 chunks
     const chunks = await prisma.aiNoteChunk.findMany({
       where: { noteId },
       orderBy: { chunkIndex: "asc" },
@@ -332,7 +321,6 @@ export async function POST(req: Request) {
     const workDir = path.join(os.tmpdir(), "ai-note", noteId, "work");
     await fs.mkdir(workDir, { recursive: true });
 
-    // 1) 拼接完整 webm
     const fullWebm = path.join(workDir, "full.webm");
     const fh = await fs.open(fullWebm, "w");
     try {
@@ -344,7 +332,6 @@ export async function POST(req: Request) {
       await fh.close();
     }
 
-    // 2) ffmpeg：webm -> wav
     const fullWav = path.join(workDir, "full.wav");
     console.log("[ai-note/finalize] ffmpeg webm->wav...");
     await withTimeout(
@@ -355,7 +342,6 @@ export async function POST(req: Request) {
       throw Object.assign(new Error(e?.message || String(e)), { _code: "FFMPEG_FAILED" });
     });
 
-    // 3) segment 10min
     const segPattern = path.join(workDir, "seg-%03d.wav");
     console.log("[ai-note/finalize] ffmpeg segment...");
     await withTimeout(
@@ -427,6 +413,19 @@ export async function POST(req: Request) {
 
     console.log("[ai-note/finalize] transcript chars=", transcriptAll.length, "elapsed(ms)=", Date.now() - t0);
 
+    // ✅ 这里开始：接入 guard(note) + 先扣额度判定（避免白跑 LLM）
+    const seconds = estimateSecondsByTranscript(transcriptAll);
+
+    try {
+      await assertQuotaOrThrow({ userId, action: "note", amount: seconds });
+    } catch (e) {
+      if (e instanceof QuotaError) {
+        return NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: e.status ?? 429 });
+      }
+      throw e;
+    }
+    // ✅ 接入结束
+
     const llmTimeoutMs = Math.max(30_000, Number.parseInt(process.env.AI_NOTE_LLM_TIMEOUT_MS || "120000", 10) || 120_000);
 
     const note = await withTimeout(
@@ -437,7 +436,10 @@ export async function POST(req: Request) {
       throw Object.assign(new Error(e?.message || String(e)), { _code: "LLM_FAILED" });
     });
 
-    const seconds = estimateSecondsByTranscript(transcriptAll);
+    // ✅ 成功才写 usage
+    await addUsageEvent(userId, "note_seconds", seconds).catch((err) =>
+      console.error("[note] usageEvent write failed:", err)
+    );
 
     // ✅ 只删 chunks，不删 session
     await prisma.aiNoteChunk.deleteMany({ where: { noteId } });

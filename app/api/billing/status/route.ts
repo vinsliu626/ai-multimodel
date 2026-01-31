@@ -5,6 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { stripe } from "@/lib/stripe";
 import { normalizePlan, planToFlags } from "@/lib/billing/planFlags";
+import { getUsage } from "@/lib/billing/usage";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,7 +16,12 @@ function daysLeftFromDate(dt?: Date | null) {
   return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
 }
 
-function isEntitled(ent: { plan: string; stripeStatus: string | null; currentPeriodEnd?: Date | null; unlimited?: boolean }) {
+function isEntitled(ent: {
+  plan: string;
+  stripeStatus: string | null;
+  currentPeriodEnd?: Date | null;
+  unlimited?: boolean;
+}) {
   if (ent.unlimited) return true;
   const plan = normalizePlan(ent.plan);
 
@@ -37,22 +43,23 @@ export async function GET() {
   const userId = (session as any)?.user?.id as string | undefined;
   if (!userId) return NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 });
 
-  const ent0 = await prisma.userEntitlement.upsert({
+  // 1) 保证 entitlement 存在
+  let ent = await prisma.userEntitlement.upsert({
     where: { userId },
     update: {},
     create: { userId, plan: "basic" },
   });
 
-  let ent = ent0;
-
-  // 同步 Stripe（可选但推荐）
+  // 2) 同步 Stripe（可选但推荐）
   if (ent.stripeSubId) {
     try {
       const subResp = await stripe.subscriptions.retrieve(ent.stripeSubId);
       const sub: any = (subResp as any).data ?? subResp;
 
       const stripeStatus = (sub?.status as string | undefined) ?? ent.stripeStatus ?? null;
-      const currentPeriodEnd = sub?.current_period_end ? new Date(sub.current_period_end * 1000) : ent.currentPeriodEnd ?? null;
+      const currentPeriodEnd = sub?.current_period_end
+        ? new Date(sub.current_period_end * 1000)
+        : ent.currentPeriodEnd ?? null;
       const cancelAtPeriodEnd = Boolean(sub?.cancel_at_period_end ?? ent.cancelAtPeriodEnd ?? false);
 
       ent = await prisma.userEntitlement.update({
@@ -66,20 +73,23 @@ export async function GET() {
 
       // 严格：非 active 自动降 basic（但不动 unlimited）
       if (!ent.unlimited && normalizePlan(ent.plan) !== "basic" && ent.stripeStatus !== "active") {
-        const flags = planToFlags("basic");
+        const basicFlags = planToFlags("basic");
         ent = await prisma.userEntitlement.update({
           where: { userId },
-          data: { ...flags },
+          data: {
+            ...basicFlags,
+            stripeStatus: ent.stripeStatus ?? "inactive",
+          },
         });
       }
     } catch (e) {
       // Stripe 查不到订阅：降级 basic（不动 unlimited）
       if (!ent.unlimited) {
-        const flags = planToFlags("basic");
+        const basicFlags = planToFlags("basic");
         ent = await prisma.userEntitlement.update({
           where: { userId },
           data: {
-            ...flags,
+            ...basicFlags,
             stripeSubId: null,
             stripeStatus: "missing",
             currentPeriodEnd: null,
@@ -95,8 +105,33 @@ export async function GET() {
     }
   }
 
+  // 3) 计算 plan + flags
   const plan = normalizePlan(ent.plan);
   const flags = planToFlags(plan);
+
+  // 4) ✅ 自动对齐：防止数据库残留旧额度
+  if (!ent.unlimited && (plan === "basic" || plan === "pro" || plan === "ultra")) {
+    const needSync =
+      (ent.detectorWordsPerWeek ?? null) !== (flags.detectorWordsPerWeek ?? null) ||
+      (ent.noteSecondsPerWeek ?? null) !== (flags.noteSecondsPerWeek ?? null) ||
+      (ent.chatPerDay ?? null) !== (flags.chatPerDay ?? null) ||
+      ent.canSeeSuspiciousSentences !== flags.canSeeSuspiciousSentences;
+
+    if (needSync) {
+      ent = await prisma.userEntitlement.update({
+        where: { userId },
+        data: {
+          detectorWordsPerWeek: flags.detectorWordsPerWeek ?? null,
+          noteSecondsPerWeek: flags.noteSecondsPerWeek ?? null,
+          chatPerDay: flags.chatPerDay ?? null,
+          canSeeSuspiciousSentences: flags.canSeeSuspiciousSentences,
+        },
+      });
+    }
+  }
+
+  // 5) ✅ usage 统一从 UsageEvent 聚合拿（这是你 guard 实际用的口径）
+  const usage = await getUsage(userId);
 
   const entitled = isEntitled({
     plan,
@@ -128,13 +163,15 @@ export async function GET() {
     unlimited: ent.unlimited ?? false,
     unlimitedSource: ent.unlimitedSource ?? null,
 
+    // ✅ 返回“实际生效值”：DB 优先，其次 flags
     detectorWordsPerWeek: ent.detectorWordsPerWeek ?? flags.detectorWordsPerWeek ?? null,
     noteSecondsPerWeek: ent.noteSecondsPerWeek ?? flags.noteSecondsPerWeek ?? null,
     chatPerDay: ent.chatPerDay ?? flags.chatPerDay ?? null,
     canSeeSuspiciousSentences: ent.canSeeSuspiciousSentences ?? flags.canSeeSuspiciousSentences,
 
-    usedDetectorWordsThisWeek: ent.usedDetectorWordsThisWeek ?? 0,
-    usedNoteSecondsThisWeek: ent.usedNoteSecondsThisWeek ?? 0,
-    usedChatCountToday: ent.usedChatCountToday ?? 0,
+    // ✅ 返回聚合 usage（正确口径）
+    usedDetectorWordsThisWeek: usage.usedDetectorWordsThisWeek,
+    usedNoteSecondsThisWeek: usage.usedNoteSecondsThisWeek,
+    usedChatCountToday: usage.usedChatCountToday,
   });
 }
