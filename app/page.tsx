@@ -331,7 +331,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="py-6 text-center text-slate-500 text-xs bg-slate-950 border-t border-white/5">
         © {new Date().getFullYear()}{" "}
-        {isZh ? "多模型 AI 平台" : "Multi-Model AI Platform"} · Made by vins
+        {isZh ? "多模型 AI 平台" : "Multi-Model AI Platform"} · Made by vins 
       </footer>
     </main>
   );

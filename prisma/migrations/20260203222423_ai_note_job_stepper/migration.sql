@@ -1,0 +1,9 @@
+-- AlterTable
+ALTER TABLE "AiNoteJob" ADD COLUMN     "asrNextIndex" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "llmNextPart" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "llmPartsTotal" INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN     "noteMarkdown" TEXT,
+ADD COLUMN     "secondsBilled" INTEGER,
+ADD COLUMN     "segmentTimeSec" INTEGER NOT NULL DEFAULT 90,
+ADD COLUMN     "segmentsTotal" INTEGER NOT NULL DEFAULT 0,
+ALTER COLUMN "stage" SET DEFAULT 'prep';

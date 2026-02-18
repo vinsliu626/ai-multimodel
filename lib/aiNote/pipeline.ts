@@ -24,7 +24,7 @@ const OutlineSchema = z.object({
         // ✅ 放宽：允许 0 个（模型有时会给空）
         keyPoints: z.array(z.string().min(1)).default([]),
 
-        // ✅ 放宽：允许短句（比如 “Thanks for watching.”）
+        // ✅ 放宽：允许短句
         sourceText: z.string().min(1),
       })
     )
@@ -35,10 +35,8 @@ const SectionNotesSchema = z.object({
   id: z.string().min(1),
   heading: z.string().min(1),
 
-  // ✅ bullets 允许更少：短段落可能就 2-4 条
   bullets: z.array(z.string().min(1)).min(2).max(12),
 
-  // ✅ 关键：keyTerms 允许 0-10（fallback/短内容可能只有 0-2 个）
   keyTerms: z
     .array(z.object({ term: z.string().min(1), definition: z.string().min(1) }))
     .min(0)
@@ -52,7 +50,6 @@ const SectionNotesSchema = z.object({
 const FinalNoteSchema = z.object({
   title: z.string().min(1).default("Notes"),
 
-  // ✅ 放宽：fallback 模型经常给很多条
   tldr: z.array(z.string().min(1)).min(0).max(50).default([]),
 
   outline: z
@@ -74,7 +71,6 @@ const FinalNoteSchema = z.object({
   reviewChecklist: z.array(z.string().min(1)).min(0).max(50).default([]),
   quiz: z.array(z.object({ q: z.string().min(1), a: z.string().min(1) })).min(0).max(50).default([]),
 
-  // ✅ 允许缺失，后面兜底生成
   markdown: z.string().min(0).default(""),
 });
 
@@ -93,25 +89,37 @@ function mustEnv(name: string) {
   return v;
 }
 
+/**
+ * ✅ 更稳：移除 ```json ... ``` / ``` ... ```，保留内部内容
+ */
 function stripCodeFences(s: string) {
-  let t = s.trim();
-  if (t.startsWith("```")) {
-    t = t.replace(/^```[a-zA-Z]*\n?/, "").replace(/```$/, "").trim();
-  }
-  return t;
+  let t = String(s || "").trim();
+
+  // 如果整段被 ```...``` 包起来：取内部
+  // 支持 ```json\n...\n```、```JSON ...```、``` \n ... \n ```
+  const m = t.match(/^```(?:json|JSON|js|javascript|ts|typescript)?\s*\n?([\s\S]*?)\n?```$/);
+  if (m) return (m[1] || "").trim();
+
+  // 不是整段包裹：也做一次全局替换（有些模型会多段 fence）
+  t = t.replace(/```(?:json|JSON|js|javascript|ts|typescript)?\s*\n?/g, "");
+  t = t.replace(/```/g, "");
+  return t.trim();
 }
 
 function stripThinkBlocks(s: string) {
-  return s.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  return String(s || "").replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
 }
 
 function looksLikeHtml(s: string) {
-  const t = s.trim().toLowerCase();
+  const t = String(s || "").trim().toLowerCase();
   return t.startsWith("<!doctype html") || t.startsWith("<html") || t.includes("<head>") || t.includes("<body>");
 }
 
+/**
+ * ✅ 抓第一个 JSON object：{ ... }
+ */
 function extractFirstJsonObject(s: string) {
-  const text = s.trim();
+  const text = String(s || "").trim();
   const firstBrace = text.indexOf("{");
   if (firstBrace === -1) return null;
 
@@ -141,15 +149,55 @@ function extractFirstJsonObject(s: string) {
   return null;
 }
 
-function parseJsonFromModel<T>(raw: string): T {
-  let t = raw.trim();
-  t = stripCodeFences(t);
-  t = stripThinkBlocks(t);
+/**
+ * ✅ 抓第一个 JSON array：[ ... ]
+ */
+function extractFirstJsonArray(s: string) {
+  const text = String(s || "").trim();
+  const first = text.indexOf("[");
+  if (first === -1) return null;
 
+  let depth = 0;
+  let inStr = false;
+  let escape = false;
+
+  for (let i = first; i < text.length; i++) {
+    const ch = text[i];
+
+    if (inStr) {
+      if (escape) escape = false;
+      else if (ch === "\\") escape = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    } else {
+      if (ch === '"') {
+        inStr = true;
+        continue;
+      }
+      if (ch === "[") depth++;
+      if (ch === "]") depth--;
+
+      if (depth === 0) return text.slice(first, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * ✅ 超稳 JSON 解析：fence/think 清理 + object/array 抽取
+ */
+function parseJsonFromModel<T>(raw: string): T {
+  let t = String(raw || "").trim();
+  t = stripThinkBlocks(t);
+  t = stripCodeFences(t);
+
+  // 有些模型会在 JSON 前后加“Here is the JSON:”
+  // 尝试直接 parse
   try {
     return JSON.parse(t) as T;
   } catch {}
 
+  // 抓对象
   const obj = extractFirstJsonObject(t);
   if (obj) {
     try {
@@ -157,7 +205,17 @@ function parseJsonFromModel<T>(raw: string): T {
     } catch {}
   }
 
-  throw new Error(`Failed to parse JSON from model:\n${raw}`);
+  // 抓数组
+  const arr = extractFirstJsonArray(t);
+  if (arr) {
+    try {
+      return JSON.parse(arr) as T;
+    } catch {}
+  }
+
+  // 只截取一部分，避免日志爆
+  const head = String(raw || "").slice(0, 1200);
+  throw new Error(`Failed to parse JSON from model (preview):\n${head}${String(raw || "").length > 1200 ? "\n...(truncated)" : ""}`);
 }
 
 function sleep(ms: number) {
@@ -228,10 +286,8 @@ function ensureSectionNotes(note: any): SectionNotes {
     actionItems,
   };
 
-  // 再走一次 schema（保证最终一定符合）
   const parsed = SectionNotesSchema.safeParse(obj);
   if (!parsed.success) {
-    // 极端兜底
     return {
       id,
       heading,
@@ -323,9 +379,13 @@ async function callHfRouterChatRobust(hfToken: string, model: string, messages: 
     try {
       const raw = await callHfRouterChat(hfToken, model, messages, opts);
 
+      if (!raw || (typeof raw === "string" && raw.trim().length === 0)) {
+        throw new Error(`HF Router returned empty. label=${label}`);
+      }
       if (typeof raw === "string" && looksLikeHtml(raw)) {
         throw new Error(`HF Router returned HTML (likely 503). label=${label}`);
       }
+
       return raw;
     } catch (e: any) {
       lastErr = e;
@@ -337,7 +397,8 @@ async function callHfRouterChatRobust(hfToken: string, model: string, messages: 
         msg.toLowerCase().includes("hf router") ||
         msg.toLowerCase().includes("fetch") ||
         msg.toLowerCase().includes("timeout") ||
-        msg.includes("returned HTML");
+        msg.includes("returned HTML") ||
+        msg.includes("returned empty");
 
       if (!retryable || attempt === maxTry) break;
 
@@ -386,6 +447,7 @@ async function callSectionNotesRobust(args: {
           content: [
             "Return ONLY valid JSON.",
             "Do NOT output <think> tags, reasoning, markdown, or any extra text.",
+            "Do NOT wrap in ``` fences.",
             "If you previously output anything else, output JSON only now.",
           ].join("\n"),
         },
@@ -437,7 +499,6 @@ async function callSectionNotesRobust(args: {
       );
 
       const obj3 = parseJsonFromModel<SectionNotes>(fallbackRaw);
-      // 先不强依赖 schema，先兜底补齐再 parse
       return ensureSectionNotes(obj3);
     }
   }
@@ -449,7 +510,13 @@ async function callFinalMergeRobust(args: { hfToken: string; groqKey: string; me
 
   // HF first
   try {
-    const raw = await callHfRouterChatRobust(hfToken, HF_KIMI_MODEL, finalMergePrompt(mergedInput), { temperature: 0 }, "final-merge");
+    const raw = await callHfRouterChatRobust(
+      hfToken,
+      HF_KIMI_MODEL,
+      finalMergePrompt(mergedInput),
+      { temperature: 0 },
+      "final-merge"
+    );
     const obj = parseJsonFromModel<FinalNote>(raw);
     return ensureFinalNote(obj);
   } catch {
@@ -485,10 +552,14 @@ export async function runAiNotePipeline(rawText: string): Promise<string> {
   // ---------------- Step 1: Outline (Groq) ----------------
   const outlineRawText = await callGroqChat(groqKey, FAST_MODEL, outlinePrompt(text), { temperature: 0 });
 
+  if (!outlineRawText || (typeof outlineRawText === "string" && looksLikeHtml(outlineRawText))) {
+    throw new Error(`Outline model returned bad response (empty/html).`);
+  }
+
   const outlineObj = parseJsonFromModel<OutlineResult>(outlineRawText);
   const outlineParsed = OutlineSchema.safeParse(outlineObj);
   if (!outlineParsed.success) {
-    throw new Error(`Outline JSON schema mismatch.\nRaw:\n${outlineRawText}`);
+    throw new Error(`Outline JSON schema mismatch.\nRaw:\n${String(outlineRawText).slice(0, 1200)}${String(outlineRawText).length > 1200 ? "\n...(truncated)" : ""}`);
   }
 
   const outline = outlineParsed.data;

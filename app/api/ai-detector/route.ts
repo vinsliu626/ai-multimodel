@@ -1,7 +1,7 @@
 // app/api/ai-detector/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth"; // 路径按你项目改
+import { authOptions } from "@/lib/auth";
 
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
 import { addUsageEvent } from "@/lib/billing/usage";
@@ -10,13 +10,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-/**
- * Python detector endpoint
- * - local dev: http://127.0.0.1:8000/detect
- * - production: set env PY_DETECTOR_URL=https://your-domain/detect
- */
-const PY_DETECTOR_URL =
-  process.env.PY_DETECTOR_URL?.trim() || "http://127.0.0.1:8000/detect";
+const DEFAULT_LOCAL_URL = "http://localhost:8000/detect";
+const PY_DETECTOR_URL = (process.env.PY_DETECTOR_URL?.trim() || DEFAULT_LOCAL_URL).trim();
 
 // ---------- utils ----------
 function clamp(n: number, a: number, b: number) {
@@ -27,7 +22,6 @@ function countWords(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
-// 只要出现中日韩等字符就判定非英文
 function hasNonEnglish(text: string) {
   return /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]/.test(text);
 }
@@ -36,7 +30,6 @@ function sigmoid(x: number) {
   return 1 / (1 + Math.exp(-x));
 }
 
-// ✅ 动态超时：文本越长，给 python 越久
 function pythonTimeoutMs(text: string) {
   const w = countWords(text);
   if (w <= 300) return 15_000;
@@ -46,13 +39,40 @@ function pythonTimeoutMs(text: string) {
   return 120_000;
 }
 
-// ✅ fetch + timeout（AbortController）
+function isLocalUrl(url: string) {
+  return (
+    url.startsWith("http://127.0.0.1") ||
+    url.startsWith("http://localhost") ||
+    url.startsWith("http://0.0.0.0")
+  );
+}
+
+function prettyCause(cause: any) {
+  if (!cause) return null;
+  const picked: any = {};
+  for (const k of ["code", "errno", "syscall", "address", "port", "message"]) {
+    if (cause?.[k] != null) picked[k] = cause[k];
+  }
+  return Object.keys(picked).length ? picked : String(cause);
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
     const res = await fetch(url, { ...init, signal: controller.signal });
     return res;
+  } catch (e: any) {
+    console.error("[ai-detector] fetch failed", {
+      url,
+      timeoutMs,
+      isLocal: isLocalUrl(url),
+      message: e?.message,
+      name: e?.name,
+      cause: prettyCause(e?.cause),
+    });
+    throw e;
   } finally {
     clearTimeout(timer);
   }
@@ -220,6 +240,10 @@ type PyDetectResponse = {
 async function callPythonDetector(text: string) {
   const timeoutMs = pythonTimeoutMs(text);
 
+  if (!process.env.PY_DETECTOR_URL && PY_DETECTOR_URL === DEFAULT_LOCAL_URL) {
+    console.warn("[ai-detector] PY_DETECTOR_URL not set, using local default:", PY_DETECTOR_URL);
+  }
+
   const res = await fetchWithTimeout(
     PY_DETECTOR_URL,
     {
@@ -247,7 +271,6 @@ async function callPythonDetector(text: string) {
 // ---------- route ----------
 export async function POST(req: Request) {
   try {
-    // ✅ 必须登录（你要求：不登录不能用除聊天外的功能）
     const session = await getServerSession(authOptions);
     const userId = (session as any)?.user?.id as string | undefined;
     if (!userId) {
@@ -267,7 +290,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: "To analyze text, add at least 40 words." }, { status: 400 });
     }
 
-    // ✅ 配额检查：detector_words（按 words 计）
     try {
       await assertQuotaOrThrow({ userId, action: "detector", amount: words });
     } catch (e) {
@@ -277,7 +299,6 @@ export async function POST(req: Request) {
       throw e;
     }
 
-    // 1) sentence results with offsets
     const sents = splitSentencesWithOffsets(text);
     const sentenceResults = sents.map((seg) => ({
       text: seg.text,
@@ -286,26 +307,20 @@ export async function POST(req: Request) {
       ...scoreSentenceLite(seg.text),
     }));
 
-    // 2) highlights (phrase only)
     const highlights = findPhraseHighlights(text);
 
-    // 3) python detector
     const py = await callPythonDetector(text);
     const metrics = py.result[0];
     const aiOverallRaw = Number(metrics?.["AI overall"]);
 
     if (!Number.isFinite(aiOverallRaw)) {
-      return NextResponse.json(
-        { ok: false, error: "Python detector did not return AI overall." },
-        { status: 502 }
-      );
+      return NextResponse.json({ ok: false, error: "Python detector did not return AI overall." }, { status: 502 });
     }
 
     const aiGenerated = clamp(Math.round(aiOverallRaw), 0, 100);
     const humanAiRefined = 0;
     const humanWritten = clamp(100 - aiGenerated, 0, 100);
 
-    // ✅ 记用量（成功才写）
     await addUsageEvent(userId, "detector_words", words).catch((err) =>
       console.error("[detector] usageEvent write failed:", err)
     );
@@ -329,11 +344,9 @@ export async function POST(req: Request) {
       },
     });
   } catch (e: any) {
-    const msg =
-      e?.name === "AbortError"
-        ? "Python detector request timed out."
-        : e?.message ?? "Unknown error.";
-
+    const isAbort = e?.name === "AbortError";
+    const hint = isLocalUrl(PY_DETECTOR_URL) ? " (Tip: make sure local Python detector runs on :8000)" : "";
+    const msg = isAbort ? `Python detector request timed out.${hint}` : `${e?.message ?? "Unknown error."}${hint}`;
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 }

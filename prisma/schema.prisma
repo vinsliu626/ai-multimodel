@@ -1,6 +1,6 @@
 generator client {
-  provider        = "prisma-client-js"
-  binaryTargets   = ["native", "rhel-openssl-3.0.x"]
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -11,16 +11,16 @@ datasource db {
 /// *
 /// * ===================== Chat =====================
 model ChatSession {
-  id        String        @id @default(cuid())
-  userId    String
-  title     String        @default("新的对话")
-  pinned    Boolean       @default(false)   // ✅ 新增：置顶
+  id     String  @id @default(cuid())
+  userId String
+  title  String  @default("新的对话")
+  pinned Boolean @default(false) // ✅ 新增：置顶
 
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
   messages  ChatMessage[]
 
-  @@index([userId, pinned, updatedAt])      // ✅ 推荐：置顶排序更快
+  @@index([userId, pinned, updatedAt]) // ✅ 推荐：置顶排序更快
   @@index([userId, updatedAt])
 }
 
@@ -51,16 +51,16 @@ model UserEntitlement {
   detectorWordsPerWeek      Int?
   noteSecondsPerWeek        Int?
   unlimited                 Boolean  @default(false)
-  
-  usedChatCountToday Int @default(0)
-  currentPeriodEnd  DateTime?
-  cancelAtPeriodEnd Boolean? @default(false)
-  unlimitedSource   String?
-  dailyUsageKey     String?
-  weeklyUsageKey    String?
+
+  usedChatCountToday Int       @default(0)
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean?  @default(false)
+  unlimitedSource    String?
+  dailyUsageKey      String?
+  weeklyUsageKey     String?
 
   usedDetectorWordsThisWeek Int @default(0)
-  usedNoteSecondsThisWeek  Int @default(0)
+  usedNoteSecondsThisWeek   Int @default(0)
 }
 
 model ProcessedStripeEvent {
@@ -160,13 +160,33 @@ model AiNoteSummaryPart {
 }
 
 model AiNoteJob {
-  id            String          @id @default(cuid())
-  noteId        String          @unique
-  userId        String
-  stage         String          @default("asr")
-  progress      Int             @default(0)
-  error         String?
-  updatedAt     DateTime        @updatedAt
-  createdAt     DateTime        @default(now())
+  id        String   @id @default(cuid())
+  noteId    String   @unique
+  userId    String
+  stage     String   @default("prep")
+  progress  Int      @default(0)
+  error     String?
+
+  // ✅ ASR/LLM stepper 状态机字段
+  segmentTimeSec Int @default(300) // 5min segments
+  segmentsTotal  Int @default(0)
+  asrNextIndex   Int @default(0)
+
+  llmNextPart   Int @default(0)
+  llmPartsTotal Int @default(0)
+
+  // ✅ 结果与计费
+  noteMarkdown  String?
+  secondsBilled Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lockedAt      DateTime?
+  lockExpiresAt DateTime?
+  lockedBy      String?
+
+  @@index([noteId])
+  @@index([lockedBy])
+
   AiNoteSession AiNoteSession[]
 }

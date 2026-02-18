@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "多模型 AI 工作台",
-  description: "Groq + DeepSeek + Kimi 多智能体协作平台",
+  title: "NeuroDesk",
+  description: "AI notes, AI detection, multi-model workspace",
 };
 
 export default function RootLayout({

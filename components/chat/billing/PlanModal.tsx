@@ -7,6 +7,12 @@ import { formatLimitSeconds, formatSecondsToHrs, planLabel } from "./planUtils";
 
 export type EntitlementLike = Entitlement;
 
+// 把数字“加划线”的小工具（不改布局，不改 Card 的 price 类型）
+// 原理：在每个字符后面加上组合字符 U+0336
+function strike(text: string) {
+  return text.split("").map((ch) => ch + "\u0336").join("");
+}
+
 export function PlanModal({
   open,
   onClose,
@@ -70,6 +76,8 @@ export function PlanModal({
               </span>
             )}
           </div>
+
+          {/* 尺寸保持不变：还是 text-[12px] */}
           <p className="mt-1 text-[12px] text-slate-300">{price}</p>
         </div>
       </div>
@@ -98,6 +106,15 @@ export function PlanModal({
       </button>
     </div>
   );
+
+  // 价格字符串（保持原尺寸，只改变内容）
+  const proPrice = isZh
+    ? `${strike("$6.99")}  $5.99（折扣价）/ 月`
+    : `${strike("$6.99")}  $5.99 (Discount) / mo`;
+
+  const ultraPrice = isZh
+    ? `${strike("$11.99")}  $7.99（折扣价）/ 月`
+    : `${strike("$11.99")}  $7.99 (Discount) / mo`;
 
   return (
     <div className="fixed inset-0 z-[80] bg-black/60 flex items-center justify-center p-4">
@@ -199,7 +216,7 @@ export function PlanModal({
               <div className="rounded-3xl border border-white/10 bg-slate-950/50 backdrop-blur-xl p-4">
                 <Card
                   title="Pro"
-                  price={isZh ? "$5.99 / 月" : "$5.99 / mo"}
+                  price={proPrice}
                   badge={isZh ? "推荐" : "Popular"}
                   active={cur === "pro"}
                   items={[
@@ -227,7 +244,7 @@ export function PlanModal({
               <div className="rounded-3xl border border-white/10 bg-slate-950/50 backdrop-blur-xl p-4">
                 <Card
                   title="Ultra Pro"
-                  price={isZh ? "$7.99 / 月" : "$7.99 / mo"}
+                  price={ultraPrice}
                   badge={isZh ? "最强" : "Best"}
                   active={cur === "ultra"}
                   items={[
