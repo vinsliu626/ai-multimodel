@@ -1,115 +1,353 @@
 "use client";
 
-import { useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 
-type Lang = "zh" | "en";
+type Lang = "en" | "zh";
+
+function cn(...xs: Array<string | false | null | undefined>) {
+  return xs.filter(Boolean).join(" ");
+}
+
+/** 轻量打字机：逐字出现 */
+function useTypewriter(text: string, speed = 14) {
+  const [out, setOut] = useState("");
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    let i = 0;
+    let t: any;
+
+    setOut("");
+    setDone(false);
+
+    const tick = () => {
+      i++;
+      setOut(text.slice(0, i));
+      if (i >= text.length) {
+        setDone(true);
+        return;
+      }
+      t = setTimeout(tick, speed);
+    };
+
+    t = setTimeout(tick, speed);
+    return () => clearTimeout(t);
+  }, [text, speed]);
+
+  return { out, done };
+}
+
+/** 伪 AI 流程：累计消息，但 UI 只显示固定高度、内部滚动 */
+type DemoStep = {
+  side: "left" | "right";
+  role: "You" | "Planner" | "Writer" | "Reviewer" | "Final";
+  accent: "slate" | "blue" | "emerald" | "purple";
+  title?: string;
+  text: string;
+};
+
+function useLoopingDemo(steps: DemoStep[], cycleGapMs = 900) {
+  const [idx, setIdx] = useState(0);
+  const current = steps[idx];
+
+  const { out, done } = useTypewriter(current.text, current.role === "You" ? 10 : 12);
+
+  // 已经完成的消息（为了无限循环不爆炸，保留最近 N 条）
+  const [feed, setFeed] = useState<DemoStep[]>([]);
+
+  useEffect(() => {
+    // 重置
+    setFeed([]);
+    setIdx(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!done) return;
+
+    const t = setTimeout(() => {
+      // 完成一条：把这一条加入 feed（保留最近 10 条）
+      setFeed((prev) => {
+        const next = [...prev, current];
+        return next.slice(Math.max(0, next.length - 10));
+      });
+      setIdx((p) => (p + 1) % steps.length);
+    }, cycleGapMs);
+
+    return () => clearTimeout(t);
+  }, [done, current, steps.length, cycleGapMs]);
+
+  return { feed, current, typing: out };
+}
+
+function AccentDot({ accent }: { accent: DemoStep["accent"] }) {
+  const cls =
+    accent === "blue"
+      ? "bg-blue-400"
+      : accent === "emerald"
+      ? "bg-emerald-400"
+      : accent === "purple"
+      ? "bg-purple-400"
+      : "bg-slate-400";
+  return <span className={cn("inline-block w-2 h-2 rounded-full", cls)} />;
+}
+
+/** 聊天气泡：左右分离 + 尾巴 + 更像人类聊天（不是代码块） */
+function ChatBubble({
+  side,
+  role,
+  accent,
+  title,
+  text,
+  isTyping,
+}: {
+  side: DemoStep["side"];
+  role: DemoStep["role"];
+  accent: DemoStep["accent"];
+  title?: string;
+  text: string;
+  isTyping?: boolean;
+}) {
+  const isLeft = side === "left";
+
+  const baseBg =
+    role === "Final"
+      ? "bg-gradient-to-r from-blue-600/35 via-purple-600/25 to-emerald-500/20"
+      : role === "You"
+      ? "bg-white/6"
+      : "bg-white/5";
+
+  const border =
+    role === "Final" ? "border-white/12" : "border-white/10";
+
+  const nameColor =
+    accent === "blue"
+      ? "text-blue-200"
+      : accent === "emerald"
+      ? "text-emerald-200"
+      : accent === "purple"
+      ? "text-purple-200"
+      : "text-slate-200";
+
+  // “尾巴”用 pseudo-element-like div 模拟，左右不同
+  const tail =
+    isLeft ? (
+      <span className="absolute left-[-6px] top-3 w-3 h-3 rotate-45 rounded-[3px] border border-white/10 bg-slate-900/60" />
+    ) : (
+      <span className="absolute right-[-6px] top-3 w-3 h-3 rotate-45 rounded-[3px] border border-white/10 bg-slate-900/60" />
+    );
+
+  return (
+    <div className={cn("flex", isLeft ? "justify-start" : "justify-end")}>
+      <div
+        className={cn(
+          "relative max-w-[86%] rounded-2xl border px-3 py-2 backdrop-blur-sm",
+          baseBg,
+          border,
+          "chat-bubble"
+        )}
+      >
+        {tail}
+
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-[11px]">
+            <AccentDot accent={accent} />
+            <span className={cn("font-semibold", nameColor)}>{role}</span>
+            {title && <span className="text-slate-400">· {title}</span>}
+          </div>
+
+          {isTyping && (
+            <span className="text-[10px] text-slate-400 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              typing
+            </span>
+          )}
+        </div>
+
+        {/* 这里改成更像“聊天内容”，避免像代码块 */}
+        <div className="mt-1 text-[12px] text-slate-200 leading-relaxed whitespace-pre-wrap">
+          {text}
+          {isTyping && (
+            <span className="ml-0.5 inline-block w-2 h-3 align-middle bg-slate-200/70 animate-pulse" />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** NeuroDesk 球体 Logo：轻微抖动 + 变色渐变 */
+function NeuroOrb() {
+  return (
+    <div className="relative h-9 w-9">
+      <div className="absolute inset-0 rounded-2xl orb-spin orb-jitter" />
+      <div className="absolute inset-0 rounded-2xl orb-glow" />
+      <div className="absolute inset-[2px] rounded-2xl bg-slate-950/60 border border-white/10 backdrop-blur-sm" />
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="text-[11px] font-bold text-slate-100 tracking-tight">N</span>
+      </div>
+    </div>
+  );
+}
 
 export default function Home() {
-  const [lang, setLang] = useState<Lang>("zh");
+  const [lang, setLang] = useState<Lang>("en"); // 默认英文
   const isZh = lang === "zh";
+
+  const demoSteps: DemoStep[] = useMemo(
+    () => [
+      {
+        side: "left",
+        role: "You",
+        accent: "slate",
+        title: "Request",
+        text:
+          "Summarize this lecture note about socialization.\nKeep it short and study-friendly, with key terms + 1 example each.",
+      },
+      {
+        side: "right",
+        role: "Planner",
+        accent: "emerald",
+        title: "Plan",
+        text:
+          "Plan:\n• 1-sentence definition\n• 3 key terms: norms / roles / sanctions\n• 1 quick example each\n• 3 main agents: family, school, peers",
+      },
+      {
+        side: "right",
+        role: "Writer",
+        accent: "purple",
+        title: "Draft",
+        text:
+          "Socialization is how we learn a society’s expectations over time.\nNorms = shared rules; roles = expected behavior in positions; sanctions = rewards/punishments.\nExamples:\n• Norm: raising your hand\n• Role: student taking notes\n• Sanction: praise for participation",
+      },
+      {
+        side: "right",
+        role: "Reviewer",
+        accent: "blue",
+        title: "Tighten",
+        text:
+          "Make it more test-ready:\n1) Keep the definition crisp.\n2) Mention agents explicitly.\n3) End with a 10-second self-check question.",
+      },
+      {
+        side: "right",
+        role: "Final",
+        accent: "blue",
+        title: "Final",
+        text:
+          "✅ Study Summary\nSocialization is the lifelong process of learning norms and roles through social interaction.\nNorms guide behavior, roles define expectations, and sanctions reinforce them.\nKey agents: family, school, peers (plus media).\nQuick check: Can you name 1 norm, 1 role, and 1 sanction from today?",
+      },
+    ],
+    []
+  );
+
+  const { feed, current, typing } = useLoopingDemo(demoSteps, 850);
+
+  // 右侧滚动容器：每次新增/打字推进，保持滚动到底部
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [feed, typing]);
 
   return (
     <main className="relative min-h-screen bg-slate-950 text-white overflow-hidden">
-      {/* 背景光晕 */}
-      <div className="pointer-events-none absolute -top-40 -left-20 w-80 h-80 bg-blue-500/30 blur-3xl rounded-full animate-pulse" />
-      <div className="pointer-events-none absolute -bottom-40 -right-10 w-96 h-96 bg-purple-500/25 blur-3xl rounded-full animate-pulse" />
+      {/* 背景：克制高级 */}
+      <div className="pointer-events-none absolute -top-32 -left-24 w-[28rem] h-[28rem] bg-blue-500/12 blur-3xl rounded-full" />
+      <div className="pointer-events-none absolute -bottom-40 -right-10 w-[34rem] h-[34rem] bg-purple-500/12 blur-3xl rounded-full" />
+      <div className="pointer-events-none absolute inset-0 noise-mask" />
 
-      {/* 顶部导航：Logo + 语言切换 + 快速入口 */}
+      {/* Header */}
       <header className="relative z-10 px-6 pt-6">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
-          {/* 左侧 Logo / 标题 */}
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-400 to-purple-500 shadow-lg shadow-blue-500/40" />
+          <div className="flex items-center gap-3">
+            <NeuroOrb />
             <div className="leading-tight">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
-                Multi-Model AI
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">
+                NeuroDesk
               </p>
-              <p className="text-sm font-semibold">
-                {isZh ? "AI 辅导" : "AI Tutor"}
+              <p className="text-sm font-semibold text-slate-100">
+                {isZh ? "多模型学习工作台" : "Multi-model study workspace"}
               </p>
             </div>
           </div>
 
-          {/* 右侧：语言切换 + 进入聊天 */}
           <div className="flex items-center gap-3">
-            {/* 语言切换 */}
             <div className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-white/5 border border-white/10 text-[11px]">
               <span className="text-slate-300 mr-1">🌐</span>
               <button
-                onClick={() => setLang("zh")}
-                className={`px-2 py-0.5 rounded-full transition ${
-                  isZh
-                    ? "bg-slate-100 text-slate-900 text-[11px] font-medium"
-                    : "text-slate-300 hover:text-white"
-                }`}
-              >
-                中
-              </button>
-              <button
                 onClick={() => setLang("en")}
-                className={`px-2 py-0.5 rounded-full transition ${
-                  !isZh
+                className={cn(
+                  "px-2 py-0.5 rounded-full transition",
+                  lang === "en"
                     ? "bg-slate-100 text-slate-900 text-[11px] font-medium"
                     : "text-slate-300 hover:text-white"
-                }`}
+                )}
               >
                 EN
               </button>
+              <button
+                onClick={() => setLang("zh")}
+                className={cn(
+                  "px-2 py-0.5 rounded-full transition",
+                  lang === "zh"
+                    ? "bg-slate-100 text-slate-900 text-[11px] font-medium"
+                    : "text-slate-300 hover:text-white"
+                )}
+              >
+                中
+              </button>
             </div>
 
-            {/* 快速进入聊天 */}
             <Link
               href="/chat"
               className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-100 text-slate-900 text-xs font-medium shadow-md shadow-slate-900/40 hover:brightness-110 transition"
             >
-              <span>{isZh ? "进入工作台" : "Open Workspace"}</span>
-              <span>↗</span>
+              <span>{isZh ? "打开工作台" : "Open Workspace"}</span>
+              <span aria-hidden>↗</span>
             </Link>
           </div>
         </div>
       </header>
 
-      {/* Hero 区域 */}
-      <section className="relative px-6 pt-16 pb-24">
-        <div className="max-w-6xl mx-auto flex flex-col lg:flex-row items-center gap-12">
-          {/* 左侧文字 */}
-          <div className="flex-1 text-center lg:text-left">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] mb-4">
+      {/* Hero */}
+      <section className="relative px-6 pt-16 pb-20">
+        <div className="max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 items-center">
+          {/* Left */}
+          <div className="text-center lg:text-left">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] mb-5">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              {isZh
-                ? "多模型协作 · Groq + DeepSeek + Kimi"
-                : "Multi-model orchestration · Groq + DeepSeek + Kimi"}
+              <span className="text-slate-200">
+                {isZh ? "免费 · AI 笔记 · AI Detector" : "Free · AI Notes · AI Detector"}
+              </span>
             </div>
 
-            <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold leading-tight">
-              <span className="bg-gradient-to-r from-blue-400 via-cyan-300 to-purple-400 bg-clip-text text-transparent">
-                {isZh
-                  ? "多模型 AI 工作台"
-                  : "Multi-Model AI Workspace"}
+            <h1 className="text-4xl sm:text-5xl lg:text-[3.4rem] font-bold leading-[1.08]">
+              <span className="ai-title">
+                {isZh ? "NeuroDesk：更像团队的 AI" : "NeuroDesk, AI that works like a team"}
               </span>
-              <span className="block mt-2 text-slate-100 text-2xl sm:text-3xl">
+              <span className="block mt-3 text-slate-200 text-xl sm:text-2xl font-semibold">
                 {isZh
-                  ? "让多个 AI 一起，帮你完成一件事"
-                  : "Let multiple AIs team up on one task"}
+                  ? "把学习任务拆开，让不同 AI 各司其职"
+                  : "Split study tasks — planner, writer, reviewer — in one workspace."}
               </span>
             </h1>
 
             <p className="mt-6 text-sm sm:text-base text-slate-300 leading-relaxed max-w-xl mx-auto lg:mx-0">
               {isZh ? (
                 <>
-                  一个平台接入 Groq、DeepSeek、Kimi，多智能体协作完成写作、
-                  分析、代码、课程设计、训练营方案等复杂任务。
+                  NeuroDesk 把多模型协作做成“可用的流程”：笔记总结、检测写作痕迹、
+                  学习任务拆解与复习清单。
                   <br />
-                  你只需要提需求，后面的讨论和分工都交给 AI 团队。
+                  不需要你会提示词，直接像发消息一样描述需求。
                 </>
               ) : (
                 <>
-                  One platform that connects Groq, DeepSeek and Kimi.
-                  Multi-agent collaboration for writing, analysis, code,
-                  course design and bootcamp planning.
+                  NeuroDesk turns multi-model orchestration into a practical workflow:
+                  notes summarization, AI detection, task breakdown, and review checklists.
                   <br />
-                  You describe what you want — the AI team handles the rest.
+                  No prompt-crafting needed — just describe what you want.
                 </>
               )}
             </p>
@@ -117,133 +355,96 @@ export default function Home() {
             <div className="mt-8 flex flex-col sm:flex-row gap-3 justify-center lg:justify-start">
               <Link
                 href="/chat"
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 shadow-lg shadow-blue-500/30 hover:scale-105 transition transform text-sm font-medium text-white text-center"
+                className="px-6 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 shadow-lg shadow-blue-500/25 hover:scale-[1.03] transition transform text-sm font-medium text-white text-center"
               >
-                {isZh
-                  ? "立即体验聊天（多模型协作）"
-                  : "Try chat with multi-model mode"}
+                {isZh ? "开始使用（团队模式）" : "Start (Team Mode)"}
               </Link>
+
               <a
-                href="#features"
-                className="px-6 py-3 rounded-xl border border-white/20 bg-white/5 hover:bg-white/10 text-sm text-slate-100 text-center"
+                href="#use-cases"
+                className="px-6 py-3 rounded-xl border border-white/15 bg-white/5 hover:bg-white/10 text-sm text-slate-100 text-center transition"
               >
-                {isZh ? "查看平台功能" : "View platform features"}
+                {isZh ? "看看适合做什么" : "See use cases"}
               </a>
             </div>
 
-            {/* 模型标签条 */}
-            <div className="mt-8 flex flex-wrap gap-2 justify-center lg:justify-start text-[11px] text-slate-300">
-              <span className="px-3 py-1 rounded-full bg-blue-500/10 border border-blue-400/40">
-                ⚡ {isZh ? "Groq · 极速推理" : "Groq · ultra-fast inference"}
+            <div className="mt-7 flex flex-wrap gap-2 justify-center lg:justify-start text-[11px] text-slate-300">
+              <span className="px-3 py-1 rounded-full bg-white/5 border border-white/10">
+                ✨ {isZh ? "轻量动效 · 不花哨" : "Subtle motion · not flashy"}
               </span>
-              <span className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-400/40">
-                🧩 {isZh ? "DeepSeek R1 · 深度拆解" : "DeepSeek R1 · deep reasoning"}
+              <span className="px-3 py-1 rounded-full bg-white/5 border border-white/10">
+                🧾 {isZh ? "一键生成复习清单" : "One-click review checklist"}
               </span>
-              <span className="px-3 py-1 rounded-full bg-pink-500/10 border border-pink-400/40">
-                🎨 {isZh ? "Kimi K2 · 中文表达优化" : "Kimi K2 · writing skill"}
-              </span>
-              <span className="px-3 py-1 rounded-full bg-purple-500/10 border border-purple-400/40">
-                🤝 {isZh ? "多智能体讨论模式" : "Multi-agent discussion mode"}
+              <span className="px-3 py-1 rounded-full bg-white/5 border border-white/10">
+                🛡️ {isZh ? "写作检测器" : "AI Detector"}
               </span>
             </div>
           </div>
 
-          {/* 右侧：多模型协作动效卡片 */}
-          <div className="flex-1 flex justify-center lg:justify-end">
-            <div className="relative w-full max-w-md">
-              {/* 背景发光卡 */}
-              <div className="absolute inset-0 bg-gradient-to-tr from-blue-500/20 via-cyan-400/10 to-purple-500/20 blur-3xl rounded-3xl" />
-              <div className="relative rounded-3xl border border-white/10 bg-slate-900/70 backdrop-blur-xl p-6 shadow-2xl">
-                <div className="text-xs text-slate-300 mb-4 flex items-center justify-between">
-                  <span>
-                    {isZh ? "多智能体协作流程" : "Multi-agent flow"}
-                  </span>
-                  <span className="flex items-center gap-1">
+          {/* Right: 固定高度对话框 + 内部滚动条 */}
+          <div className="flex justify-center lg:justify-end">
+            <div className="relative w-full max-w-lg">
+              <div className="absolute inset-0 rounded-3xl bg-gradient-to-tr from-blue-500/10 via-cyan-500/5 to-purple-500/10 blur-2xl" />
+
+              <div className="relative rounded-3xl border border-white/10 bg-slate-900/55 backdrop-blur-xl p-5 shadow-2xl">
+                <div className="flex items-center justify-between text-[11px] text-slate-300">
+                  <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    {isZh ? "在线" : "Online"}
-                  </span>
+                    <span>{isZh ? "实时协作演示" : "Live collaboration demo"}</span>
+                  </div>
+                  <span className="text-slate-400">{isZh ? "自动循环" : "Auto-loop"}</span>
                 </div>
 
-                <div className="space-y-4 text-[11px]">
-                  {/* 用户需求 */}
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-[10px]">
-                      {isZh ? "你" : "You"}
-                    </div>
-                    <div className="flex-1 px-3 py-2 rounded-2xl bg-slate-800/80 text-slate-200">
-                      {isZh
-                        ? "“帮我设计一个 AI 兼职赚钱训练营…”"
-                        : '"Help me design an AI side-hustle bootcamp for students..."'}
-                    </div>
-                  </div>
+                {/* 固定高度的滚动区域 */}
+                <div
+                  ref={scrollRef}
+                  className="mt-4 h-[380px] overflow-y-auto pr-2 rounded-2xl chat-scroll"
+                >
+                  <div className="space-y-3">
+                    {/* 已完成 feed */}
+                    {feed.map((s, i) => (
+                      <ChatBubble
+                        key={`${s.role}-${i}`}
+                        side={s.side}
+                        role={s.role}
+                        accent={s.accent}
+                        title={s.title}
+                        text={s.text}
+                      />
+                    ))}
 
-                  {/* 流程线 */}
-                  <div className="h-6 flex items-center justify-center">
-                    <div className="w-1/2 h-px bg-gradient-to-r from-slate-500/0 via-slate-400/70 to-slate-500/0 animate-pulse" />
+                    {/* 当前正在打字的一条（不加入 feed，避免无限增长） */}
+                    <ChatBubble
+                      side={current.side}
+                      role={current.role}
+                      accent={current.accent}
+                      title={current.title}
+                      text={typing}
+                      isTyping
+                    />
                   </div>
+                </div>
 
-                  {/* DeepSeek */}
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-400/60 flex items-center justify-center text-[10px]">
-                      A
-                    </div>
-                    <div className="flex-1 px-3 py-2 rounded-2xl bg-slate-800/80">
-                      <div className="text-emerald-300 mb-1">
-                        {isZh ? "DeepSeek · 结构规划" : "DeepSeek · Structure"}
-                      </div>
-                      <div className="text-slate-200">
-                        {isZh
-                          ? "拆解课程模块，设计阶段、节次、作业和目标。"
-                          : "Breaks down modules, phases, lessons, assignments and goals."}
-                      </div>
-                    </div>
+                <div className="mt-4 flex items-center justify-between">
+                  <div className="text-[10px] text-slate-400">
+                    {isZh ? "提示：此处为演示动画" : "Tip: this is a scripted demo"}
                   </div>
+                  <Link
+                    href="/chat"
+                    className="text-[11px] font-semibold text-slate-100 hover:text-white underline underline-offset-4 decoration-white/30"
+                  >
+                    {isZh ? "去真实体验 →" : "Try the real thing →"}
+                  </Link>
+                </div>
+              </div>
 
-                  {/* Kimi */}
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 rounded-full bg-pink-500/20 border border-pink-400/60 flex items-center justify-center text-[10px]">
-                      B
-                    </div>
-                    <div className="flex-1 px-3 py-2 rounded-2xl bg-slate-800/80">
-                      <div className="text-pink-300 mb-1">
-                        {isZh ? "Kimi · 文案表达" : "Kimi · Copywriting"}
-                      </div>
-                      <div className="text-slate-200">
-                        {isZh
-                          ? "把课程方案写成好懂、好卖、适合小红书/朋友圈的文案。"
-                          : "Turns the plan into readable, marketable copy ready for social media."}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Groq */}
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 rounded-full bg-blue-500/20 border border-blue-400/60 flex items-center justify-center text-[10px]">
-                      C
-                    </div>
-                    <div className="flex-1 px-3 py-2 rounded-2xl bg-slate-800/80">
-                      <div className="text-blue-300 mb-1">
-                        {isZh ? "Groq · 终稿合成" : "Groq · Final merge"}
-                      </div>
-                      <div className="text-slate-200">
-                        {isZh
-                          ? "综合 A+B 的优点，统一风格，给你一版可以直接使用的终稿。"
-                          : "Merges A+B, unifies style and gives you a final draft ready to ship."}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 最终输出 */}
-                  <div className="mt-3 px-3 py-2 rounded-2xl bg-gradient-to-r from-blue-600/60 to-purple-600/60 text-slate-50 shadow-lg">
-                    <div className="text-xs font-semibold mb-1">
-                      {isZh ? "✅ 最终输出" : "✅ Final Output"}
-                    </div>
-                    <div>
-                      {isZh
-                        ? "一键生成完整训练营方案 + 招生文案，你只需要复制粘贴去卖。"
-                        : "One click to get a full bootcamp plan + marketing copy. You just copy, paste and sell."}
-                    </div>
-                  </div>
+              {/* 轻浮动标签 */}
+              <div className="hidden sm:block">
+                <div className="absolute -top-3 -left-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] text-slate-200 float-soft">
+                  Planner
+                </div>
+                <div className="absolute -bottom-3 right-8 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] text-slate-200 float-soft2">
+                  Writer
                 </div>
               </div>
             </div>
@@ -251,88 +452,239 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Features 区域 */}
-      <section
-        id="features"
-        className="py-20 px-6 bg-slate-950/95 border-t border-white/5"
-      >
+      {/* Use cases（加小表情更生动） */}
+      <section id="use-cases" className="py-18 px-6 border-t border-white/5 bg-slate-950/95">
         <div className="max-w-6xl mx-auto">
-          <h2 className="text-3xl font-bold text-center text-white">
-            {isZh
-              ? "为什么选择这个多模型 AI 平台？"
-              : "Why choose this multi-model AI platform?"}
+          <div className="flex items-end justify-between gap-4 flex-wrap">
+            <div>
+              <h2 className="text-2xl sm:text-3xl font-bold text-white">
+                {isZh ? "用 NeuroDesk 做什么？" : "What can you do with NeuroDesk?"}
+              </h2>
+              <p className="mt-2 text-slate-400 text-sm max-w-2xl">
+                {isZh
+                  ? "更像学习工作流，不是“一个聊天框”。选一个场景直接开始。"
+                  : "A study workflow — not just a chat box. Pick a scenario and start."}
+              </p>
+            </div>
+
+            <Link
+              href="/account"
+              className="text-[12px] text-slate-300 hover:text-white underline underline-offset-4 decoration-white/20"
+            >
+              {isZh ? "查看套餐与额度 →" : "View plans & limits →"}
+            </Link>
+          </div>
+
+          <div className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 hover:bg-white/7 hover:border-white/15 transition">
+              <div className="text-sm font-semibold text-slate-100">📝 AI Notes</div>
+              <p className="mt-2 text-sm text-slate-300 leading-relaxed">
+                {isZh
+                  ? "把课堂笔记/长文变成可背诵的摘要 + 复习清单。"
+                  : "Turn long notes into a clean summary + a review checklist."}
+              </p>
+              <div className="mt-4 text-[11px] text-slate-400">
+                {isZh ? "适合：考试复习、读书笔记" : "Best for: exams, reading notes"}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 hover:bg-white/7 hover:border-white/15 transition">
+              <div className="text-sm font-semibold text-slate-100">🛡️ AI Detector</div>
+              <p className="mt-2 text-sm text-slate-300 leading-relaxed">
+                {isZh
+                  ? "给出可疑句子与风险提示，帮助你把写作改得更自然。"
+                  : "Highlight suspicious lines and help you revise to sound natural."}
+              </p>
+              <div className="mt-4 text-[11px] text-slate-400">
+                {isZh ? "适合：Essay、报告、作业" : "Best for: essays, reports"}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 hover:bg-white/7 hover:border-white/15 transition">
+              <div className="text-sm font-semibold text-slate-100">🤝 Team Mode</div>
+              <p className="mt-2 text-sm text-slate-300 leading-relaxed">
+                {isZh
+                  ? "规划/写作/审稿分工，让输出更稳、更像人。"
+                  : "Planner + writer + reviewer roles for more reliable output."}
+              </p>
+              <div className="mt-4 text-[11px] text-slate-400">
+                {isZh ? "适合：复杂作业、项目" : "Best for: complex tasks"}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Features */}
+      <section className="py-18 px-6 bg-slate-950 border-t border-white/5">
+        <div className="max-w-6xl mx-auto">
+          <h2 className="text-2xl sm:text-3xl font-bold text-center text-white">
+            {isZh ? "体验更像工具，而不是噱头" : "Feels like a tool, not a gimmick"}
           </h2>
           <p className="text-center text-slate-400 mt-3 text-sm">
-            {isZh
-              ? "不只是“一个聊天框”，而是一套帮你真正做事的 AI 工作流。"
-              : "Not just a chat box, but an AI workflow that actually gets things done."}
+            {isZh ? "轻动效 + 清晰层级 + 低学习成本。" : "Subtle motion, clear hierarchy, low learning curve."}
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-12">
-            <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-blue-400/70 hover:shadow-xl transition transform hover:-translate-y-1">
-              <h3 className="text-lg font-semibold">
-                {isZh ? "🚀 Groq 极速引擎" : "🚀 Groq speed engine"}
-              </h3>
-              <p className="mt-3 text-slate-300 text-sm">
-                {isZh
-                  ? "基于 Groq LPU 加速，响应速度远超普通云服务，适合高频写作与头脑风暴。"
-                  : "Powered by Groq LPU, much faster than typical cloud LLMs. Great for high-frequency writing & ideation."}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-10">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <div className="text-sm font-semibold text-white">{isZh ? "专注可读性" : "Readable by default"}</div>
+              <p className="mt-2 text-sm text-slate-300">
+                {isZh ? "信息密度高，但排版不压迫。默认适合长文本。" : "High signal, low stress. Built for long text."}
               </p>
             </div>
 
-            <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-emerald-400/70 hover:shadow-xl transition transform hover:-translate-y-1">
-              <h3 className="text-lg font-semibold">
-                {isZh ? "🧠 多智能体协同决策" : "🧠 Multi-agent decisions"}
-              </h3>
-              <p className="mt-3 text-slate-300 text-sm">
-                {isZh
-                  ? "让不同模型扮演规划、执行、审稿等角色，适合做课程、项目、商业方案。"
-                  : "Different models act as planner, executor and editor. Perfect for courses, projects and strategy docs."}
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <div className="text-sm font-semibold text-white">{isZh ? "步骤化输出" : "Step-based output"}</div>
+              <p className="mt-2 text-sm text-slate-300">
+                {isZh ? "先规划、再写作、再审稿，减少跑题与不稳。" : "Plan → draft → review to reduce drift and instability."}
               </p>
             </div>
 
-            <div className="p-6 rounded-2xl bg-white/5 border border-white/10 hover:border-purple-400/70 hover:shadow-xl transition transform hover:-translate-y-1">
-              <h3 className="text-lg font-semibold">
-                {isZh ? "📦 一站式创作工作台" : "📦 One-stop creation hub"}
-              </h3>
-              <p className="mt-3 text-slate-300 text-sm">
-                {isZh
-                  ? "写文案、写课程、做训练营、写代码、做调研问卷……在一个页面完成。"
-                  : "Copywriting, course design, bootcamps, code, surveys… all in one page."}
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+              <div className="text-sm font-semibold text-white">{isZh ? "免费可用" : "Free to start"}</div>
+              <p className="mt-2 text-sm text-slate-300">
+                {isZh ? "先用起来，再决定要不要升级。" : "Try it first. Upgrade only if it truly helps."}
               </p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* CTA 区域 */}
-      <section className="py-20 px-6 bg-slate-950">
+      {/* CTA */}
+      <section className="py-18 px-6 bg-slate-950 border-t border-white/5">
         <div className="max-w-3xl mx-auto text-center">
-          <h2 className="text-3xl font-bold text-white">
-            {isZh
-              ? "想试试让一整个 AI 团队一起帮你干活吗？"
-              : "Want to see an AI team work for you?"}
+          <h2 className="text-2xl sm:text-3xl font-bold text-white">
+            {isZh ? "把学习任务交给“团队”处理" : "Let the team handle the busywork"}
           </h2>
           <p className="mt-4 text-slate-300 text-sm sm:text-base">
             {isZh
-              ? "打开聊天页，切换到“团队协作模式”，直接给出你的需求，剩下的拆解、写作、优化，全交给 AI。"
-              : 'Open the chat page, switch to "Team mode", describe your goal, and let the AIs handle planning, drafting and polishing.'}
+              ? "打开工作台，像发消息一样描述需求；你只负责决定要不要用。"
+              : "Open the workspace, describe your goal like a message, and decide what to keep."}
           </p>
 
           <Link
             href="/chat"
-            className="inline-block mt-8 px-10 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl shadow-lg shadow-blue-500/30 hover:scale-105 transition text-sm font-medium"
+            className="inline-block mt-7 px-10 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl shadow-lg shadow-blue-500/25 hover:scale-[1.03] transition text-sm font-medium"
           >
-            {isZh ? "进入 AI 工作台 →" : "Go to AI workspace →"}
+            {isZh ? "进入 NeuroDesk →" : "Enter NeuroDesk →"}
           </Link>
+
+          <div className="mt-4 text-[11px] text-slate-500">
+            {isZh ? "套餐与额度：在 Account 页面查看。" : "Plans & limits: available on the Account page."}
+          </div>
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="py-6 text-center text-slate-500 text-xs bg-slate-950 border-t border-white/5">
-        © {new Date().getFullYear()}{" "}
-        {isZh ? "多模型 AI 平台" : "Multi-Model AI Platform"} · Made by vins 
+      <footer className="py-7 text-center text-slate-500 text-xs bg-slate-950 border-t border-white/5">
+        © {new Date().getFullYear()} NeuroDesk · Made by vins
       </footer>
+
+      {/* Global styles */}
+      <style jsx global>{`
+        .noise-mask {
+          background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+          background-size: 18px 18px;
+          opacity: 0.05;
+          mix-blend-mode: overlay;
+        }
+
+        .ai-title {
+          display: inline-block;
+          background: linear-gradient(90deg, #60a5fa, #a78bfa, #34d399);
+          background-size: 200% 200%;
+          -webkit-background-clip: text;
+          background-clip: text;
+          color: transparent;
+          animation: titleFlow 6s ease-in-out infinite, titleWobble 4.2s ease-in-out infinite;
+          will-change: transform, background-position;
+        }
+
+        @keyframes titleFlow {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+
+        @keyframes titleWobble {
+          0%, 100% { transform: translate3d(0, 0, 0); }
+          50% { transform: translate3d(0, -1px, 0); }
+        }
+
+        /* Orb */
+        .orb-spin {
+          background: conic-gradient(
+            from 180deg,
+            rgba(96, 165, 250, 0.9),
+            rgba(167, 139, 250, 0.9),
+            rgba(52, 211, 153, 0.9),
+            rgba(96, 165, 250, 0.9)
+          );
+          animation: orbHue 5.5s linear infinite;
+        }
+
+        .orb-glow {
+          background: radial-gradient(
+            circle at 30% 30%,
+            rgba(96, 165, 250, 0.45),
+            rgba(167, 139, 250, 0.25),
+            rgba(0, 0, 0, 0) 70%
+          );
+          filter: blur(10px);
+          opacity: 0.9;
+        }
+
+        .orb-jitter {
+          animation: orbJitter 3.2s ease-in-out infinite;
+          will-change: transform, filter;
+        }
+
+        @keyframes orbHue {
+          0% { filter: hue-rotate(0deg); }
+          100% { filter: hue-rotate(360deg); }
+        }
+
+        @keyframes orbJitter {
+          0%, 100% { transform: translate3d(0, 0, 0) rotate(0deg); }
+          25% { transform: translate3d(0.6px, -0.4px, 0) rotate(0.3deg); }
+          50% { transform: translate3d(-0.5px, 0.4px, 0) rotate(-0.2deg); }
+          75% { transform: translate3d(0.4px, 0.5px, 0) rotate(0.2deg); }
+        }
+
+        .float-soft { animation: floatSoft 5.6s ease-in-out infinite; }
+        .float-soft2 { animation: floatSoft 6.4s ease-in-out infinite reverse; }
+        @keyframes floatSoft {
+          0%, 100% { transform: translate3d(0, 0, 0); }
+          50% { transform: translate3d(0, -6px, 0); }
+        }
+
+        /* 黑色融合滚动条（Chrome/Edge/Safari） */
+        .chat-scroll::-webkit-scrollbar {
+          width: 10px;
+        }
+        .chat-scroll::-webkit-scrollbar-track {
+          background: rgba(0, 0, 0, 0.35);
+          border-radius: 999px;
+        }
+        .chat-scroll::-webkit-scrollbar-thumb {
+          background: linear-gradient(180deg, rgba(96,165,250,0.5), rgba(167,139,250,0.45));
+          border-radius: 999px;
+          border: 2px solid rgba(0, 0, 0, 0.35);
+        }
+        .chat-scroll::-webkit-scrollbar-thumb:hover {
+          background: linear-gradient(180deg, rgba(96,165,250,0.65), rgba(167,139,250,0.6));
+        }
+
+        /* Firefox */
+        .chat-scroll {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(167,139,250,0.55) rgba(0,0,0,0.35);
+        }
+
+        /* 让气泡更“像聊天”，而不是代码块 */
+        .chat-bubble {
+          box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+        }
+      `}</style>
     </main>
   );
 }
