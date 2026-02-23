@@ -1,12 +1,10 @@
-
 "use client";
 
-import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 
-// 组件
-import { TopControls } from "@/components/chat/header/TopControls";
+// 组件（你现有）
 import { PlanPillStyles, PlanPillButton } from "@/components/chat/billing/PlanPill";
 import { PlanModal } from "@/components/chat/billing/PlanModal";
 import { RedeemModal } from "@/components/chat/billing/RedeemModal";
@@ -14,18 +12,15 @@ import { SettingsModal } from "@/components/chat/settings/SettingsModal";
 import { ChatHistoryRow } from "@/components/chat/sidebar/ChatHistoryRow";
 import { DetectorUI } from "@/components/workspace/detector/DetectorUI";
 import { NoteUI } from "@/components/workspace/note/NoteUI";
-import { UsageCards } from "@/components/billing/UsageCards";
 
+// workflow UI
+import { Bubble } from "@/components/chat/ui/workflow/Bubble";
+import { ModeDropdown } from "@/components/chat/ui/workflow/ModeDropdown";
+import type { ChatMode, Lang, WorkflowMessage } from "@/components/chat/ui/workflow/types";
+import { uid } from "@/components/chat/ui/workflow/types";
+import { tryParseWorkflowReply } from "@/components/chat/ui/workflow/parseWorkflow";
 
 /** ===================== Types ===================== */
-type Role = "user" | "assistant";
-type Message = { role: Role; content: string };
-
-type Mode = "single" | "team" | "detector" | "note";
-type ModelKind = "fast" | "quality";
-type SingleModelKey = "groq_fast" | "groq_quality" | "hf_deepseek" | "hf_kimi";
-type Lang = "zh" | "en";
-
 type ChatSession = {
   id: string;
   title: string;
@@ -34,7 +29,6 @@ type ChatSession = {
   updatedAt: string;
 };
 
-/** ===================== Billing / Entitlement ===================== */
 type PlanId = "basic" | "pro" | "ultra" | "gift";
 type Entitlement = {
   ok: true;
@@ -52,6 +46,43 @@ type Entitlement = {
   canSeeSuspiciousSentences: boolean;
 };
 
+/** ===================== helpers ===================== */
+async function safeReadJson(res: Response) {
+  const text = await res.text().catch(() => "");
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  return { text, data };
+}
+
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit & { timeoutMs?: number } = {}) {
+  const { timeoutMs = 60000, ...rest } = init;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(input, { ...rest, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeFetchError(err: any, isZh: boolean) {
+  if (err?.name === "AbortError") {
+    return isZh ? "请求超时：后端可能卡住或正在重启。" : "Request timed out: backend may be stuck or restarting.";
+  }
+  const msg = String(err?.message || err || "");
+  if (msg.toLowerCase().includes("failed to fetch")) {
+    return isZh ? "网络请求失败：后端连接断开/崩溃/重启。" : "Network request failed: backend disconnected/crashed/restarting.";
+  }
+  return (isZh ? "请求失败：" : "Request failed: ") + msg;
+}
+
 /** ===================== Entitlement Hook ===================== */
 function useEntitlement(sessionExists: boolean) {
   const [ent, setEnt] = useState<Entitlement | null>(null);
@@ -64,9 +95,10 @@ function useEntitlement(sessionExists: boolean) {
     }
     setLoadingEnt(true);
     try {
-      const res = await fetch("/api/billing/status", { cache: "no-store" });
-      const data = await res.json().catch(() => null);
+      const res = await fetchWithTimeout("/api/billing/status", { cache: "no-store", timeoutMs: 15000 });
+      const { data } = await safeReadJson(res);
       if (res.ok && data?.ok) setEnt(data as Entitlement);
+    } catch {
     } finally {
       setLoadingEnt(false);
     }
@@ -80,29 +112,57 @@ function useEntitlement(sessionExists: boolean) {
   return { ent, loadingEnt, refresh, setEnt };
 }
 
-/** ===================== Detector UI / Note UI (暂时保留原地) ===================== */
-/**
- * 你当前的 DetectorUI / NoteUI 我建议下一步再拆出去（我也可以给你完整搬运版）。
- * 为了让这次“拆 page”最稳，我们先不动它们的内部逻辑。
- *
- * ✅ 你只需要把你原来的 DetectorUI / NoteUI 定义完整保留在这个文件底部即可。
- * （你贴出来的代码还没到结尾，所以我这里先留声明位置）
- */
+/** ===================== SSE parsing ===================== */
+type SSEPacket = { event: string; data: any };
 
+function parseSSEChunks(buffer: string) {
+  // SSE event block separated by blank line
+  const parts = buffer.split("\n\n");
+  const remain = parts.pop() ?? "";
+  const packets: SSEPacket[] = [];
 
-/** ===================== Main Page ===================== */
+  for (const block of parts) {
+    const lines = block.split("\n");
+    let event = "message";
+    let dataStr = "";
+
+    for (const line of lines) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataStr += line.slice(5).trim();
+    }
+
+    if (!dataStr) continue;
+    try {
+      packets.push({ event, data: JSON.parse(dataStr) });
+    } catch {
+      packets.push({ event, data: dataStr });
+    }
+  }
+
+  return { packets, remain };
+}
+
+function stripConclusionLabel(s: string) {
+  const t = (s ?? "").trim();
+  // 常见：Conclusion: / Conclusion\n
+  return t
+    .replace(/^conclusion\s*[:：]\s*/i, "")
+    .replace(/^结论\s*[:：]\s*/i, "")
+    .trim();
+}
+
+/** ===================== Main ===================== */
 function ChatPageInner() {
-  const { data: session, status } = useSession();
+  const { data: session } = useSession();
   const sessionExists = !!session;
   const effectiveSession = session;
-
   const searchParams = useSearchParams();
 
-  // UI states
+  // UI
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // chat core
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<WorkflowMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
@@ -111,17 +171,14 @@ function ChatPageInner() {
   const isZh = lang === "zh";
   const [theme, setTheme] = useState<"dark" | "light">("dark");
 
-  // modes
-  const [mode, setMode] = useState<Mode>("single");
-  const [modelKind, setModelKind] = useState<ModelKind>("fast");
-  const [singleModelKey, setSingleModelKey] = useState<SingleModelKey>("groq_fast");
+  // dropdown mode
+  const [mode, setMode] = useState<ChatMode>("normal");
 
   // sessions sidebar
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   // billing modal
   const [planOpen, setPlanOpen] = useState(false);
@@ -187,11 +244,12 @@ function ChatPageInner() {
     }
     try {
       setSessionsLoading(true);
-      const res = await fetch("/api/chat/sessions");
-      const data = await res.json().catch(() => ({}));
-      setSessions(data.sessions ?? []);
-    } catch (err) {
-      console.error("加载会话列表失败：", err);
+      const res = await fetchWithTimeout("/api/chat/sessions", { timeoutMs: 15000 });
+      const { data } = await safeReadJson(res);
+      if (res.ok) setSessions(data?.sessions ?? []);
+      else setSessions([]);
+    } catch {
+      setSessions([]);
     } finally {
       setSessionsLoading(false);
     }
@@ -207,22 +265,29 @@ function ChatPageInner() {
     if (isLoading) return;
 
     setIsLoading(true);
-    setMenuOpenId(null);
 
     try {
-      const res = await fetch(`/api/chat/session/${sessionId}`);
-      const data = await res.json().catch(() => ({}));
+      const res = await fetchWithTimeout(`/api/chat/session/${sessionId}`, { timeoutMs: 20000 });
+      const { data } = await safeReadJson(res);
 
-      const msgs: Message[] = (data.messages ?? []).map((m: { role: string; content: string }) => ({
-        role: m.role === "assistant" ? "assistant" : "user",
-        content: m.content,
-      }));
+      if (!res.ok) throw new Error(data?.message || data?.error || `HTTP_${res.status}`);
+
+      const msgs: WorkflowMessage[] = (data?.messages ?? []).map((m: { role: string; content: string }) => {
+        if (m.role === "assistant") {
+          return {
+            id: uid(),
+            stage: "assistant",
+            title: mode === "workflow" ? "AI" : "Assistant",
+            subtitle: mode === "workflow" ? "Reply" : undefined,
+            content: m.content ?? "",
+          };
+        }
+        return { id: uid(), stage: "user", title: "You", content: m.content ?? "" };
+      });
 
       setMessages(msgs);
       setChatSessionId(sessionId);
       setSidebarOpen(false);
-
-      if (mode === "detector" || mode === "note") setMode("single");
     } catch (err) {
       console.error("加载会话消息失败：", err);
     } finally {
@@ -235,9 +300,174 @@ function ChatPageInner() {
     setMessages([]);
     setInput("");
     setChatSessionId(null);
-    setMenuOpenId(null);
     setSidebarOpen(false);
-    if (mode === "detector" || mode === "note") setMode("single");
+  }
+
+  // ===== SSE workflow runner =====
+  const abortRef = useRef<AbortController | null>(null);
+
+  async function runWorkflowSSE(historyForApi: { role: "user" | "assistant"; content: string }[]) {
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    // 用于最终折叠
+    let plannerText = "";
+    let writerText = "";
+    let reviewText = "";
+    let conclusionText = "";
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
+        },
+        body: JSON.stringify({
+          messages: historyForApi,
+          mode: "team",
+          chatSessionId,
+          lang,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok || !res.body) {
+        const { text, data } = await safeReadJson(res);
+        const msg = data?.message || data?.error || text?.slice(0, 800) || `HTTP_${res.status}`;
+        throw new Error(msg);
+      }
+
+      // UI：先插入 3 个 stage 占位（顺序固定）
+      const plannerId = uid();
+      const writerId = uid();
+      const reviewerId = uid();
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: plannerId,
+          stage: "planner",
+          title: "Planner",
+          subtitle: isZh ? "规划" : "Plan",
+          content: "",
+        },
+        {
+          id: writerId,
+          stage: "writer",
+          title: "Writer",
+          subtitle: isZh ? "生成" : "Draft",
+          content: "",
+        },
+        {
+          id: reviewerId,
+          stage: "reviewer",
+          title: "Reviewer",
+          subtitle: isZh ? "审阅" : "Review",
+          content: "",
+        },
+      ]);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const { packets, remain } = parseSSEChunks(buffer);
+        buffer = remain;
+
+        for (const p of packets) {
+          if (p.event === "error") {
+            const msg = p.data?.message || p.data?.error || "Unknown SSE error";
+            throw new Error(msg);
+          }
+
+          if (p.event === "stage_done") {
+            const stage = String(p.data?.stage || "");
+            const content = String(p.data?.content || "");
+
+            if (stage === "planner") {
+              plannerText = content;
+              setMessages((prev) => prev.map((m) => (m.id === plannerId ? { ...m, content } : m)));
+            }
+
+            if (stage === "writer") {
+              writerText = content;
+              setMessages((prev) => prev.map((m) => (m.id === writerId ? { ...m, content } : m)));
+            }
+
+            if (stage === "reviewer") {
+              // 后端 reviewer stage_done 里已经带了 review / conclusion（你 route.ts 里加的）
+              const review = String(p.data?.review || "");
+              const conclusion = String(p.data?.conclusion || content || "");
+
+              reviewText = review.trim();
+              conclusionText = stripConclusionLabel(conclusion);
+
+              // 最终：只保留一个 final bubble，把 planner + writer + (review) 折叠进去
+              const children: WorkflowMessage[] = [
+                {
+                  id: uid(),
+                  stage: "planner",
+                  title: "Planner",
+                  subtitle: isZh ? "规划" : "Plan",
+                  content: plannerText || "",
+                },
+                {
+                  id: uid(),
+                  stage: "writer",
+                  title: "Writer",
+                  subtitle: isZh ? "生成" : "Draft",
+                  content: writerText || "",
+                },
+              ];
+
+              if (reviewText) {
+                children.push({
+                  id: uid(),
+                  stage: "reviewer",
+                  title: "Reviewer",
+                  subtitle: isZh ? "Review" : "Review",
+                  content: reviewText,
+                });
+              }
+
+              const finalMsg: WorkflowMessage = {
+                id: uid(),
+                stage: "final",
+                title: isZh ? "结论" : "Conclusion",
+                subtitle: isZh ? "最终输出" : "Final",
+                content: conclusionText || (isZh ? "（无结论输出）" : "(No conclusion)"),
+                children,
+                collapsed: true,
+              };
+
+              setMessages((prev) => {
+                // 删除 planner/writer/reviewer 三个块（只留下 final）
+                const next = prev.filter((m) => ![plannerId, writerId, reviewerId].includes(m.id));
+                return next.concat(finalMsg);
+              });
+            }
+          }
+
+          if (p.event === "done") {
+            // 更新 sessionId + sessions 列表
+            const sid = p.data?.chatSessionId;
+            if (sessionExists && sid) {
+              setChatSessionId(sid);
+              loadSessions();
+            }
+            if (sessionExists) refreshEnt();
+          }
+        }
+      }
+    } finally {
+      abortRef.current = null;
+    }
   }
 
   async function handleSend() {
@@ -248,47 +478,92 @@ function ChatPageInner() {
     setInput("");
     setIsLoading(true);
 
-    const userMessage: Message = { role: "user", content: userText };
-    const historyForApi = [...messages, userMessage];
+    const userMsg: WorkflowMessage = { id: uid(), stage: "user", title: "You", content: userText };
 
-    setMessages((prev) => [...prev, userMessage, { role: "assistant", content: "" }]);
+    const historyForApi = [
+      ...messages.map((m) => ({ role: m.stage === "user" ? ("user" as const) : ("assistant" as const), content: m.content })),
+      { role: "user" as const, content: userText },
+    ];
+
+    setMessages((prev) => [...prev, userMsg]);
 
     try {
-      const res = await fetch("/api/chat", {
+      // ✅ workflow：SSE + team（3 次调用，planner->writer->reviewer）
+      if (mode === "workflow") {
+        await runWorkflowSSE(historyForApi);
+        return;
+      }
+
+      // ✅ normal：一次 JSON（single）
+      const placeholderId = uid();
+      const placeholder: WorkflowMessage = { id: placeholderId, stage: "assistant", title: "Assistant", subtitle: isZh ? "生成中" : "Thinking", content: "" };
+      setMessages((prev) => [...prev, placeholder]);
+
+      const res = await fetchWithTimeout("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: historyForApi,
-          mode,
-          model: modelKind,
-          singleModelKey,
+          mode: "single",
           chatSessionId,
+          lang,
         }),
+        timeoutMs: 90000,
       });
 
-      if (!res.ok) {
-      const data = await res.json().catch(() => null);
+      const { text, data } = await safeReadJson(res);
 
-      // ✅ 配额超了：弹出套餐窗口
-      if (data?.error && String(data.error).includes("quota")) {
-        setPlanOpen(true);
-        setIsLoading(false);
+      if (!res.ok) {
+        const quotaHit =
+          (data?.error && String(data.error).toLowerCase().includes("quota")) ||
+          (data?.message && String(data.message).toLowerCase().includes("quota")) ||
+          (text && text.toLowerCase().includes("quota"));
+
+        const msg = quotaHit
+          ? isZh
+            ? "今日额度已用完，请升级套餐。"
+            : "Quota exceeded. Please upgrade."
+          : (data?.message || data?.error || text?.slice(0, 800) || `HTTP_${res.status}`);
+
+        if (quotaHit) setPlanOpen(true);
+
+        setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, stage: "assistant", title: "AI", subtitle: "Error", content: msg } : m)));
         return;
       }
 
-      throw new Error(data?.message || `HTTP_${res.status}`);
-    }
+      const okData = data && typeof data === "object" ? data : {};
+      const reply: string = okData.reply ?? (isZh ? "AI 暂时没有返回内容。" : "No response from AI.");
 
-      const data = await res.json().catch(() => ({}));
-      const fullReply: string = data.reply ?? (isZh ? "AI 暂时没有返回内容。" : "No response from AI.");
-
-      if (sessionExists && data.chatSessionId) {
-        setChatSessionId(data.chatSessionId);
+      if (sessionExists && okData.chatSessionId) {
+        setChatSessionId(okData.chatSessionId);
         loadSessions();
       }
-
       if (sessionExists) refreshEnt();
 
+      // normal：如果后端偶尔返回可解析 workflow JSON（兼容旧逻辑）
+      const parsed = tryParseWorkflowReply(reply);
+      if (parsed && parsed.length) {
+        let finalStep = parsed.find((s) => s.stage === "final") || null;
+        if (!finalStep) finalStep = parsed[parsed.length - 1];
+
+        const children = parsed.filter((s) => s !== finalStep).map((s) => ({ ...s, id: uid() }));
+
+        const finalMsg: WorkflowMessage = {
+          id: uid(),
+          stage: "final",
+          title: finalStep.title ?? (isZh ? "结论" : "Conclusion"),
+          subtitle: finalStep.subtitle ?? (isZh ? "最终输出" : "Final"),
+          content: finalStep.content,
+          children,
+          collapsed: true,
+        };
+
+        setMessages((prev) => prev.filter((m) => m.id !== placeholderId).concat(finalMsg));
+        return;
+      }
+
+      // typing effect
+      const fullReply = reply;
       const step = 2;
       let i = 0;
 
@@ -297,13 +572,7 @@ function ChatPageInner() {
           i += step;
           const slice = fullReply.slice(0, i);
 
-          setMessages((prev) => {
-            if (prev.length === 0) return prev;
-            const next = [...prev];
-            const lastIndex = next.length - 1;
-            if (next[lastIndex].role === "assistant") next[lastIndex] = { ...next[lastIndex], content: slice };
-            return next;
-          });
+          setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, content: slice } : m)));
 
           if (i >= fullReply.length) {
             clearInterval(timer);
@@ -311,17 +580,19 @@ function ChatPageInner() {
           }
         }, 20);
       });
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === placeholderId
+            ? { ...m, stage: "assistant", title: "Assistant", subtitle: undefined, content: fullReply }
+            : m
+        )
+      );
     } catch (err: any) {
       console.error("调用 /api/chat 出错：", err);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content:
-            (isZh ? "调用后端出错了，请稍后重试。\n\n错误信息：" : "Backend error, please try again later.\n\nError: ") +
-            (err instanceof Error ? err.message : String(err)),
-        },
-      ]);
+      const msg = normalizeFetchError(err, isZh);
+
+      setMessages((prev) => prev.concat({ id: uid(), stage: "assistant", title: "AI", subtitle: "Error", content: msg }));
     } finally {
       setIsLoading(false);
     }
@@ -335,18 +606,18 @@ function ChatPageInner() {
     }
   }
 
-  // ===== Redeem / Billing =====
   async function redeemCode(code: string) {
     setRedeemError(null);
     if (!code) return;
     setRedeemLoading(true);
     try {
-      const res = await fetch("/api/billing/redeem", {
+      const res = await fetchWithTimeout("/api/billing/redeem", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
+        timeoutMs: 20000,
       });
-      const data = await res.json().catch(() => ({}));
+      const { data } = await safeReadJson(res);
       if (!res.ok || data?.ok === false) throw new Error(data?.error || `Redeem error: ${res.status}`);
       setRedeemOpen(false);
       await refreshEnt();
@@ -359,24 +630,17 @@ function ChatPageInner() {
 
   async function manageBilling(plan: "pro" | "ultra") {
     try {
-      const res = await fetch("/api/billing/checkout", {
+      const res = await fetchWithTimeout("/api/billing/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plan }),
+        timeoutMs: 20000,
       });
 
-      const text = await res.text();
-      let data: any = null;
-      try {
-        data = JSON.parse(text);
-      } catch {}
+      const { text, data } = await safeReadJson(res);
 
       if (!res.ok) {
-        alert(
-          `Checkout API failed (${res.status})\n` +
-            (data?.error ? `error: ${data.error}\n` : "") +
-            `raw: ${text}`
-        );
+        alert(`Checkout API failed (${res.status})\n` + (data?.error ? `error: ${data.error}\n` : "") + `raw: ${text}`);
         return;
       }
 
@@ -391,15 +655,23 @@ function ChatPageInner() {
     }
   }
 
-  const userInitial = effectiveSession?.user?.name?.[0] || session?.user?.email?.[0] || "U";
+  const userInitial = effectiveSession?.user?.name?.[0] || effectiveSession?.user?.email?.[0] || "U";
+
+  function setModeSafely(next: ChatMode) {
+    if (!sessionExists && (next === "detector" || next === "note")) {
+      setPlanOpen(true);
+      return;
+    }
+    setMode(next);
+  }
 
   return (
     <main
       className={[
-        "h-screen w-screen text-slate-100 overflow-hidden",
+        "h-screen w-screen overflow-hidden",
         theme === "dark"
-          ? "bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950"
-          : "bg-gradient-to-b from-slate-50 via-white to-slate-100 text-slate-900",
+          ? "text-slate-100 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950"
+          : "text-slate-900 bg-gradient-to-b from-slate-50 via-white to-slate-100",
       ].join(" ")}
     >
       <PlanPillStyles />
@@ -407,7 +679,7 @@ function ChatPageInner() {
       <div className="h-full w-full border border-white/10 bg-white/5 shadow-[0_18px_60px_rgba(15,23,42,0.8)] backdrop-blur-xl flex">
         {sidebarOpen && <div className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[1px]" onClick={() => setSidebarOpen(false)} />}
 
-        {/* Sidebar (先不拆，下一步我也能帮你拆成 Sidebar.tsx) */}
+        {/* Sidebar */}
         <aside
           className={[
             "fixed z-50 left-0 top-0 h-full w-[290px] md:w-72",
@@ -424,7 +696,7 @@ function ChatPageInner() {
             <div className="flex items-center gap-2">
               <div className="h-7 w-7 rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-400 to-emerald-400 animate-pulse shadow-lg shadow-blue-500/40" />
               <div className="leading-tight">
-                <p className="text-xs uppercase tracking-widest text-slate-400">Multi-Model</p>
+                <p className="text-xs uppercase tracking-widest text-slate-400">Workspace</p>
                 <p className="text-sm font-semibold text-slate-50">{isZh ? "AI 工作台" : "AI Workspace"}</p>
 
                 <button
@@ -455,15 +727,10 @@ function ChatPageInner() {
             </div>
           </div>
 
-              <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 pr-1 pb-3 space-y-1 mt-1 custom-scrollbar">            {!sessionExists && (
-              <div className="px-3 py-3 text-xs text-slate-400">
-                {isZh ? "未登录：不会保存历史会话。" : "Not signed in: conversations are not saved."}
-              </div>
-            )}
+          <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 pr-1 pb-3 space-y-1 mt-1 custom-scrollbar">
+            {!sessionExists && <div className="px-3 py-3 text-xs text-slate-400">{isZh ? "未登录：不会保存历史会话。" : "Not signed in: conversations are not saved."}</div>}
 
-            {sessionExists && sessionsLoading && (
-              <div className="px-3 py-2 text-xs text-slate-400">{isZh ? "正在加载历史会话…" : "Loading sessions…"}</div>
-            )}
+            {sessionExists && sessionsLoading && <div className="px-3 py-2 text-xs text-slate-400">{isZh ? "正在加载历史会话…" : "Loading sessions…"}</div>}
 
             {sessionExists && !sessionsLoading && sessions.length === 0 && (
               <div className="px-3 py-2 text-xs text-slate-500">
@@ -484,7 +751,6 @@ function ChatPageInner() {
             {sessionExists &&
               sessions.map((s) => {
                 const isActive = s.id === chatSessionId;
-
                 return (
                   <ChatHistoryRow
                     key={s.id}
@@ -493,15 +759,9 @@ function ChatPageInner() {
                     isZh={isZh}
                     busy={isLoading}
                     onSelect={() => handleSelectSession(s.id)}
-                    onRenamed={() => {
-                      // ✅ 直接刷新列表，保证排序和数据一致（置顶也靠它）
-                      loadSessions();
-                    }}
-                    onPinnedChange={() => {
-                      loadSessions();
-                    }}
+                    onRenamed={() => loadSessions()}
+                    onPinnedChange={() => loadSessions()}
                     onDeleted={() => {
-                      // ✅ 如果删的是当前会话，清空主聊天区
                       if (chatSessionId === s.id) {
                         setMessages([]);
                         setInput("");
@@ -530,8 +790,38 @@ function ChatPageInner() {
 
               <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-blue-500 via-sky-500 to-emerald-400 shadow-md shadow-blue-500/40" />
               <div className="flex flex-col gap-0.5">
-                <h1 className="font-semibold text-sm text-slate-100">{isZh ? "多模型 AI 助手 · 工作台" : "Multi-Model AI Workspace"}</h1>
-                <p className="text-[11px] text-slate-400">Groq · DeepSeek · Kimi · Multi-Agent</p>
+                <h1 className="font-semibold text-sm text-slate-100">
+                  {mode === "workflow"
+                    ? isZh
+                      ? "聊天 · 工作流"
+                      : "Chat · Workflow"
+                    : mode === "normal"
+                    ? isZh
+                      ? "聊天 · 普通"
+                      : "Chat · Normal"
+                    : mode === "detector"
+                    ? isZh
+                      ? "AI 检测"
+                      : "AI Detector"
+                    : isZh
+                    ? "AI 笔记"
+                    : "AI Note"}
+                </h1>
+                <p className="text-[11px] text-slate-400">
+                  {mode === "workflow"
+                    ? "Planner · Writer · Reviewer · Final"
+                    : mode === "normal"
+                    ? isZh
+                      ? "快速，传统对话模式"
+                      : "Fast, classic chat mode"
+                    : mode === "detector"
+                    ? isZh
+                      ? "文本检测"
+                      : "Text analysis"
+                    : isZh
+                    ? "笔记生成"
+                    : "Note generation"}
+                </p>
               </div>
             </div>
 
@@ -548,70 +838,77 @@ function ChatPageInner() {
               />
             </div>
 
-            {/* Right (✅ 拆出去的 TopControls) */}
-            <TopControls
-              isZh={isZh}
-              isLoading={isLoading}
-              sessionExists={sessionExists}
-              mode={mode}
-              setMode={(next) => {
-                if (!sessionExists && (next === "detector" || next === "note")) {
-                  setPlanOpen(true);
-                  return;
-                }
-                setMode(next);
-                if (next === "detector" || next === "note") setIsLoading(false);
-              }}
-              modelKind={modelKind}
-              setModelKind={setModelKind}
-              singleModelKey={singleModelKey}
-              setSingleModelKey={setSingleModelKey}
-              onOpenPlan={() => setPlanOpen(true)}
-              status={status}
-              userInitial={String(userInitial).toUpperCase()}
-              userLabel={effectiveSession?.user?.name || effectiveSession?.user?.email || ""}
-              onSignIn={() => signIn()}
-              onSignOut={() => signOut()}
-            />
+            {/* Right */}
+            <div className="flex items-center gap-2">
+              <ModeDropdown value={mode} onChange={setModeSafely} lang={lang} disabled={isLoading} />
+
+              <button
+                onClick={() => setSettingsOpen(true)}
+                className="h-9 w-9 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition flex items-center justify-center"
+                title={isZh ? "设置" : "Settings"}
+              >
+                ⚙️
+              </button>
+
+              {sessionExists ? (
+                <button
+                  onClick={() => signOut()}
+                  className="h-9 px-3 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                  title={effectiveSession?.user?.email || ""}
+                >
+                  {String(userInitial).toUpperCase()}
+                </button>
+              ) : (
+                <button
+                  onClick={() => signIn()}
+                  className="h-9 px-3 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
+                >
+                  {isZh ? "登录" : "Sign in"}
+                </button>
+              )}
+            </div>
           </header>
 
           {/* Body */}
           {mode === "detector" ? (
-            <DetectorUI
-              isLoadingGlobal={isLoading}
-              isZh={isZh}
-              locked={detectorLocked}
-              canSeeSuspicious={!!ent?.canSeeSuspiciousSentences}
-            />
+            <DetectorUI isLoadingGlobal={isLoading} isZh={isZh} locked={detectorLocked} canSeeSuspicious={!!ent?.canSeeSuspiciousSentences} />
           ) : mode === "note" ? (
             <NoteUI isLoadingGlobal={isLoading} isZh={isZh} locked={noteLocked} />
           ) : (
             <>
-              <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-3 custom-scrollbar">
-                {messages.map((msg, idx) => (
-                  <div key={idx} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                    <div
-                      className={`px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap max-w-[80%] border backdrop-blur-sm ${
-                        msg.role === "user"
-                          ? "bg-blue-600 text-white border-blue-400/70 shadow-md shadow-blue-500/30"
-                          : "bg-slate-900/80 text-slate-100 border-white/10"
-                      }`}
-                    >
-                      {msg.content}
+              <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-4 custom-scrollbar">
+                {mode === "workflow" ? (
+                  messages.map((m) => (
+                    <Bubble
+                      key={m.id}
+                      msg={m}
+                      isZh={isZh}
+                      onToggle={(id) => {
+                        setMessages((prev) => prev.map((x) => (x.id === id ? { ...x, collapsed: !(x.collapsed !== false) } : x)));
+                      }}
+                    />
+                  ))
+                ) : (
+                  messages.map((m) => (
+                    <div key={m.id} className={`flex ${m.stage === "user" ? "justify-end" : "justify-start"}`}>
+                      <div
+                        className={[
+                          "px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap max-w-[80%] border backdrop-blur-sm",
+                          m.stage === "user"
+                            ? "bg-slate-800/70 text-slate-100 border-slate-700/60"
+                            : "bg-slate-900/80 text-slate-100 border-white/10",
+                        ].join(" ")}
+                      >
+                        {m.content}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
 
                 {isLoading && (
                   <div className="text-[11px] text-slate-400 mt-2 flex items-center gap-2">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    {mode === "team"
-                      ? isZh
-                        ? "多模型团队正在协作思考中……"
-                        : "Multi-agent team is thinking…"
-                      : isZh
-                      ? "模型正在思考中……"
-                      : "Model is thinking…"}
+                    {isZh ? "生成中……" : "Generating…"}
                   </div>
                 )}
               </div>

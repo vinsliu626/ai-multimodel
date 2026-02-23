@@ -11,16 +11,15 @@ datasource db {
 /// *
 /// * ===================== Chat =====================
 model ChatSession {
-  id     String  @id @default(cuid())
-  userId String
-  title  String  @default("新的对话")
-  pinned Boolean @default(false) // ✅ 新增：置顶
-
+  id        String        @id @default(cuid())
+  userId    String
+  title     String        @default("新的对话")
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
+  pinned    Boolean       @default(false)
   messages  ChatMessage[]
 
-  @@index([userId, pinned, updatedAt]) // ✅ 推荐：置顶排序更快
+  @@index([userId, pinned, updatedAt])
   @@index([userId, updatedAt])
 }
 
@@ -38,29 +37,27 @@ model ChatMessage {
 /// *
 /// * ===================== Billing / Plans =====================
 model UserEntitlement {
-  userId                    String   @unique
-  plan                      String   @default("basic")
-  createdAt                 DateTime @default(now())
-  updatedAt                 DateTime @updatedAt
+  userId                    String    @unique
+  plan                      String    @default("basic")
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
   stripeCustomerId          String?
   stripeStatus              String?
   stripeSubId               String?
-  id                        String   @id @default(cuid())
-  canSeeSuspiciousSentences Boolean  @default(false)
+  id                        String    @id @default(cuid())
+  canSeeSuspiciousSentences Boolean   @default(false)
   chatPerDay                Int?
   detectorWordsPerWeek      Int?
   noteSecondsPerWeek        Int?
-  unlimited                 Boolean  @default(false)
-
-  usedChatCountToday Int       @default(0)
-  currentPeriodEnd   DateTime?
-  cancelAtPeriodEnd  Boolean?  @default(false)
-  unlimitedSource    String?
-  dailyUsageKey      String?
-  weeklyUsageKey     String?
-
-  usedDetectorWordsThisWeek Int @default(0)
-  usedNoteSecondsThisWeek   Int @default(0)
+  unlimited                 Boolean   @default(false)
+  cancelAtPeriodEnd         Boolean?  @default(false)
+  currentPeriodEnd          DateTime?
+  dailyUsageKey             String?
+  unlimitedSource           String?
+  weeklyUsageKey            String?
+  usedChatCountToday        Int       @default(0)
+  usedDetectorWordsThisWeek Int       @default(0)
+  usedNoteSecondsThisWeek   Int       @default(0)
 }
 
 model ProcessedStripeEvent {
@@ -160,33 +157,26 @@ model AiNoteSummaryPart {
 }
 
 model AiNoteJob {
-  id        String   @id @default(cuid())
-  noteId    String   @unique
-  userId    String
-  stage     String   @default("prep")
-  progress  Int      @default(0)
-  error     String?
-
-  // ✅ ASR/LLM stepper 状态机字段
-  segmentTimeSec Int @default(300) // 5min segments
-  segmentsTotal  Int @default(0)
-  asrNextIndex   Int @default(0)
-
-  llmNextPart   Int @default(0)
-  llmPartsTotal Int @default(0)
-
-  // ✅ 结果与计费
-  noteMarkdown  String?
-  secondsBilled Int?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  lockedAt      DateTime?
-  lockExpiresAt DateTime?
-  lockedBy      String?
+  id             String          @id @default(cuid())
+  noteId         String          @unique
+  userId         String
+  stage          String          @default("prep")
+  progress       Int             @default(0)
+  error          String?
+  updatedAt      DateTime        @updatedAt
+  createdAt      DateTime        @default(now())
+  asrNextIndex   Int             @default(0)
+  llmNextPart    Int             @default(0)
+  llmPartsTotal  Int             @default(0)
+  noteMarkdown   String?
+  secondsBilled  Int?
+  segmentTimeSec Int             @default(300)
+  segmentsTotal  Int             @default(0)
+  lockExpiresAt  DateTime?
+  lockedAt       DateTime?
+  lockedBy       String?
+  AiNoteSession  AiNoteSession[]
 
   @@index([noteId])
   @@index([lockedBy])
-
-  AiNoteSession AiNoteSession[]
 }
