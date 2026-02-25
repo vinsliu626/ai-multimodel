@@ -1,4 +1,5 @@
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 
@@ -16,14 +17,18 @@ async function requireUserId() {
   return userId ?? null;
 }
 
+// ✅ Next.js 16: context.params is Promise
+type RouteContext = { params: Promise<{ id: string }> };
+
 // ---------------- GET：拿某个会话的全部消息 ----------------
-export async function GET(req: NextRequest, context: { params: { id: string } }) {
+export async function GET(_req: NextRequest, context: RouteContext) {
   try {
     const userId = await requireUserId();
     if (!userId) return jsonErr(401, "unauthorized");
 
     const { prisma } = await import("@/lib/prisma");
-    const { id } = context.params;
+
+    const { id } = await context.params;
     if (!id) return jsonErr(400, "missing_id");
 
     const sessionRow = await prisma.chatSession.findFirst({
@@ -46,13 +51,14 @@ export async function GET(req: NextRequest, context: { params: { id: string } })
 }
 
 // ---------------- DELETE：删除会话 + 消息 ----------------
-export async function DELETE(req: NextRequest, context: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, context: RouteContext) {
   try {
     const userId = await requireUserId();
     if (!userId) return jsonErr(401, "unauthorized");
 
     const { prisma } = await import("@/lib/prisma");
-    const { id } = context.params;
+
+    const { id } = await context.params;
     if (!id) return jsonErr(400, "missing_id");
 
     const sessionRow = await prisma.chatSession.findFirst({
@@ -72,13 +78,14 @@ export async function DELETE(req: NextRequest, context: { params: { id: string }
 }
 
 // ---------------- PATCH：重命名 / 置顶 ----------------
-export async function PATCH(req: NextRequest, context: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, context: RouteContext) {
   try {
     const userId = await requireUserId();
     if (!userId) return jsonErr(401, "unauthorized");
 
     const { prisma } = await import("@/lib/prisma");
-    const { id } = context.params;
+
+    const { id } = await context.params;
     if (!id) return jsonErr(400, "missing_id");
 
     const body = await req.json().catch(() => ({}));
