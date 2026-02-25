@@ -6,7 +6,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-// ---------------- helpers ----------------
 function jsonErr(status: number, error: string) {
   return NextResponse.json({ ok: false, error }, { status });
 }
@@ -18,16 +17,15 @@ async function requireUserId() {
 }
 
 // ---------------- GET：拿某个会话的全部消息 ----------------
-export async function GET(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, context: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
     if (!userId) return jsonErr(401, "unauthorized");
 
     const { prisma } = await import("@/lib/prisma");
-    const { id } = await context.params;
+    const { id } = context.params;
     if (!id) return jsonErr(400, "missing_id");
 
-    // ✅ 确保是自己的会话
     const sessionRow = await prisma.chatSession.findFirst({
       where: { id, userId },
       select: { id: true },
@@ -48,23 +46,21 @@ export async function GET(req: NextRequest, context: { params: Promise<{ id: str
 }
 
 // ---------------- DELETE：删除会话 + 消息 ----------------
-export async function DELETE(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: NextRequest, context: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
     if (!userId) return jsonErr(401, "unauthorized");
 
     const { prisma } = await import("@/lib/prisma");
-    const { id } = await context.params;
+    const { id } = context.params;
     if (!id) return jsonErr(400, "missing_id");
 
-    // ✅ 只能删自己的
     const sessionRow = await prisma.chatSession.findFirst({
       where: { id, userId },
       select: { id: true },
     });
     if (!sessionRow) return jsonErr(404, "not_found");
 
-    // 你 schema 已经 onDelete: Cascade，但这里显式删也 OK
     await prisma.chatMessage.deleteMany({ where: { chatSessionId: id } });
     await prisma.chatSession.delete({ where: { id } });
 
@@ -76,13 +72,13 @@ export async function DELETE(req: NextRequest, context: { params: Promise<{ id: 
 }
 
 // ---------------- PATCH：重命名 / 置顶 ----------------
-export async function PATCH(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+export async function PATCH(req: NextRequest, context: { params: { id: string } }) {
   try {
     const userId = await requireUserId();
     if (!userId) return jsonErr(401, "unauthorized");
 
     const { prisma } = await import("@/lib/prisma");
-    const { id } = await context.params;
+    const { id } = context.params;
     if (!id) return jsonErr(400, "missing_id");
 
     const body = await req.json().catch(() => ({}));
@@ -92,7 +88,6 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     if (title !== undefined && title.length === 0) return jsonErr(400, "title_empty");
     if (title === undefined && pinned === undefined) return jsonErr(400, "nothing_to_update");
 
-    // ✅ 只能改自己的
     const sessionRow = await prisma.chatSession.findFirst({
       where: { id, userId },
       select: { id: true },
@@ -104,7 +99,6 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       data: {
         ...(title !== undefined ? { title } : {}),
         ...(pinned !== undefined ? { pinned } : {}),
-        // updatedAt 有 @updatedAt，不写也会自动更新
       },
       select: { id: true, title: true, pinned: true, createdAt: true, updatedAt: true },
     });

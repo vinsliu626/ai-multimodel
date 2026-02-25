@@ -27,7 +27,7 @@ function bad(code: ApiErr, status = 400, message?: string, extra?: Record<string
   );
 }
 
-// 统一把各种 data 形态转成 Buffer（支持 base64 / Buffer JSON）
+// 统一把各种 data 形态转成 Buffer（支持 base64 / Buffer JSON / arrayBuffer / uint8）
 function bytesToBuffer(data: any, encoding?: string): Buffer {
   if (!data) throw new Error("data is empty");
 
@@ -48,7 +48,9 @@ function bytesToBuffer(data: any, encoding?: string): Buffer {
 
     // 兜底：先当 base64 试试，不行再 utf8
     try {
-      return Buffer.from(data, "base64");
+      const b = Buffer.from(data, "base64");
+      // 很短且全是可见字符时，可能不是 base64；这里不强判，保持兼容
+      return b;
     } catch {
       return Buffer.from(data, "utf8");
     }
@@ -81,7 +83,7 @@ export async function POST(req: Request) {
     let mime = "audio/webm";
     let dataBuf: Buffer | null = null;
 
-    // 1) JSON 模式（给你的 node 脚本用）
+    // 1) JSON 模式（给 node 脚本用）
     if (ct.includes("application/json")) {
       let body: any;
       try {
@@ -128,10 +130,8 @@ export async function POST(req: Request) {
     if (!noteId) return bad("MISSING_NOTE_ID", 400);
     if (chunkIndex === null) return bad("MISSING_CHUNK_INDEX", 400);
     if (chunkIndex < 0) return bad("INVALID_CHUNK_INDEX", 400);
-
     if (!dataBuf) return bad("MISSING_DATA", 400);
 
-    // 统一限制（你脚本 1MB / 2.5MB 都 OK）
     const MAX_CHUNK_BYTES = Number.parseInt(process.env.AI_NOTE_MAX_CHUNK_BYTES || "", 10) || 3 * 1024 * 1024;
     if (dataBuf.length > MAX_CHUNK_BYTES) {
       return bad("CHUNK_TOO_LARGE", 413, `Max ${MAX_CHUNK_BYTES} bytes`, {
@@ -140,7 +140,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // ✅ 检查 noteId 是否属于该用户；不存在则创建 session（与你原逻辑一致）
+    // ✅ 检查 noteId 是否属于该用户；不存在则创建 session
     const existing = await prisma.aiNoteSession.findUnique({
       where: { id: noteId },
       select: { userId: true },
@@ -156,7 +156,7 @@ export async function POST(req: Request) {
       update: { userId } as any,
     });
 
-    // ✅ 写 chunk（支持 base64/json or multipart/file）
+    // ✅ 写 chunk
     await prisma.aiNoteChunk.upsert({
       where: { noteId_chunkIndex: { noteId, chunkIndex } },
       update: { mime, size: dataBuf.length, data: dataBuf } as any,

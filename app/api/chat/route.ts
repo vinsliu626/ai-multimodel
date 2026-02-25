@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
 import { addUsageEvent } from "@/lib/billing/usage";
@@ -17,7 +18,6 @@ type ChatMessage = {
 
 type Mode = "single" | "team" | "detector";
 type ModelKind = "fast" | "quality";
-
 type Stage = "planner" | "writer" | "reviewer";
 
 const FAST_MODEL = "llama-3.1-8b-instant";
@@ -25,14 +25,6 @@ const QUALITY_MODEL = "llama-3.3-70b-versatile";
 
 /**
  * ✅ OpenRouter: 只用你实测 OK=200 的免费模型池（稳定优先）
- * 你给的结果里这些都 200 且速度不错：
- * - liquid/lfm-2.5-1.2b-instruct:free
- * - google/gemma-3n-e4b-it:free
- * - google/gemma-3n-e2b-it:free
- * - arcee-ai/trinity-large-preview:free
- * - google/gemma-3-4b-it:free
- * - google/gemma-3-27b-it:free
- * - google/gemma-3-12b-it:free
  */
 const OR_STABLE_FREE = [
   "liquid/lfm-2.5-1.2b-instruct:free",
@@ -42,11 +34,9 @@ const OR_STABLE_FREE = [
   "google/gemma-3-4b-it:free",
   "google/gemma-3-27b-it:free",
   "google/gemma-3-12b-it:free",
-  // 最后兜底 router（随机挑免费模型）
   "openrouter/free",
 ];
 
-// 你也可以后面再分 stage 用不同池；目前先统一用最稳的
 const OR_PLANNER_CANDIDATES = OR_STABLE_FREE;
 const OR_WRITER_CANDIDATES = OR_STABLE_FREE;
 const OR_REVIEWER_CANDIDATES = OR_STABLE_FREE;
@@ -91,10 +81,9 @@ function shouldFallback(e: any) {
   const httpStatus = Number(e?.httpStatus || 0);
   const code = String(e?.code || "");
 
-  // 值得换模型/换 provider 的错误
   if (httpStatus === 402 || httpStatus === 429 || httpStatus === 503) return true;
   if (httpStatus === 400 && (code === "MODEL_NOT_SUPPORTED" || String(e?.message || "").includes("model_not_supported"))) return true;
-  if (httpStatus === 502) return true; // OpenRouter 有时会 502 NO_RESPONSE
+  if (httpStatus === 502) return true;
   if (code === "MODEL_NOT_SUPPORTED" || code === "UPSTREAM_RATE_LIMIT" || code === "UPSTREAM_OVERLOADED") return true;
   if (code === "OPENROUTER_NO_RESPONSE" || code === "OPENROUTER_BAD_JSON" || code === "OPENROUTER_TIMEOUT") return true;
 
@@ -207,43 +196,86 @@ function systemReviewer(isZh: boolean) {
     ? [
         "你是 Reviewer（审阅/交付专家）。",
         "任务：",
-        "1) 快速检查 Draft 是否遵循 Plan、是否漏关键点、是否逻辑矛盾；",
-        "2) 在此基础上，产出【最终可直接交付给用户的完整版报告】。",
+        "1) 检查 Draft 是否遵循 Plan、是否遗漏关键点、是否逻辑矛盾、是否啰嗦/空话；",
+        "2) 基于审阅建议，对 Draft 进行“实质性改写与增强”，输出改好的正文；",
+        "3) 在改好的正文基础上，输出最终的 Conclusion（完整可交付）。",
         "",
         "输出格式（必须严格遵循，纯文本，不要 JSON，不要代码块）：",
         "【Review】",
-        "- 列出 3-6 条：问题/风险点 + 如何改（短句即可）",
+        "- 3-8 条：问题/风险点 + 修改建议（务必可执行）",
+        "",
+        "【Revised Draft】",
+        "- 根据 Review 建议改写后的正文（结构要与 Plan 保持一致）。",
         "",
         "【Conclusion】",
-        "- 这是最终报告正文（重点放这里，要写得完整且更长）。",
-        "- 必须包含：标题、摘要（3-5 句）、背景、主要心理问题（分点+解释）、成因机制、风险群体、可操作建议（分层：家庭/学校/政策）、结论。",
-        "- 用清晰小标题组织结构；建议部分至少 8 条、按层级分组。",
+        "- 最终可交付报告正文：标题、摘要、背景、主要问题、成因机制、风险群体、分层建议（家庭/学校/政策）、结论。",
         "",
         "强约束：",
-        "- Conclusion 至少 900 个中文字符（宁可更长）。",
+        "- 不要杜撰具体统计数字或具体论文结论；只能一般性描述或用“可能/常见/研究普遍认为”。",
         "- 不要出现“我认为/我将/我会”。",
-        "- 不要杜撰具体统计数字或具体论文结论；只能做一般性描述或标注“可能/常见/研究普遍认为”。",
+        "- 不要提及角色词。",
       ].join("\n")
     : [
         "You are Reviewer.",
-        "Task: verify Draft follows Plan and then deliver a fully polished final report.",
+        "Tasks:",
+        "1) Check whether the Draft follows the Plan, missing key points, logic conflicts, verbosity/empty talk;",
+        "2) Substantially revise and improve the Draft;",
+        "3) Produce the final deliverable Conclusion based on the revised draft.",
         "",
         "Output format (plain text only, no JSON, no code blocks):",
         "[Review]",
-        "- 3-6 items: issue/risk + fix (short)",
+        "- 3-8 actionable issues + fixes",
+        "",
+        "[Revised Draft]",
+        "- Revised version of the Draft (keep the plan structure).",
         "",
         "[Conclusion]",
-        "- This is the final deliverable report (put most content here).",
-        "- Must include: title, abstract (3-5 sentences), background, main issues, causal mechanisms, at-risk groups, actionable recommendations (by family/school/policy), conclusion.",
+        "- Final deliverable report including: title, abstract, background, main issues, mechanisms, at-risk groups, recommendations (family/school/policy), conclusion.",
         "",
         "Constraints:",
-        "- Conclusion must be long and complete (at least ~700 words).",
         "- No fabricated statistics or fake citations.",
+        "- Do not mention role words.",
       ].join("\n");
 }
 
 function buildStageMessages(baseHistory: ChatMessage[], system: string, userTask: string): ChatMessage[] {
   return [{ role: "system", content: system }, ...trimHistory(baseHistory, 20), { role: "user", content: userTask }];
+}
+
+// ===================== persistence =====================
+async function ensureSessionId(opts: { userId: string; chatSessionId: string | null; userRequest: string }) {
+  const { userId, chatSessionId, userRequest } = opts;
+
+  if (chatSessionId) {
+    const s = await prisma.chatSession.findFirst({
+      where: { id: chatSessionId, userId },
+      select: { id: true },
+    });
+    if (s) return chatSessionId;
+  }
+
+  const title = userRequest.slice(0, 40) || "New Chat";
+  const created = await prisma.chatSession.create({
+    data: { userId, title },
+    select: { id: true },
+  });
+  return created.id;
+}
+
+async function saveChatMessage(chatSessionId: string, role: "user" | "assistant" | "system", content: string) {
+  if (!content?.trim()) return;
+  await prisma.chatMessage.create({
+    data: { chatSessionId, role, content },
+    select: { id: true },
+  });
+}
+
+async function safeSave(fn: () => Promise<any>) {
+  try {
+    await fn();
+  } catch (e) {
+    console.error("save failed:", e);
+  }
 }
 
 // ===================== provider calls =====================
@@ -380,7 +412,6 @@ async function tryWithFallback(opts: {
 }) {
   const { stage, messages, groqKey, groqModel, openrouterKey, openrouterCandidates } = opts;
 
-  // 1) OpenRouter（免费模型池优先）
   if (openrouterKey) {
     for (const mid of openrouterCandidates) {
       try {
@@ -393,30 +424,35 @@ async function tryWithFallback(opts: {
     }
   }
 
-  // 2) Groq 兜底
   const g = await callGroqChat(groqKey, groqModel, messages);
   return { stage, provider: "groq" as const, model: g.modelUsed, content: g.content };
 }
 
 // ===================== parse reviewer output =====================
-function splitReviewAndConclusion(text: string) {
+function splitReviewerTriplet(text: string) {
   const t = text.trim();
 
-  const idx = t.toLowerCase().indexOf("conclusion");
-  if (idx >= 0) {
-    const before = t.slice(0, idx).trim();
-    const after = t.slice(idx).trim();
-    return { review: before, conclusion: after };
+  const pick = (label: string) => {
+    const i = t.indexOf(label);
+    return i >= 0 ? i : -1;
+  };
+
+  const iReview = pick("【Review】") >= 0 ? pick("【Review】") : pick("[Review]");
+  const iRevised = pick("【Revised Draft】") >= 0 ? pick("【Revised Draft】") : pick("[Revised Draft]");
+  const iConclusion = pick("【Conclusion】") >= 0 ? pick("【Conclusion】") : pick("[Conclusion]");
+
+  if (iReview < 0 && iRevised < 0 && iConclusion < 0) {
+    return { review: "", revisedDraft: "", conclusion: t };
   }
 
-  const idxZh = t.indexOf("结论");
-  if (idxZh >= 0) {
-    const before = t.slice(0, idxZh).trim();
-    const after = t.slice(idxZh).trim();
-    return { review: before, conclusion: after };
-  }
+  const slice = (from: number, to: number) =>
+    from >= 0 ? t.slice(from, to >= 0 ? to : undefined).trim() : "";
 
-  return { review: "", conclusion: t };
+  const review = slice(iReview, iRevised >= 0 ? iRevised : iConclusion);
+  const revisedDraft = slice(iRevised, iConclusion);
+  const conclusion = slice(iConclusion, -1);
+
+  return { review, revisedDraft, conclusion };
 }
 
 // ===================== POST /api/chat =====================
@@ -482,6 +518,12 @@ export async function POST(request: Request) {
           try {
             send("status", { ok: true, stage: "thinking", message: isZh ? "思考中…" : "Thinking…" });
 
+            // ✅ 确保 session & 保存用户消息（仅登录用户）
+            if (shouldSaveChat) {
+              chatSessionId = await ensureSessionId({ userId: userId!, chatSessionId, userRequest });
+              await safeSave(() => saveChatMessage(chatSessionId!, "user", userRequest));
+            }
+
             // ✅ single：只跑一次 writer（更稳）
             if (mode === "single") {
               send("stage_start", { stage: "writer" });
@@ -489,7 +531,9 @@ export async function POST(request: Request) {
               const writerMsgs = buildStageMessages(
                 messages,
                 systemWriter(isZh),
-                isZh ? `用户需求：\n${userRequest}\n\n请直接给出最终回答。` : `User request:\n${userRequest}\n\nGive the final answer.`
+                isZh
+                  ? `用户需求：\n${userRequest}\n\n请直接给出最终回答。`
+                  : `User request:\n${userRequest}\n\nGive the final answer.`
               );
 
               const writer = await tryWithFallback({
@@ -503,11 +547,15 @@ export async function POST(request: Request) {
 
               send("stage_done", writer);
 
+              // ✅ 保存 assistant
+              if (shouldSaveChat && chatSessionId) {
+                await safeSave(() => saveChatMessage(chatSessionId!, "assistant", writer.content));
+              }
+
               if (shouldBillChat) {
                 addUsageEvent(userId!, "chat_count", 1).catch((e) => console.error("usageEvent 写入失败：", e));
               }
 
-              // 不强制存库（你原来存库逻辑在别处也行）；这里保持原样：SSE 返回为主
               send("done", { ok: true, chatSessionId, stages: [writer], reply: writer.content });
               controller.close();
               return;
@@ -518,7 +566,9 @@ export async function POST(request: Request) {
             const plannerMsgs = buildStageMessages(
               messages,
               systemPlanner(isZh),
-              isZh ? `用户需求：\n${userRequest}\n\n请输出 plan（只要计划/大纲）。` : `User request:\n${userRequest}\n\nOutput a plan/outline only.`
+              isZh
+                ? `用户需求：\n${userRequest}\n\n请输出 plan（只要计划/大纲）。`
+                : `User request:\n${userRequest}\n\nOutput a plan/outline only.`
             );
 
             const planner = await tryWithFallback({
@@ -555,8 +605,8 @@ export async function POST(request: Request) {
               messages,
               systemReviewer(isZh),
               isZh
-                ? `【Planner】\n${planner.content}\n\n【Writer】\n${writer.content}\n\n请输出 Review + Conclusion。`
-                : `【Planner】\n${planner.content}\n\n【Writer】\n${writer.content}\n\nOutput Review + Conclusion.`
+                ? `【Planner】\n${planner.content}\n\n【Writer】\n${writer.content}\n\n请按要求输出 Review + Revised Draft + Conclusion。`
+                : `【Planner】\n${planner.content}\n\n【Writer】\n${writer.content}\n\nOutput Review + Revised Draft + Conclusion.`
             );
 
             const reviewer = await tryWithFallback({
@@ -568,9 +618,15 @@ export async function POST(request: Request) {
               openrouterCandidates: OR_REVIEWER_CANDIDATES,
             });
 
-            const { review, conclusion } = splitReviewAndConclusion(reviewer.content);
+            const { review, revisedDraft, conclusion } = splitReviewerTriplet(reviewer.content);
+            send("stage_done", { ...reviewer, review, revisedDraft, conclusion });
 
-            send("stage_done", { ...reviewer, review, conclusion });
+            const finalReply = [revisedDraft, conclusion].filter(Boolean).join("\n\n") || reviewer.content;
+
+            // ✅ 保存 assistant（存最终交付内容）
+            if (shouldSaveChat && chatSessionId) {
+              await safeSave(() => saveChatMessage(chatSessionId!, "assistant", finalReply));
+            }
 
             if (shouldBillChat) {
               addUsageEvent(userId!, "chat_count", 1).catch((e) => console.error("usageEvent 写入失败：", e));
@@ -579,8 +635,8 @@ export async function POST(request: Request) {
             send("done", {
               ok: true,
               chatSessionId,
-              stages: [planner, writer, { ...reviewer, review, conclusion }],
-              reply: conclusion || reviewer.content,
+              stages: [planner, writer, { ...reviewer, review, revisedDraft, conclusion }],
+              reply: finalReply,
             });
 
             controller.close();
@@ -598,6 +654,12 @@ export async function POST(request: Request) {
 
     // ========= 非 SSE：一次性 JSON 返回 =========
 
+    // ✅ 确保 session & 保存用户消息（仅登录用户）
+    if (shouldSaveChat) {
+      chatSessionId = await ensureSessionId({ userId: userId!, chatSessionId, userRequest });
+      await safeSave(() => saveChatMessage(chatSessionId!, "user", userRequest));
+    }
+
     // ✅ single：只跑一次 writer
     if (mode === "single") {
       const writerMsgs = buildStageMessages(
@@ -614,6 +676,11 @@ export async function POST(request: Request) {
         openrouterKey,
         openrouterCandidates: OR_WRITER_CANDIDATES,
       });
+
+      // ✅ 保存 assistant
+      if (shouldSaveChat && chatSessionId) {
+        await safeSave(() => saveChatMessage(chatSessionId!, "assistant", writer.content));
+      }
 
       if (shouldBillChat) {
         addUsageEvent(userId!, "chat_count", 1).catch((e) => console.error("usageEvent 写入失败：", e));
@@ -662,8 +729,8 @@ export async function POST(request: Request) {
       messages,
       systemReviewer(isZh),
       isZh
-        ? `【Planner】\n${planner.content}\n\n【Writer】\n${writer.content}\n\n请输出 Review + Conclusion。`
-        : `【Planner】\n${planner.content}\n\n【Writer】\n${writer.content}\n\nOutput Review + Conclusion.`
+        ? `【Planner】\n${planner.content}\n\n【Writer】\n${writer.content}\n\n请按要求输出 Review + Revised Draft + Conclusion。`
+        : `【Planner】\n${planner.content}\n\n【Writer】\n${writer.content}\n\nOutput Review + Revised Draft + Conclusion.`
     );
 
     const reviewer = await tryWithFallback({
@@ -675,7 +742,14 @@ export async function POST(request: Request) {
       openrouterCandidates: OR_REVIEWER_CANDIDATES,
     });
 
-    const { review, conclusion } = splitReviewAndConclusion(reviewer.content);
+    const { review, revisedDraft, conclusion } = splitReviewerTriplet(reviewer.content);
+
+    const finalReply = [revisedDraft, conclusion].filter(Boolean).join("\n\n") || reviewer.content;
+
+    // ✅ 保存 assistant（存最终交付内容）
+    if (shouldSaveChat && chatSessionId) {
+      await safeSave(() => saveChatMessage(chatSessionId!, "assistant", finalReply));
+    }
 
     if (shouldBillChat) {
       addUsageEvent(userId!, "chat_count", 1).catch((e) => console.error("usageEvent 写入失败：", e));
@@ -684,8 +758,8 @@ export async function POST(request: Request) {
     return NextResponse.json({
       ok: true,
       chatSessionId,
-      stages: [planner, writer, { ...reviewer, review, conclusion }],
-      reply: conclusion || reviewer.content,
+      stages: [planner, writer, { ...reviewer, review, revisedDraft, conclusion }],
+      reply: finalReply,
     });
   } catch (err: any) {
     console.error("[/api/chat] error:", err?.message || err);

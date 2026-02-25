@@ -83,6 +83,31 @@ function normalizeFetchError(err: any, isZh: boolean) {
   return (isZh ? "请求失败：" : "Request failed: ") + msg;
 }
 
+function buildHttpErrorMessage(opts: { res: Response; data: any; text: string; isZh: boolean }) {
+  const { res, data, text, isZh } = opts;
+  const payload =
+    data && typeof data === "object"
+      ? JSON.stringify({ status: res.status, data })
+      : `status=${res.status}, body=${(text || "").slice(0, 800)}`;
+
+  const hint =
+    res.status === 401
+      ? isZh
+        ? "（可能未登录 / session cookie 没带上）"
+        : "(likely not signed in / missing session cookie)"
+      : res.status === 404
+      ? isZh
+        ? "（会话不存在，或不属于当前账号）"
+        : "(session not found or not owned by current user)"
+      : res.status === 400
+      ? isZh
+        ? "（请求参数不对，比如 sessionId 为空）"
+        : "(bad request, e.g. missing sessionId)"
+      : "";
+
+  return (data?.message || data?.error || `HTTP_${res.status}`) + " " + hint + "\n" + payload;
+}
+
 /** ===================== Entitlement Hook ===================== */
 function useEntitlement(sessionExists: boolean) {
   const [ent, setEnt] = useState<Entitlement | null>(null);
@@ -95,7 +120,7 @@ function useEntitlement(sessionExists: boolean) {
     }
     setLoadingEnt(true);
     try {
-      const res = await fetchWithTimeout("/api/billing/status", { cache: "no-store", timeoutMs: 15000 });
+      const res = await fetchWithTimeout("/api/billing/status", { cache: "no-store", timeoutMs: 15000, credentials: "include" });
       const { data } = await safeReadJson(res);
       if (res.ok && data?.ok) setEnt(data as Entitlement);
     } catch {
@@ -116,7 +141,6 @@ function useEntitlement(sessionExists: boolean) {
 type SSEPacket = { event: string; data: any };
 
 function parseSSEChunks(buffer: string) {
-  // SSE event block separated by blank line
   const parts = buffer.split("\n\n");
   const remain = parts.pop() ?? "";
   const packets: SSEPacket[] = [];
@@ -144,7 +168,6 @@ function parseSSEChunks(buffer: string) {
 
 function stripConclusionLabel(s: string) {
   const t = (s ?? "").trim();
-  // 常见：Conclusion: / Conclusion\n
   return t
     .replace(/^conclusion\s*[:：]\s*/i, "")
     .replace(/^结论\s*[:：]\s*/i, "")
@@ -244,7 +267,11 @@ function ChatPageInner() {
     }
     try {
       setSessionsLoading(true);
-      const res = await fetchWithTimeout("/api/chat/sessions", { timeoutMs: 15000 });
+      const res = await fetchWithTimeout("/api/chat/sessions", {
+        timeoutMs: 15000,
+        cache: "no-store",
+        credentials: "include",
+      });
       const { data } = await safeReadJson(res);
       if (res.ok) setSessions(data?.sessions ?? []);
       else setSessions([]);
@@ -264,13 +291,25 @@ function ChatPageInner() {
     if (!sessionExists) return;
     if (isLoading) return;
 
+    if (!sessionId || typeof sessionId !== "string") {
+      setMessages([{ id: uid(), stage: "assistant", title: "AI", subtitle: "Error", content: isZh ? "无效的会话 ID" : "Invalid session id" }]);
+      return;
+    }
+
     setIsLoading(true);
 
     try {
-      const res = await fetchWithTimeout(`/api/chat/session/${sessionId}`, { timeoutMs: 20000 });
-      const { data } = await safeReadJson(res);
+      const res = await fetchWithTimeout(`/api/chat/session/${sessionId}`, {
+        timeoutMs: 20000,
+        cache: "no-store",
+        credentials: "include",
+      });
 
-      if (!res.ok) throw new Error(data?.message || data?.error || `HTTP_${res.status}`);
+      const { data, text } = await safeReadJson(res);
+
+      if (!res.ok) {
+        throw new Error(buildHttpErrorMessage({ res, data, text, isZh }));
+      }
 
       const msgs: WorkflowMessage[] = (data?.messages ?? []).map((m: { role: string; content: string }) => {
         if (m.role === "assistant") {
@@ -288,8 +327,10 @@ function ChatPageInner() {
       setMessages(msgs);
       setChatSessionId(sessionId);
       setSidebarOpen(false);
-    } catch (err) {
-      console.error("加载会话消息失败：", err);
+    } catch (err: any) {
+      // 不用 console（避免 no-console 直接 build fail）
+      const msg = normalizeFetchError(err, isZh);
+      setMessages([{ id: uid(), stage: "assistant", title: "AI", subtitle: "Error", content: msg }]);
     } finally {
       setIsLoading(false);
     }
@@ -310,7 +351,6 @@ function ChatPageInner() {
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // 用于最终折叠
     let plannerText = "";
     let writerText = "";
     let reviewText = "";
@@ -330,6 +370,8 @@ function ChatPageInner() {
           lang,
         }),
         signal: controller.signal,
+        credentials: "include",
+        cache: "no-store",
       });
 
       if (!res.ok || !res.body) {
@@ -338,34 +380,15 @@ function ChatPageInner() {
         throw new Error(msg);
       }
 
-      // UI：先插入 3 个 stage 占位（顺序固定）
       const plannerId = uid();
       const writerId = uid();
       const reviewerId = uid();
 
       setMessages((prev) => [
         ...prev,
-        {
-          id: plannerId,
-          stage: "planner",
-          title: "Planner",
-          subtitle: isZh ? "规划" : "Plan",
-          content: "",
-        },
-        {
-          id: writerId,
-          stage: "writer",
-          title: "Writer",
-          subtitle: isZh ? "生成" : "Draft",
-          content: "",
-        },
-        {
-          id: reviewerId,
-          stage: "reviewer",
-          title: "Reviewer",
-          subtitle: isZh ? "审阅" : "Review",
-          content: "",
-        },
+        { id: plannerId, stage: "planner", title: "Planner", subtitle: isZh ? "规划" : "Plan", content: "" },
+        { id: writerId, stage: "writer", title: "Writer", subtitle: isZh ? "生成" : "Draft", content: "" },
+        { id: reviewerId, stage: "reviewer", title: "Reviewer", subtitle: isZh ? "审阅" : "Review", content: "" },
       ]);
 
       const reader = res.body.getReader();
@@ -401,39 +424,19 @@ function ChatPageInner() {
             }
 
             if (stage === "reviewer") {
-              // 后端 reviewer stage_done 里已经带了 review / conclusion（你 route.ts 里加的）
               const review = String(p.data?.review || "");
               const conclusion = String(p.data?.conclusion || content || "");
 
               reviewText = review.trim();
               conclusionText = stripConclusionLabel(conclusion);
 
-              // 最终：只保留一个 final bubble，把 planner + writer + (review) 折叠进去
               const children: WorkflowMessage[] = [
-                {
-                  id: uid(),
-                  stage: "planner",
-                  title: "Planner",
-                  subtitle: isZh ? "规划" : "Plan",
-                  content: plannerText || "",
-                },
-                {
-                  id: uid(),
-                  stage: "writer",
-                  title: "Writer",
-                  subtitle: isZh ? "生成" : "Draft",
-                  content: writerText || "",
-                },
+                { id: uid(), stage: "planner", title: "Planner", subtitle: isZh ? "规划" : "Plan", content: plannerText || "" },
+                { id: uid(), stage: "writer", title: "Writer", subtitle: isZh ? "生成" : "Draft", content: writerText || "" },
               ];
 
               if (reviewText) {
-                children.push({
-                  id: uid(),
-                  stage: "reviewer",
-                  title: "Reviewer",
-                  subtitle: isZh ? "Review" : "Review",
-                  content: reviewText,
-                });
+                children.push({ id: uid(), stage: "reviewer", title: "Reviewer", subtitle: "Review", content: reviewText });
               }
 
               const finalMsg: WorkflowMessage = {
@@ -447,7 +450,6 @@ function ChatPageInner() {
               };
 
               setMessages((prev) => {
-                // 删除 planner/writer/reviewer 三个块（只留下 final）
                 const next = prev.filter((m) => ![plannerId, writerId, reviewerId].includes(m.id));
                 return next.concat(finalMsg);
               });
@@ -455,7 +457,6 @@ function ChatPageInner() {
           }
 
           if (p.event === "done") {
-            // 更新 sessionId + sessions 列表
             const sid = p.data?.chatSessionId;
             if (sessionExists && sid) {
               setChatSessionId(sid);
@@ -488,15 +489,19 @@ function ChatPageInner() {
     setMessages((prev) => [...prev, userMsg]);
 
     try {
-      // ✅ workflow：SSE + team（3 次调用，planner->writer->reviewer）
       if (mode === "workflow") {
         await runWorkflowSSE(historyForApi);
         return;
       }
 
-      // ✅ normal：一次 JSON（single）
       const placeholderId = uid();
-      const placeholder: WorkflowMessage = { id: placeholderId, stage: "assistant", title: "Assistant", subtitle: isZh ? "生成中" : "Thinking", content: "" };
+      const placeholder: WorkflowMessage = {
+        id: placeholderId,
+        stage: "assistant",
+        title: "Assistant",
+        subtitle: isZh ? "生成中" : "Thinking",
+        content: "",
+      };
       setMessages((prev) => [...prev, placeholder]);
 
       const res = await fetchWithTimeout("/api/chat", {
@@ -509,6 +514,8 @@ function ChatPageInner() {
           lang,
         }),
         timeoutMs: 90000,
+        credentials: "include",
+        cache: "no-store",
       });
 
       const { text, data } = await safeReadJson(res);
@@ -523,11 +530,13 @@ function ChatPageInner() {
           ? isZh
             ? "今日额度已用完，请升级套餐。"
             : "Quota exceeded. Please upgrade."
-          : (data?.message || data?.error || text?.slice(0, 800) || `HTTP_${res.status}`);
+          : data?.message || data?.error || text?.slice(0, 800) || `HTTP_${res.status}`;
 
         if (quotaHit) setPlanOpen(true);
 
-        setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, stage: "assistant", title: "AI", subtitle: "Error", content: msg } : m)));
+        setMessages((prev) =>
+          prev.map((m) => (m.id === placeholderId ? { ...m, stage: "assistant", title: "AI", subtitle: "Error", content: msg } : m))
+        );
         return;
       }
 
@@ -540,7 +549,6 @@ function ChatPageInner() {
       }
       if (sessionExists) refreshEnt();
 
-      // normal：如果后端偶尔返回可解析 workflow JSON（兼容旧逻辑）
       const parsed = tryParseWorkflowReply(reply);
       if (parsed && parsed.length) {
         let finalStep = parsed.find((s) => s.stage === "final") || null;
@@ -562,7 +570,6 @@ function ChatPageInner() {
         return;
       }
 
-      // typing effect
       const fullReply = reply;
       const step = 2;
       let i = 0;
@@ -582,16 +589,10 @@ function ChatPageInner() {
       });
 
       setMessages((prev) =>
-        prev.map((m) =>
-          m.id === placeholderId
-            ? { ...m, stage: "assistant", title: "Assistant", subtitle: undefined, content: fullReply }
-            : m
-        )
+        prev.map((m) => (m.id === placeholderId ? { ...m, stage: "assistant", title: "Assistant", subtitle: undefined, content: fullReply } : m))
       );
     } catch (err: any) {
-      console.error("调用 /api/chat 出错：", err);
       const msg = normalizeFetchError(err, isZh);
-
       setMessages((prev) => prev.concat({ id: uid(), stage: "assistant", title: "AI", subtitle: "Error", content: msg }));
     } finally {
       setIsLoading(false);
@@ -616,6 +617,8 @@ function ChatPageInner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
         timeoutMs: 20000,
+        credentials: "include",
+        cache: "no-store",
       });
       const { data } = await safeReadJson(res);
       if (!res.ok || data?.ok === false) throw new Error(data?.error || `Redeem error: ${res.status}`);
@@ -635,6 +638,8 @@ function ChatPageInner() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plan }),
         timeoutMs: 20000,
+        credentials: "include",
+        cache: "no-store",
       });
 
       const { text, data } = await safeReadJson(res);
