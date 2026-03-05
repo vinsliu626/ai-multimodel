@@ -7,6 +7,7 @@ import { createHash, randomUUID } from "crypto";
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
 import { addUsageEvent } from "@/lib/billing/usage";
 import { isTransientPrismaConnectionError, withPrismaConnectionRetry } from "@/lib/prismaRetry";
+import { canWaitWithinBudget, computeAttemptTimeoutMs, computeRetryDelayMs } from "@/lib/ai/retryBudget";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,8 +17,12 @@ const DEFAULT_DETECTOR_BASE_URL = "http://127.0.0.1:8000";
 const RETRY_MAX_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 120;
 const RETRY_TOTAL_BUDGET_MS = 1500;
-const RETRY_ATTEMPT_TIMEOUT_MS = 800;
+const RETRY_ATTEMPT_TIMEOUT_MS = 500;
+const RETRY_TIMEOUT_SAFETY_MARGIN_MS = 40;
+const RETRY_MIN_ATTEMPT_TIMEOUT_MS = 160;
+const RETRY_JITTER_MAX_MS = 80;
 const DETECTOR_CACHE_TTL_MS = 30_000;
+const DETECTOR_CACHE_STALE_TTL_MS = 5 * 60_000;
 const DETECTOR_MODEL_VERSION = "python-gpt2ppl-ai-overall + local-heuristic-explanations@v1";
 
 let hasHandledAiDetectorRequest = false;
@@ -48,6 +53,7 @@ type DetectorSuccessPayload = {
 };
 
 type DetectorCacheEntry = {
+  createdAt: number;
   expiresAt: number;
   payload: DetectorSuccessPayload;
 };
@@ -61,12 +67,19 @@ class HttpRouteError extends Error {
   errorCode?: string;
   transient?: boolean;
   retryCount?: number;
+  upstreamBodySnippet?: string;
 
   constructor(
     status: number,
     code: string,
     message: string,
-    opts?: { upstreamStatus?: number; errorCode?: string; transient?: boolean; retryCount?: number }
+    opts?: {
+      upstreamStatus?: number;
+      errorCode?: string;
+      transient?: boolean;
+      retryCount?: number;
+      upstreamBodySnippet?: string;
+    }
   ) {
     super(message);
     this.status = status;
@@ -75,6 +88,7 @@ class HttpRouteError extends Error {
     this.errorCode = opts?.errorCode;
     this.transient = opts?.transient;
     this.retryCount = opts?.retryCount;
+    this.upstreamBodySnippet = opts?.upstreamBodySnippet;
   }
 }
 
@@ -95,15 +109,6 @@ function sigmoid(x: number) {
   return 1 / (1 + Math.exp(-x));
 }
 
-function pythonTimeoutMs(text: string) {
-  const w = countWords(text);
-  if (w <= 300) return 15_000;
-  if (w <= 800) return 35_000;
-  if (w <= 1500) return 60_000;
-  if (w <= 3000) return 90_000;
-  return 120_000;
-}
-
 function isLocalUrl(url: string) {
   try {
     const u = new URL(url);
@@ -113,12 +118,27 @@ function isLocalUrl(url: string) {
   }
 }
 
-function resolveDetectorUrl() {
-  const raw = (
-    process.env.DETECTOR_URL?.trim() ||
-    process.env.PY_DETECTOR_URL?.trim() ||
-    DEFAULT_DETECTOR_BASE_URL
-  ).trim();
+type DetectorUrlSource = "DETECTOR_URL" | "PY_DETECTOR_URL" | "DEFAULT";
+
+type DetectorTarget = {
+  url: string;
+  host: string;
+  path: string;
+  source: DetectorUrlSource;
+  isConfigured: boolean;
+};
+
+function resolveDetectorTarget(): DetectorTarget {
+  let source: DetectorUrlSource = "DEFAULT";
+  let raw = DEFAULT_DETECTOR_BASE_URL;
+
+  if (process.env.DETECTOR_URL?.trim()) {
+    raw = process.env.DETECTOR_URL.trim();
+    source = "DETECTOR_URL";
+  } else if (process.env.PY_DETECTOR_URL?.trim()) {
+    raw = process.env.PY_DETECTOR_URL.trim();
+    source = "PY_DETECTOR_URL";
+  }
 
   let parsed: URL;
   try {
@@ -139,7 +159,13 @@ function resolveDetectorUrl() {
     parsed.pathname = "/detect";
   }
 
-  return parsed.toString();
+  return {
+    url: parsed.toString(),
+    host: parsed.hostname,
+    path: parsed.pathname,
+    source,
+    isConfigured: source !== "DEFAULT",
+  };
 }
 
 function detectorDownMessage(url: string) {
@@ -203,6 +229,11 @@ function readDetectorCache(key: string) {
   const entry = detectorResultCache.get(key);
   if (!entry) return { fresh: null as DetectorSuccessPayload | null, stale: null as DetectorSuccessPayload | null };
   const now = Date.now();
+  const staleAgeMs = now - entry.createdAt;
+  if (staleAgeMs > DETECTOR_CACHE_STALE_TTL_MS) {
+    detectorResultCache.delete(key);
+    return { fresh: null as DetectorSuccessPayload | null, stale: null as DetectorSuccessPayload | null };
+  }
   return {
     fresh: entry.expiresAt > now ? entry.payload : null,
     stale: entry.payload,
@@ -210,48 +241,16 @@ function readDetectorCache(key: string) {
 }
 
 function writeDetectorCache(key: string, payload: DetectorSuccessPayload) {
-  detectorResultCache.set(key, { payload, expiresAt: Date.now() + DETECTOR_CACHE_TTL_MS });
+  const now = Date.now();
+  detectorResultCache.set(key, { payload, createdAt: now, expiresAt: now + DETECTOR_CACHE_TTL_MS });
 }
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function retryJitterMs() {
-  return Math.floor(Math.random() * 80);
-}
-
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
-
-  try {
-    const res = await fetch(url, { ...init, signal: controller.signal });
-    return res;
-  } catch (e: any) {
-    if (e?.name === "AbortError") {
-      throw new HttpRouteError(504, "DETECTOR_TIMEOUT", "Detector request timed out.", {
-        upstreamStatus: 504,
-        errorCode: "ABORT_TIMEOUT",
-        transient: true,
-      });
-    }
-    if (isConnectionRefused(e)) {
-      throw new HttpRouteError(503, "DETECTOR_UNAVAILABLE", detectorDownMessage(url), {
-        upstreamStatus: 503,
-        errorCode: "ECONNREFUSED",
-        transient: true,
-      });
-    }
-    const errorCode = normalizeErrorCode(e);
-    throw new HttpRouteError(502, "DETECTOR_FETCH_FAILED", "Failed to reach detector service.", {
-      upstreamStatus: 502,
-      errorCode: errorCode || undefined,
-      transient: isTransientErrorCode(errorCode),
-    });
-  } finally {
-    clearTimeout(timer);
-  }
+function sanitizeSnippet(input: string, maxLen = 120) {
+  return input.replace(/[^\x20-\x7E]+/g, " ").trim().slice(0, maxLen);
 }
 
 // ---------- heuristic pieces ----------
@@ -415,105 +414,152 @@ type PyDetectResponse = {
 
 type DetectorAttemptMetrics = {
   retries: number;
+  attempts: number;
   upstreamStatus: number | null;
   errorCode: string | null;
+  upstreamBodySnippet: string | null;
 };
 
-async function callPythonDetectorOnce(text: string, timeoutMs: number) {
-  const detectorUrl = resolveDetectorUrl();
-
-  if (!process.env.DETECTOR_URL && !process.env.PY_DETECTOR_URL && isLocalUrl(detectorUrl)) {
-    console.warn("[ai-detector] DETECTOR_URL not set, using local default:", detectorUrl);
-  }
-
-  const res = await fetchWithTimeout(
-    detectorUrl,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-      cache: "no-store",
-    },
-    timeoutMs
-  );
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new HttpRouteError(502, "DETECTOR_HTTP_ERROR", `Detector HTTP ${res.status}: ${body.slice(0, 250)}`, {
-      upstreamStatus: res.status,
-      transient: isTransientUpstreamStatus(res.status),
-      errorCode: `HTTP_${res.status}`,
-    });
-  }
-
-  const data = (await res.json()) as PyDetectResponse;
-  if (!data?.ok || !data?.result?.[0]) {
-    const maybeErr = (data as any)?.error;
-    throw new HttpRouteError(
-      502,
-      "DETECTOR_INVALID_RESPONSE",
-      maybeErr ? String(maybeErr) : "Detector invalid response.",
-      { upstreamStatus: 502, transient: false, errorCode: "INVALID_RESPONSE" }
-    );
-  }
-  return { data, detectorUrl, timeoutMs };
-}
-
-async function callPythonDetectorWithFastRetry(text: string) {
-  const startedAt = Date.now();
-  const timeoutMs = pythonTimeoutMs(text);
+async function callPythonDetectorWithFastRetry(text: string, target: DetectorTarget, allowFastStaleFallback: boolean) {
+  const deadlineMs = Date.now() + RETRY_TOTAL_BUDGET_MS;
   const metrics: DetectorAttemptMetrics = {
     retries: 0,
+    attempts: 0,
     upstreamStatus: null,
     errorCode: null,
+    upstreamBodySnippet: null,
   };
 
-  let lastError: unknown;
+  let lastError: HttpRouteError | null = null;
 
   for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
-    const elapsed = Date.now() - startedAt;
-    const remainingBudget = RETRY_TOTAL_BUDGET_MS - elapsed;
-    if (remainingBudget <= 0) break;
+    const attemptTimeout = computeAttemptTimeoutMs({
+      deadlineMs,
+      perAttemptCapMs: RETRY_ATTEMPT_TIMEOUT_MS,
+      safetyMarginMs: RETRY_TIMEOUT_SAFETY_MARGIN_MS,
+      minAttemptMs: RETRY_MIN_ATTEMPT_TIMEOUT_MS,
+    });
+    if (attemptTimeout == null) break;
+    metrics.attempts = attempt;
 
-    const attemptTimeout = Math.max(200, Math.min(RETRY_ATTEMPT_TIMEOUT_MS, remainingBudget, timeoutMs));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort("timeout"), attemptTimeout);
     try {
-      const result = await callPythonDetectorOnce(text, attemptTimeout);
-      return { ...result, timeoutMs: attemptTimeout, metrics };
-    } catch (e) {
-      lastError = e;
+      const res = await fetch(target.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+        cache: "no-store",
+        signal: controller.signal,
+      });
 
-      if (e instanceof HttpRouteError) {
-        metrics.upstreamStatus = e.upstreamStatus ?? e.status ?? null;
-        metrics.errorCode = e.errorCode ?? e.code ?? null;
-        const canRetry = Boolean(e.transient || isTransientUpstreamStatus(e.status));
-        if (!canRetry || attempt >= RETRY_MAX_ATTEMPTS) {
-          e.retryCount = metrics.retries;
-          throw e;
+      if (res.ok) {
+        const data = (await res.json()) as PyDetectResponse;
+        if (!data?.ok || !data?.result?.[0]) {
+          throw new HttpRouteError(
+            502,
+            "DETECTOR_INVALID_RESPONSE",
+            "Detector invalid response.",
+            { upstreamStatus: 502, errorCode: "INVALID_RESPONSE", transient: false, retryCount: attempt - 1 }
+          );
         }
-      } else {
-        const errorCode = normalizeErrorCode(e);
-        metrics.errorCode = errorCode || null;
-        if (!isTransientErrorCode(errorCode) || attempt >= RETRY_MAX_ATTEMPTS) {
-          throw e;
-        }
+        metrics.upstreamStatus = res.status;
+        metrics.errorCode = null;
+        return { data, detectorUrl: target.url, timeoutMs: attemptTimeout, metrics };
       }
 
-      metrics.retries += 1;
+      const body = await res.text().catch(() => "");
+      const snippet = sanitizeSnippet(body, 120);
+      metrics.upstreamStatus = res.status;
+      metrics.errorCode = `HTTP_${res.status}`;
+      metrics.upstreamBodySnippet = snippet || null;
 
-      const waitMs = RETRY_BASE_DELAY_MS * attempt + retryJitterMs();
-      const elapsedAfterAttempt = Date.now() - startedAt;
-      const remainingAfterAttempt = RETRY_TOTAL_BUDGET_MS - elapsedAfterAttempt;
-      if (remainingAfterAttempt <= 0) break;
-      await sleep(Math.min(waitMs, Math.max(20, remainingAfterAttempt)));
+      const transientHttp = isTransientUpstreamStatus(res.status);
+      lastError = new HttpRouteError(
+        transientHttp ? 503 : 502,
+        transientHttp ? "DETECTOR_TRANSIENT_HTTP" : "DETECTOR_HTTP_ERROR",
+        transientHttp
+          ? `Detector transient HTTP ${res.status}.`
+          : `Detector HTTP ${res.status}.`,
+        {
+          upstreamStatus: res.status,
+          errorCode: `HTTP_${res.status}`,
+          transient: transientHttp,
+          retryCount: attempt - 1,
+          upstreamBodySnippet: snippet || undefined,
+        }
+      );
+      if (!transientHttp || attempt >= RETRY_MAX_ATTEMPTS) throw lastError;
+      if (allowFastStaleFallback) throw lastError;
+    } catch (e: any) {
+      if (e instanceof HttpRouteError) {
+        lastError = e;
+      } else {
+        const errorCode = e?.name === "AbortError" ? "ABORT_TIMEOUT" : normalizeErrorCode(e);
+        const isRefused = isConnectionRefused(e);
+        const transient = e?.name === "AbortError" || isRefused || isTransientErrorCode(errorCode);
+        const status = e?.name === "AbortError" ? 504 : isRefused ? 503 : transient ? 503 : 502;
+        const code = e?.name === "AbortError"
+          ? "DETECTOR_TIMEOUT"
+          : isRefused
+            ? "DETECTOR_UNAVAILABLE"
+            : transient
+              ? "DETECTOR_FETCH_FAILED"
+              : "DETECTOR_FETCH_ERROR";
+        const message = e?.name === "AbortError"
+          ? "Detector request timed out."
+          : isRefused
+            ? detectorDownMessage(target.url)
+            : transient
+              ? "Detector upstream connection failed."
+              : "Detector fetch failed.";
+
+        metrics.upstreamStatus = status;
+        metrics.errorCode = errorCode || code;
+        lastError = new HttpRouteError(status, code, message, {
+          upstreamStatus: status,
+          errorCode: errorCode || code,
+          transient,
+          retryCount: attempt - 1,
+        });
+      }
+      if (!lastError.transient || attempt >= RETRY_MAX_ATTEMPTS) throw lastError;
+      if (allowFastStaleFallback) throw lastError;
+    } finally {
+      clearTimeout(timer);
     }
+
+    const waitMs = computeRetryDelayMs({
+      baseDelayMs: RETRY_BASE_DELAY_MS,
+      attempt,
+      jitterMaxMs: RETRY_JITTER_MAX_MS,
+    });
+    if (!canWaitWithinBudget(waitMs, deadlineMs, RETRY_TIMEOUT_SAFETY_MARGIN_MS)) break;
+    metrics.retries += 1;
+    await sleep(waitMs);
   }
 
-  if (lastError instanceof HttpRouteError) throw lastError;
-  throw new HttpRouteError(502, "DETECTOR_FETCH_FAILED", "Failed to reach detector service.", {
-    upstreamStatus: metrics.upstreamStatus ?? 502,
-    errorCode: metrics.errorCode ?? undefined,
+  if (lastError) {
+    throw new HttpRouteError(
+      lastError.status === 502 ? 503 : lastError.status,
+      lastError.code,
+      `Detector unavailable within ${RETRY_TOTAL_BUDGET_MS}ms budget.`,
+      {
+        upstreamStatus: lastError.upstreamStatus ?? lastError.status,
+        errorCode: lastError.errorCode ?? lastError.code,
+        transient: true,
+        retryCount: metrics.retries,
+        upstreamBodySnippet: lastError.upstreamBodySnippet,
+      }
+    );
+  }
+
+  throw new HttpRouteError(504, "DETECTOR_RETRY_BUDGET_EXCEEDED", "Detector retry budget exhausted.", {
+    upstreamStatus: metrics.upstreamStatus ?? 504,
+    errorCode: metrics.errorCode ?? "BUDGET_EXHAUSTED",
     transient: true,
     retryCount: metrics.retries,
+    upstreamBodySnippet: metrics.upstreamBodySnippet ?? undefined,
   });
 }
 
@@ -531,6 +577,11 @@ export async function POST(req: Request) {
   let retryCount = 0;
   let upstreamStatus: number | null = null;
   let errorCode: string | null = null;
+  let upstreamBodySnippet: string | null = null;
+  let upstreamHost: string | null = null;
+  let upstreamPath: string | null = null;
+  let detectorUrlSource: DetectorUrlSource | null = null;
+  let detectorUrlConfigured: boolean | null = null;
   let cacheHeader: "hit" | "hit-stale" | "miss" = "miss";
   let responseStatus = 500;
 
@@ -553,6 +604,11 @@ export async function POST(req: Request) {
         status: responseStatus,
         upstreamStatus,
         errorCode,
+        upstreamBodySnippet,
+        upstreamHost,
+        upstreamPath,
+        detectorUrlSource,
+        detectorUrlConfigured,
         phases: {
           authMs,
           dbMs,
@@ -616,6 +672,12 @@ export async function POST(req: Request) {
     }));
 
     const highlights = findPhraseHighlights(text);
+    const detectorTarget = resolveDetectorTarget();
+    upstreamHost = detectorTarget.host;
+    upstreamPath = detectorTarget.path;
+    detectorUrlSource = detectorTarget.source;
+    detectorUrlConfigured = detectorTarget.isConfigured;
+
     const cacheKey = cacheKeyForText(text);
     const cacheLookup = readDetectorCache(cacheKey);
     if (cacheLookup.fresh) {
@@ -626,16 +688,18 @@ export async function POST(req: Request) {
     const detectorStart = Date.now();
     let py: Awaited<ReturnType<typeof callPythonDetectorWithFastRetry>>;
     try {
-      py = await callPythonDetectorWithFastRetry(text);
+      py = await callPythonDetectorWithFastRetry(text, detectorTarget, Boolean(cacheLookup.stale));
       retryCount = py.metrics.retries;
       upstreamStatus = py.metrics.upstreamStatus ?? 200;
       errorCode = py.metrics.errorCode;
+      upstreamBodySnippet = py.metrics.upstreamBodySnippet;
     } catch (e) {
       detectorFetchMs = Date.now() - detectorStart;
       if (e instanceof HttpRouteError) {
         retryCount = e.retryCount ?? retryCount;
         upstreamStatus = e.upstreamStatus ?? e.status;
         errorCode = e.errorCode ?? e.code;
+        upstreamBodySnippet = e.upstreamBodySnippet ?? null;
 
         if (cacheLookup.stale) {
           cacheHeader = "hit-stale";
@@ -691,6 +755,7 @@ export async function POST(req: Request) {
     if (e instanceof HttpRouteError) {
       upstreamStatus = e.upstreamStatus ?? e.status;
       errorCode = e.errorCode ?? e.code;
+      upstreamBodySnippet = e.upstreamBodySnippet ?? null;
       return finish(NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: e.status }));
     }
     if (isTransientPrismaConnectionError(e)) {
