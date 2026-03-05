@@ -7,7 +7,7 @@ import { normalizePlan, planToFlags, type PlanId } from "@/lib/billing/planFlags
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// �?�?priceId 决定 plan（更可信�?
+// ??priceId  plan?
 function planFromPriceId(priceId?: string | null): PlanId {
   const pro = process.env.STRIPE_PRICE_PRO;
   const ultra = process.env.STRIPE_PRICE_ULTRA;
@@ -17,7 +17,7 @@ function planFromPriceId(priceId?: string | null): PlanId {
   return "basic";
 }
 
-// �?Stripe invoice 里找订阅商品 priceId
+// ?Stripe invoice  priceId
 function extractPriceIdFromInvoice(inv: any): string | null {
   // invoice.lines.data[0].price.id
   const lines = inv?.lines?.data;
@@ -28,7 +28,7 @@ function extractPriceIdFromInvoice(inv: any): string | null {
   return null;
 }
 
-// �?subscription items 里找 priceId
+// ?subscription items  priceId
 function extractPriceIdFromSubscription(sub: any): string | null {
   const items = sub?.items?.data;
   if (Array.isArray(items) && items.length > 0) {
@@ -39,7 +39,7 @@ function extractPriceIdFromSubscription(sub: any): string | null {
 }
 
 async function markProcessed(eventId: string, type: string) {
-  // 幂等：已处理就直接跳�?
+  // ?
   try {
     await prisma.processedStripeEvent.create({
       data: { eventId, type },
@@ -70,7 +70,7 @@ export async function POST(req: Request) {
     );
   }
 
-  // �?幂等
+  // ?
   const processed = await markProcessed(event.id, event.type);
   if (processed.already) return NextResponse.json({ ok: true, deduped: true });
   const lockEventId = event.id as string;
@@ -78,8 +78,8 @@ export async function POST(req: Request) {
   try {
     switch (event.type) {
       /**
-       * �?只“记录�?checkout 完成，不在这里直接授�?Pro/Ultra
-       *   因为你要严格：必须付款成功才开�?
+       * ??checkout ?Pro/Ultra
+       *   ?
        */
       case "checkout.session.completed": {
         const s = event.data.object as any;
@@ -94,7 +94,7 @@ export async function POST(req: Request) {
             update: {
               stripeCustomerId: customerId,
               stripeSubId: subscriptionId,
-              // 不在这里�?active，避免“先开通后付款失败”的漏洞
+              // ?active
               stripeStatus: "pending",
             },
             create: {
@@ -109,8 +109,8 @@ export async function POST(req: Request) {
       }
 
       /**
-       * �?核心：发票付款成�?=> 开�?
-       * 对订阅来�?invoice.paid 是最稳的“已付费”信�?
+       * ??=> ?
+       * ?invoice.paid ?
        */
       case "invoice.paid": {
         const inv = event.data.object as any;
@@ -120,7 +120,7 @@ export async function POST(req: Request) {
         const priceId = extractPriceIdFromInvoice(inv);
         const plan = planFromPriceId(priceId);
 
-        // �?customerId �?subscriptionId �?entitlement
+        // ?customerId ?subscriptionId ?entitlement
         const ent = await prisma.userEntitlement.findFirst({
           where: {
             OR: [
@@ -133,7 +133,7 @@ export async function POST(req: Request) {
 
         if (!ent?.userId) break;
 
-        // 同步订阅信息（period end 等）
+        // eriod end 
         let currentPeriodEnd: Date | null = null;
         let cancelAtPeriodEnd: boolean | null = null as any;
         let stripeStatus: string | null = "active";
@@ -159,7 +159,7 @@ export async function POST(req: Request) {
             stripeCustomerId: customerId,
             currentPeriodEnd: currentPeriodEnd ?? undefined,
             cancelAtPeriodEnd: cancelAtPeriodEnd ?? undefined,
-            // �?不要�?unlimited/unlimitedSource
+            // ??unlimited/unlimitedSource
           },
         });
 
@@ -167,7 +167,7 @@ export async function POST(req: Request) {
       }
 
       /**
-       * �?发票付款失败（past_due / unpaid�?> 严格降级
+       * ?ast_due / unpaid?> 
        */
       case "invoice.payment_failed": {
         const inv = event.data.object as any;
@@ -192,7 +192,7 @@ export async function POST(req: Request) {
           data: {
             ...flags,
             stripeStatus: "past_due",
-            // 保留 stripeSubId/stripeCustomerId 便于后续恢复
+            //  stripeSubId/stripeCustomerId 
           },
         });
 
@@ -200,7 +200,7 @@ export async function POST(req: Request) {
       }
 
       /**
-       * �?订阅更新/删除：同步状态（辅助兜底�?
+       * ?/?
        */
       case "customer.subscription.updated":
       case "customer.subscription.deleted": {
@@ -238,7 +238,7 @@ export async function POST(req: Request) {
             },
           });
         } else {
-          // �?严格：非 active 直接降级 basic
+          // ? active  basic
           const flags = planToFlags("basic");
           await prisma.userEntitlement.update({
             where: { userId: ent.userId },
