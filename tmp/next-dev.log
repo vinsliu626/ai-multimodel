@@ -1,0 +1,17 @@
+
+> ai-multimodel@0.1.0 dev
+> set NODE_OPTIONS=--dns-result-order=ipv4first && next dev
+
+Error: spawn EPERM
+    at ChildProcess.spawn (node:internal/child_process:421:11)
+    at spawn (node:child_process:796:9)
+    at fork (node:child_process:174:10)
+    at C:\Users\gcswz\Desktop\AI\ai-multimodel\node_modules\next\dist\cli\next-dev.js:243:45
+    at new Promise (<anonymous>)
+    at startServer (C:\Users\gcswz\Desktop\AI\ai-multimodel\node_modules\next\dist\cli\next-dev.js:212:16)
+    at runDevServer (C:\Users\gcswz\Desktop\AI\ai-multimodel\node_modules\next\dist\cli\next-dev.js:334:23)
+    at Module.nextDev (C:\Users\gcswz\Desktop\AI\ai-multimodel\node_modules\next\dist\cli\next-dev.js:342:11) {
+  errno: -4048,
+  code: 'EPERM',
+  syscall: 'spawn'
+}

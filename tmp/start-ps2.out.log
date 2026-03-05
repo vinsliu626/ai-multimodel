@@ -1,0 +1,12 @@
+
+> ai-multimodel@0.1.0 start
+> next start
+
+▲ Next.js 16.1.5
+- Local:         http://localhost:3000
+- Network:       http://169.254.83.107:3000
+
+✓ Starting...
+✓ Ready in 484ms
+[NEXTAUTH] NEXTAUTH_URL = http://localhost:3000
+[NEXTAUTH] NEXTAUTH_SECRET_LEN = 52

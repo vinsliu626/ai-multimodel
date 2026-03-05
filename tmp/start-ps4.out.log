@@ -1,0 +1,20 @@
+
+> ai-multimodel@0.1.0 start
+> next start
+
+▲ Next.js 16.1.5
+- Local:         http://localhost:3000
+- Network:       http://169.254.83.107:3000
+
+✓ Starting...
+✓ Ready in 481ms
+[NEXTAUTH] NEXTAUTH_URL = http://localhost:3000
+[NEXTAUTH] NEXTAUTH_SECRET_LEN = 52
+[ai-note/start] hit { dbHead: 'postgresql://neondb_owner:npg_7bvn4XfuRI' }
+prisma:error 
+Invalid `prisma.aiNoteSession.create()` invocation:
+
+
+Can't reach database server at `ep-young-shadow-a47s4och.us-east-1.aws.neon.tech:5432`
+
+Please make sure your database server is running at `ep-young-shadow-a47s4och.us-east-1.aws.neon.tech:5432`.

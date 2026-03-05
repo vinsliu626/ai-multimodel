@@ -2,6 +2,8 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { isTransientPrismaConnectionError, withPrismaConnectionRetry } from "@/lib/prismaRetry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,18 +15,22 @@ export async function GET() {
 
     if (!userId) return NextResponse.json({ sessions: [] }, { status: 200 });
 
-    const { prisma } = await import("@/lib/prisma");
-
-    const sessions = await prisma.chatSession.findMany({
-      where: { userId },
-      orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
-      select: { id: true, title: true, pinned: true, createdAt: true, updatedAt: true },
-    });
+    const sessions = await withPrismaConnectionRetry(
+      () =>
+        prisma.chatSession.findMany({
+          where: { userId },
+          orderBy: [{ pinned: "desc" }, { updatedAt: "desc" }],
+          select: { id: true, title: true, pinned: true, createdAt: true, updatedAt: true },
+        }),
+      { maxRetries: 1, retryDelayMs: 120 }
+    );
 
     return NextResponse.json({ sessions }, { status: 200 });
-  } catch (e) {
-    console.error("[/api/chat/sessions] DB error:", e);
-    // ✅ 降级：永远返回 200 空列表，避免前端“断线感”
-    return NextResponse.json({ sessions: [] }, { status: 200 });
+  } catch (error) {
+    if (isTransientPrismaConnectionError(error)) {
+      return NextResponse.json({ error: "SERVICE_UNAVAILABLE" }, { status: 503 });
+    }
+    console.error("[/api/chat/sessions] error:", error);
+    return NextResponse.json({ error: "INTERNAL_ERROR" }, { status: 500 });
   }
 }

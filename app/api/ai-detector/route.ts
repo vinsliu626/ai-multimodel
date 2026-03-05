@@ -5,13 +5,24 @@ import { authOptions } from "@/lib/auth";
 
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
 import { addUsageEvent } from "@/lib/billing/usage";
+import { isTransientPrismaConnectionError, withPrismaConnectionRetry } from "@/lib/prismaRetry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-const DEFAULT_LOCAL_URL = "http://localhost:8000/detect";
-const PY_DETECTOR_URL = (process.env.PY_DETECTOR_URL?.trim() || DEFAULT_LOCAL_URL).trim();
+const DEFAULT_DETECTOR_BASE_URL = "http://127.0.0.1:8000";
+
+class HttpRouteError extends Error {
+  status: number;
+  code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
 
 // ---------- utils ----------
 function clamp(n: number, a: number, b: number) {
@@ -40,11 +51,66 @@ function pythonTimeoutMs(text: string) {
 }
 
 function isLocalUrl(url: string) {
-  return (
-    url.startsWith("http://127.0.0.1") ||
-    url.startsWith("http://localhost") ||
-    url.startsWith("http://0.0.0.0")
+  try {
+    const u = new URL(url);
+    return u.hostname === "127.0.0.1" || u.hostname === "localhost" || u.hostname === "0.0.0.0";
+  } catch {
+    return false;
+  }
+}
+
+function resolveDetectorUrl() {
+  const raw = (
+    process.env.DETECTOR_URL?.trim() ||
+    process.env.PY_DETECTOR_URL?.trim() ||
+    DEFAULT_DETECTOR_BASE_URL
+  ).trim();
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new HttpRouteError(
+      500,
+      "DETECTOR_URL_INVALID",
+      `Invalid DETECTOR_URL: "${raw}". Use a full URL like http://127.0.0.1:8000`
+    );
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new HttpRouteError(500, "DETECTOR_URL_INVALID", "DETECTOR_URL must start with http:// or https://");
+  }
+
+  if (parsed.pathname === "/" || parsed.pathname === "") {
+    parsed.pathname = "/detect";
+  }
+
+  return parsed.toString();
+}
+
+function detectorDownMessage(url: string) {
+  if (isLocalUrl(url)) {
+    return "Detector service not running. Start it with `npm run detector:dev`.";
+  }
+  return "Detector service is unavailable.";
+}
+
+function dbUnavailableMessage() {
+  return "Database is temporarily unavailable. Ensure Postgres is running and retry.";
+}
+
+function dbUnavailableResponse() {
+  return NextResponse.json(
+    { ok: false, error: "DB_UNAVAILABLE", message: dbUnavailableMessage() },
+    { status: 503 }
   );
+}
+
+function isConnectionRefused(error: any) {
+  const causeCode = String(error?.cause?.code ?? "").toUpperCase();
+  if (causeCode === "ECONNREFUSED") return true;
+  const msg = String(error?.message ?? "").toUpperCase();
+  return msg.includes("ECONNREFUSED");
 }
 
 function prettyCause(cause: any) {
@@ -58,7 +124,7 @@ function prettyCause(cause: any) {
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
 
   try {
     const res = await fetch(url, { ...init, signal: controller.signal });
@@ -72,7 +138,13 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
       name: e?.name,
       cause: prettyCause(e?.cause),
     });
-    throw e;
+    if (e?.name === "AbortError") {
+      throw new HttpRouteError(504, "DETECTOR_TIMEOUT", "Detector request timed out.");
+    }
+    if (isConnectionRefused(e)) {
+      throw new HttpRouteError(503, "DETECTOR_UNAVAILABLE", detectorDownMessage(url));
+    }
+    throw new HttpRouteError(502, "DETECTOR_FETCH_FAILED", "Failed to reach detector service.");
   } finally {
     clearTimeout(timer);
   }
@@ -238,14 +310,15 @@ type PyDetectResponse = {
 };
 
 async function callPythonDetector(text: string) {
+  const detectorUrl = resolveDetectorUrl();
   const timeoutMs = pythonTimeoutMs(text);
 
-  if (!process.env.PY_DETECTOR_URL && PY_DETECTOR_URL === DEFAULT_LOCAL_URL) {
-    console.warn("[ai-detector] PY_DETECTOR_URL not set, using local default:", PY_DETECTOR_URL);
+  if (!process.env.DETECTOR_URL && !process.env.PY_DETECTOR_URL && isLocalUrl(detectorUrl)) {
+    console.warn("[ai-detector] DETECTOR_URL not set, using local default:", detectorUrl);
   }
 
   const res = await fetchWithTimeout(
-    PY_DETECTOR_URL,
+    detectorUrl,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -257,15 +330,15 @@ async function callPythonDetector(text: string) {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Python detector HTTP ${res.status}: ${body.slice(0, 250)}`);
+    throw new HttpRouteError(502, "DETECTOR_HTTP_ERROR", `Detector HTTP ${res.status}: ${body.slice(0, 250)}`);
   }
 
   const data = (await res.json()) as PyDetectResponse;
   if (!data?.ok || !data?.result?.[0]) {
     const maybeErr = (data as any)?.error;
-    throw new Error(maybeErr ? String(maybeErr) : "Python detector invalid response.");
+    throw new HttpRouteError(502, "DETECTOR_INVALID_RESPONSE", maybeErr ? String(maybeErr) : "Detector invalid response.");
   }
-  return data;
+  return { data, detectorUrl, timeoutMs };
 }
 
 // ---------- route ----------
@@ -291,10 +364,16 @@ export async function POST(req: Request) {
     }
 
     try {
-      await assertQuotaOrThrow({ userId, action: "detector", amount: words });
+      await withPrismaConnectionRetry(
+        () => assertQuotaOrThrow({ userId, action: "detector", amount: words }),
+        { maxRetries: 2, retryDelayMs: 200 }
+      );
     } catch (e) {
       if (e instanceof QuotaError) {
         return NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: 429 });
+      }
+      if (isTransientPrismaConnectionError(e)) {
+        return dbUnavailableResponse();
       }
       throw e;
     }
@@ -310,7 +389,7 @@ export async function POST(req: Request) {
     const highlights = findPhraseHighlights(text);
 
     const py = await callPythonDetector(text);
-    const metrics = py.result[0];
+    const metrics = py.data.result[0];
     const aiOverallRaw = Number(metrics?.["AI overall"]);
 
     if (!Number.isFinite(aiOverallRaw)) {
@@ -321,7 +400,10 @@ export async function POST(req: Request) {
     const humanAiRefined = 0;
     const humanWritten = clamp(100 - aiGenerated, 0, 100);
 
-    await addUsageEvent(userId, "detector_words", words).catch((err) =>
+    await withPrismaConnectionRetry(() => addUsageEvent(userId, "detector_words", words), {
+      maxRetries: 2,
+      retryDelayMs: 200,
+    }).catch((err) =>
       console.error("[detector] usageEvent write failed:", err)
     );
 
@@ -333,20 +415,26 @@ export async function POST(req: Request) {
       sentences: sentenceResults,
       highlights,
       python: {
-        url: PY_DETECTOR_URL,
-        message: py.result[1],
+        url: py.detectorUrl,
+        message: py.data.result[1],
         metrics,
       },
       meta: {
         words,
-        timeoutMs: pythonTimeoutMs(text),
+        timeoutMs: py.timeoutMs,
         provider: "python-gpt2ppl-ai-overall + local-heuristic-explanations",
       },
     });
   } catch (e: any) {
-    const isAbort = e?.name === "AbortError";
-    const hint = isLocalUrl(PY_DETECTOR_URL) ? " (Tip: make sure local Python detector runs on :8000)" : "";
-    const msg = isAbort ? `Python detector request timed out.${hint}` : `${e?.message ?? "Unknown error."}${hint}`;
-    return NextResponse.json({ ok: false, error: msg }, { status: 500 });
+    if (e instanceof HttpRouteError) {
+      return NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: e.status });
+    }
+    if (isTransientPrismaConnectionError(e)) {
+      return dbUnavailableResponse();
+    }
+    return NextResponse.json(
+      { ok: false, error: "INTERNAL_ERROR", message: e?.message ?? "Unknown error." },
+      { status: 500 }
+    );
   }
 }

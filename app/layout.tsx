@@ -1,20 +1,11 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+// Fonts removed to avoid build-time network fetches in production tests.
 import "./globals.css";
 import Providers from "./providers"; // ✅
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
-  title: "NeuroDesk",
+  title: "NexusDesk",
   description: "AI notes, AI detection, multi-model workspace",
 };
 
@@ -31,4 +22,3 @@ export default function RootLayout({
     </html>
   );
 }
-

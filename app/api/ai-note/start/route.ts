@@ -1,9 +1,10 @@
 // app/api/ai-note/start/route.ts
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { randomUUID } from "crypto";
+import { devBypassUserId } from "@/lib/auth/devBypass";
+import { getRouteSessionUser } from "@/lib/auth/routeSession";
+import type { NextRequest } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,15 +22,32 @@ function dbHead() {
   return String(process.env.DATABASE_URL || "").slice(0, 40);
 }
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   try {
     // ✅ 打印一下到底有没有进来
     console.log("[ai-note/start] hit", { dbHead: dbHead() });
 
-    const session = await getServerSession(authOptions);
-    const userId = (session as any)?.user?.id as string | undefined;
+    const sessionUser = await getRouteSessionUser(req);
+    const userId = sessionUser?.id ?? devBypassUserId();
 
-    if (!userId) return bad("AUTH_REQUIRED", 401);
+    if (!userId) {
+      if (process.env.NODE_ENV !== "production" || process.env.AI_NOTE_DEBUG_AUTH === "true") {
+        let hasCookieHeader = false;
+        try {
+          const { headers } = await import("next/headers");
+          const reqHeaders = await headers();
+          hasCookieHeader = !!reqHeaders.get("cookie");
+        } catch {
+          hasCookieHeader = false;
+        }
+        console.log("[ai-note/start][auth-check]", {
+          hasCookieHeader,
+          hasUserId: !!sessionUser?.id,
+          hasEmail: !!sessionUser?.email,
+        });
+      }
+      return bad("AUTH_REQUIRED", 401);
+    }
 
     const noteId = randomUUID();
 

@@ -4,6 +4,10 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { Buffer } from "node:buffer";
+import { devBypassUserId } from "@/lib/auth/devBypass";
+import fs from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +16,7 @@ type ApiErr =
   | "AUTH_REQUIRED"
   | "UNSUPPORTED_CONTENT_TYPE"
   | "MISSING_NOTE_ID"
+  | "INVALID_NOTE_ID"
   | "MISSING_CHUNK_INDEX"
   | "INVALID_CHUNK_INDEX"
   | "MISSING_DATA"
@@ -70,10 +75,35 @@ function parseChunkIndex(v: any) {
   return { ok: true as const, value: n, raw: s };
 }
 
+function isValidNoteId(noteId: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(noteId);
+}
+
+function isOfflineMode() {
+  const devFlag = String(process.env.AI_NOTE_DEV_OFFLINE_MODE || "").trim();
+  const testFlag = String(process.env.AI_NOTE_TEST_MODE || "").trim();
+  const dev = process.env.NODE_ENV !== "production" && devFlag === "true";
+  return dev || testFlag === "true";
+}
+
+function offlineChunkDir(noteId: string) {
+  return path.join(os.tmpdir(), "ai-note-offline", noteId, "chunks");
+}
+
+async function writeOfflineChunk(noteId: string, chunkIndex: number, dataBuf: Buffer) {
+  const dir = offlineChunkDir(noteId);
+  await fs.mkdir(dir, { recursive: true });
+  const name = `chunk-${String(chunkIndex).padStart(3, "0")}.webm`;
+  const filePath = path.join(dir, name);
+  await fs.writeFile(filePath, dataBuf);
+  const files = (await fs.readdir(dir)).filter((n) => n.startsWith("chunk-") && n.endsWith(".webm"));
+  return files.length;
+}
+
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
-    const userId = (session as any)?.user?.id as string | undefined;
+    const userId = ((session as any)?.user?.id as string | undefined) ?? devBypassUserId();
     if (!userId) return bad("AUTH_REQUIRED", 401);
 
     const ct = (req.headers.get("content-type") || "").toLowerCase();
@@ -128,6 +158,7 @@ export async function POST(req: Request) {
     }
 
     if (!noteId) return bad("MISSING_NOTE_ID", 400);
+    if (!isValidNoteId(noteId)) return bad("INVALID_NOTE_ID", 400, "noteId must be a UUID.");
     if (chunkIndex === null) return bad("MISSING_CHUNK_INDEX", 400);
     if (chunkIndex < 0) return bad("INVALID_CHUNK_INDEX", 400);
     if (!dataBuf) return bad("MISSING_DATA", 400);
@@ -156,14 +187,19 @@ export async function POST(req: Request) {
       update: { userId } as any,
     });
 
-    // ✅ 写 chunk
-    await prisma.aiNoteChunk.upsert({
-      where: { noteId_chunkIndex: { noteId, chunkIndex } },
-      update: { mime, size: dataBuf.length, data: dataBuf } as any,
-      create: { noteId, chunkIndex, mime, size: dataBuf.length, data: dataBuf } as any,
-    });
+    let chunksNow = 0;
+    if (isOfflineMode()) {
+      chunksNow = await writeOfflineChunk(noteId, chunkIndex, dataBuf);
+    } else {
+      // ✅ 写 chunk
+      await prisma.aiNoteChunk.upsert({
+        where: { noteId_chunkIndex: { noteId, chunkIndex } },
+        update: { mime, size: dataBuf.length, data: dataBuf } as any,
+        create: { noteId, chunkIndex, mime, size: dataBuf.length, data: dataBuf } as any,
+      });
 
-    const chunksNow = await prisma.aiNoteChunk.count({ where: { noteId } });
+      chunksNow = await prisma.aiNoteChunk.count({ where: { noteId } });
+    }
 
     return NextResponse.json({
       ok: true,

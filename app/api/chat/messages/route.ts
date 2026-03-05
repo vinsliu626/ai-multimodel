@@ -1,24 +1,34 @@
 // app/api/chat/messages/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
 
-// 只告诉 Next：这是 Node 运行时 + 动态接口
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET(request: NextRequest) {
   try {
-    const sessionId = request.nextUrl.searchParams.get("sessionId");
-
-    if (!sessionId) {
-      return NextResponse.json(
-        { error: "缺少 sessionId 参数" },
-        { status: 400 }
-      );
+    const session = await getServerSession(authOptions);
+    const userId = (session as { user?: { id?: string } } | null)?.user?.id;
+    if (!userId) {
+      return NextResponse.json({ error: "AUTH_REQUIRED" }, { status: 401 });
     }
 
-    // ⬇️⬇️ 关键：在这里才动态加载 prisma，而不是文件顶部静态 import
+    const sessionId = request.nextUrl.searchParams.get("sessionId");
+    if (!sessionId) {
+      return NextResponse.json({ error: "MISSING_SESSION_ID" }, { status: 400 });
+    }
+
     const { prisma } = await import("@/lib/prisma");
+
+    const sessionRow = await prisma.chatSession.findFirst({
+      where: { id: sessionId, userId },
+      select: { id: true },
+    });
+    if (!sessionRow) {
+      return NextResponse.json({ error: "SESSION_NOT_FOUND" }, { status: 404 });
+    }
 
     const messages = await prisma.chatMessage.findMany({
       where: { chatSessionId: sessionId },
@@ -27,11 +37,9 @@ export async function GET(request: NextRequest) {
     });
 
     return NextResponse.json({ messages }, { status: 200 });
-  } catch (err: any) {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "unknown error";
     console.error("[/api/chat/messages] Error:", err);
-    return NextResponse.json(
-      { error: err?.message ?? "unknown error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

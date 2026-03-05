@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { devBypassUserId } from "@/lib/auth/devBypass";
 
 import fssync from "node:fs";
 import fs from "node:fs/promises";
@@ -12,6 +13,7 @@ import { spawn } from "node:child_process";
 import { Buffer } from "node:buffer";
 
 import { transcribeAudioToText } from "@/lib/asr/transcribe";
+import { callGroqTranscribe } from "@/lib/ai/groq";
 import { runAiNotePipeline } from "@/lib/aiNote/pipeline";
 
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
@@ -105,6 +107,110 @@ function run(cmd: string, args: string[], cwd?: string) {
       else reject(new Error(`ffmpeg failed (${code}): ${(err || out).slice(0, 9000)}`));
     });
   });
+}
+
+function isOfflineMode() {
+  const devFlag = String(process.env.AI_NOTE_DEV_OFFLINE_MODE || "").trim();
+  const testFlag = String(process.env.AI_NOTE_TEST_MODE || "").trim();
+  const dev = process.env.NODE_ENV !== "production" && devFlag === "true";
+  return dev || testFlag === "true";
+}
+
+async function getOfflineChunkFiles(noteId: string) {
+  const dir = path.join(os.tmpdir(), "ai-note-offline", noteId, "chunks");
+  let names: string[] = [];
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return [];
+  }
+  const items = names
+    .filter((n) => n.startsWith("chunk-") && n.endsWith(".webm"))
+    .map((n) => {
+      const m = n.match(/chunk-(\d+)\.webm$/);
+      if (!m) return null;
+      return { index: Number.parseInt(m[1], 10), name: n, path: path.join(dir, n) };
+    })
+    .filter(Boolean) as { index: number; name: string; path: string }[];
+  items.sort((a, b) => a.index - b.index);
+  return items;
+}
+
+function isRetryableStatus(code?: number) {
+  return code === 429 || code === 502 || code === 503 || code === 504;
+}
+
+function parseHttpStatus(msg: string): number | null {
+  const m = msg.match(/HTTP error:\s*(\d{3})\b/i);
+  if (m) return Number.parseInt(m[1], 10);
+  const m2 = msg.match(/\b(\d{3})\b/);
+  if (m2) return Number.parseInt(m2[1], 10);
+  return null;
+}
+
+async function withRetry<T>(fn: () => Promise<T>, label: string, maxTry = 4) {
+  let lastErr: any = null;
+  for (let attempt = 1; attempt <= maxTry; attempt++) {
+    try {
+      return await fn();
+    } catch (e: any) {
+      lastErr = e;
+      const msg = String(e?.message || e);
+      const status = parseHttpStatus(msg);
+      const retryable = isRetryableStatus(status ?? undefined);
+      if (!retryable || attempt === maxTry) break;
+      const backoff = Math.min(30000, 500 * Math.pow(2, attempt - 1));
+      console.warn(`[ai-note/finalize] retry ${label} attempt=${attempt} backoff=${backoff}ms status=${status ?? "unknown"}`);
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr;
+}
+
+async function transcribeWithFallback(
+  buf: Buffer,
+  fname: string,
+  asrTimeoutMs: number
+): Promise<string> {
+  if (isOfflineMode()) {
+    return `[offline transcript] ${fname}`;
+  }
+
+  // 1) External ASR (ASR_URL)
+  try {
+    return await withRetry(
+      async () =>
+        await withTimeout(
+          transcribeAudioToText(new Blob([new Uint8Array(buf)], { type: "audio/wav" }) as any, {
+            filename: fname,
+            mime: "audio/wav",
+          } as any),
+          asrTimeoutMs,
+          `asr_external_${fname}`
+        ),
+      `asr_external_${fname}`
+    );
+  } catch (e) {
+    // 2) Groq fallback
+    const groqKey = process.env.GROQ_API_KEY;
+    if (!groqKey) throw e;
+    const out = await withRetry(
+      async () =>
+        await withTimeout(
+          callGroqTranscribe({
+            apiKey: groqKey,
+            audio: buf,
+            mime: "audio/wav",
+            filename: fname,
+            model: process.env.AI_NOTE_ASR_MODEL || "whisper-large-v3",
+          }),
+          asrTimeoutMs,
+          `asr_groq_${fname}`
+        ),
+      `asr_groq_${fname}`
+    );
+    return String(out?.text || "").trim();
+  }
 }
 
 async function readBodyNoteId(req: Request) {
@@ -217,7 +323,7 @@ export async function POST(req: Request) {
 
   try {
     const session = await getServerSession(authOptions);
-    const userId = (session as any)?.user?.id as string | undefined;
+    const userId = ((session as any)?.user?.id as string | undefined) ?? devBypassUserId();
     if (!userId) return bad("AUTH_REQUIRED", 401);
 
     if (!noteId) return bad("MISSING_NOTE_ID", 400);
@@ -261,17 +367,27 @@ export async function POST(req: Request) {
     try {
       // ---------- STAGE: PREP ----------
       if (job.stage === "prep") {
-        const chunks = await prisma.aiNoteChunk.findMany({
-          where: { noteId },
-          orderBy: { chunkIndex: "asc" },
-          select: { chunkIndex: true },
-        });
+        if (isOfflineMode()) {
+          const files = await getOfflineChunkFiles(noteId);
+          if (files.length === 0) return bad("NO_CHUNKS", 409, "No chunks uploaded.");
+          for (let i = 0; i < files.length; i++) {
+            if (files[i].index !== i) {
+              return bad("CHUNKS_NOT_CONTIGUOUS", 400, `Chunks not contiguous. Expect ${i}, got ${files[i].index}`);
+            }
+          }
+        } else {
+          const chunks = await prisma.aiNoteChunk.findMany({
+            where: { noteId },
+            orderBy: { chunkIndex: "asc" },
+            select: { chunkIndex: true },
+          });
 
-        if (chunks.length === 0) return bad("NO_CHUNKS", 409, "No chunks uploaded.");
+          if (chunks.length === 0) return bad("NO_CHUNKS", 409, "No chunks uploaded.");
 
-        for (let i = 0; i < chunks.length; i++) {
-          if (chunks[i].chunkIndex !== i) {
-            return bad("CHUNKS_NOT_CONTIGUOUS", 400, `Chunks not contiguous. Expect ${i}, got ${chunks[i].chunkIndex}`);
+          for (let i = 0; i < chunks.length; i++) {
+            if (chunks[i].chunkIndex !== i) {
+              return bad("CHUNKS_NOT_CONTIGUOUS", 400, `Chunks not contiguous. Expect ${i}, got ${chunks[i].chunkIndex}`);
+            }
           }
         }
 
@@ -286,6 +402,28 @@ export async function POST(req: Request) {
       // ---------- STAGE: ASR ----------
       if (job.stage === "asr") {
         await refreshJobLock(noteId, lock.lockId);
+
+        if (isOfflineMode()) {
+          const files = await getOfflineChunkFiles(noteId);
+          if (files.length === 0) return bad("NO_CHUNKS", 409);
+
+          await prisma.aiNoteJob.update({ where: { noteId }, data: { segmentsTotal: files.length } });
+
+          for (const f of files) {
+            await prisma.aiNoteTranscript.upsert({
+              where: { noteId_chunkIndex: { noteId, chunkIndex: f.index } },
+              update: { text: `[offline transcript] ${f.name}` },
+              create: { noteId, chunkIndex: f.index, text: `[offline transcript] ${f.name}` },
+            });
+          }
+
+          await prisma.aiNoteJob.update({
+            where: { noteId },
+            data: { stage: "llm", progress: 60, error: null, asrNextIndex: files.length },
+          });
+
+          return NextResponse.json({ ok: true, stage: "llm", progress: 60, noteId, segmentsTotal: files.length });
+        }
 
         const ffmpegBin = getFfmpegBin();
         await ensureExecutable(ffmpegBin);
@@ -353,13 +491,8 @@ export async function POST(req: Request) {
           const fname = files[i];
           const p = path.join(workDir, fname);
           const buf = await fs.readFile(p);
-          const blob = new Blob([new Uint8Array(buf)], { type: "audio/wav" });
 
-          const text = await withTimeout(
-            transcribeAudioToText(blob as any, { filename: fname, mime: "audio/wav" } as any),
-            asrTimeoutMs,
-            `asr_${fname}`
-          ).catch((e) => {
+          const text = await transcribeWithFallback(buf, fname, asrTimeoutMs).catch((e) => {
             throw Object.assign(new Error(String((e as any)?.message || e)), { _code: "ASR_FAILED" });
           });
 
@@ -403,6 +536,49 @@ export async function POST(req: Request) {
 
         const transcriptAll = rows.map((r) => r.text || "").filter(Boolean).join("\n").trim();
         if (!transcriptAll) return bad("ASR_FAILED", 422, "Transcript is empty.");
+
+        if (isOfflineMode()) {
+          const preview = transcriptAll.slice(0, 2000);
+          const final = [
+            "# Notes (offline/test)",
+            "",
+            "## TL;DR",
+            "- Offline/test mode enabled. ASR/LLM network calls were bypassed.",
+            "- Transcript is generated locally as placeholders.",
+            "",
+            "## Summary",
+            `- Segments: ${rows.length}`,
+            `- Transcript chars: ${transcriptAll.length}`,
+            "",
+            "## Transcript Preview (first 2000 chars)",
+            "```",
+            preview || "(empty)",
+            "```",
+          ].join("\n");
+
+          await prisma.aiNoteJob.update({
+            where: { noteId },
+            data: {
+              stage: "done",
+              progress: 100,
+              noteMarkdown: final,
+              secondsBilled: 0,
+              error: null,
+            } as any,
+          });
+
+          await prisma.aiNoteChunk.deleteMany({ where: { noteId } }).catch(() => {});
+
+          return NextResponse.json({
+            ok: true,
+            stage: "done",
+            progress: 100,
+            noteId,
+            note: final,
+            secondsBilled: 0,
+            elapsedMs: Date.now() - t0,
+          });
+        }
 
         const seconds = estimateSecondsByTranscript(transcriptAll);
         try {

@@ -1,0 +1,1 @@
+﻿{"text":"This request validates the local AI detector endpoint in development with enough words to pass the minimum threshold and trigger detector and database logic. The response should be successful when both detector and Postgres are reachable and authentication cookie is valid."}

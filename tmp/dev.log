@@ -1,0 +1,63 @@
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of C:\Users\gcswz\package-lock.json as the root directory.
+ To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+ Detected additional lockfiles: 
+   * C:\Users\gcswz\Desktop\AI\ai-multimodel\package-lock.json
+
+▲ Next.js 16.1.5 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.0.131:3000
+- Environments: .env.local, .env
+
+✓ Starting...
+✓ Ready in 677ms
+ GET /chat 200 in 320ms (compile: 181ms, render: 139ms)
+ GET /api/auth/session 200 in 670ms (compile: 632ms, render: 38ms)
+ GET /api/chat/sessions 200 in 1899ms (compile: 28ms, render: 1871ms)
+[billing.status] {
+  userId: 'gcswzh@gmail.com',
+  plan: 'basic',
+  stripeStatus: null,
+  daysLeft: null,
+  entitled: true,
+  unlimited: false,
+  unlimitedSource: null
+}
+ GET /api/billing/status 200 in 2.4s (compile: 86ms, render: 2.3s)
+[ai-note/start] hit { dbHead: 'postgresql://neondb_owner:npg_7bvn4XfuRI' }
+ POST /api/ai-note/start 200 in 274ms (compile: 28ms, render: 246ms)
+ POST /api/ai-note/chunk 200 in 354ms (compile: 94ms, render: 260ms)
+ POST /api/ai-note/chunk 200 in 166ms (compile: 1639µs, render: 164ms)
+ POST /api/ai-note/chunk 200 in 318ms (compile: 1641µs, render: 317ms)
+ POST /api/ai-note/chunk 200 in 231ms (compile: 1606µs, render: 229ms)
+ POST /api/ai-note/chunk 200 in 287ms (compile: 1885µs, render: 285ms)
+ POST /api/ai-note/chunk 200 in 313ms (compile: 1502µs, render: 312ms)
+[ai-note/finalize] offline { enabled: true, nodeEnv: 'development', flag: 'true' }
+ POST /api/ai-note/finalize 200 in 1811ms (compile: 69ms, render: 1742ms)
+[ai-note/finalize] offline { enabled: true, nodeEnv: 'development', flag: 'true' }
+ POST /api/ai-note/finalize 200 in 1805ms (compile: 3ms, render: 1802ms)
+[ai-note/finalize] offline { enabled: true, nodeEnv: 'development', flag: 'true' }
+ POST /api/ai-note/finalize 200 in 1327ms (compile: 3ms, render: 1324ms)
+[ai-note/start] hit { dbHead: 'postgresql://neondb_owner:npg_7bvn4XfuRI' }
+ POST /api/ai-note/start 200 in 147ms (compile: 1441µs, render: 146ms)
+ POST /api/ai-note/chunk 200 in 181ms (compile: 1557µs, render: 180ms)
+ POST /api/ai-note/chunk 200 in 167ms (compile: 1490µs, render: 165ms)
+ POST /api/ai-note/chunk 200 in 177ms (compile: 1577µs, render: 176ms)
+ POST /api/ai-note/chunk 200 in 170ms (compile: 1526µs, render: 168ms)
+ POST /api/ai-note/chunk 200 in 159ms (compile: 1430µs, render: 158ms)
+ POST /api/ai-note/chunk 200 in 161ms (compile: 1430µs, render: 159ms)
+ POST /api/ai-note/chunk 200 in 181ms (compile: 1762µs, render: 179ms)
+ POST /api/ai-note/chunk 200 in 172ms (compile: 1512µs, render: 171ms)
+ POST /api/ai-note/chunk 200 in 155ms (compile: 1471µs, render: 154ms)
+[ai-note/finalize] offline { enabled: true, nodeEnv: 'development', flag: 'true' }
+ POST /api/ai-note/finalize 200 in 847ms (compile: 1384µs, render: 845ms)
+[ai-note/finalize] offline { enabled: true, nodeEnv: 'development', flag: 'true' }
+ POST /api/ai-note/finalize 200 in 1711ms (compile: 4ms, render: 1707ms)
+[ai-note/finalize] offline { enabled: true, nodeEnv: 'development', flag: 'true' }
+ POST /api/ai-note/finalize 200 in 1182ms (compile: 3ms, render: 1179ms)
+prisma:error Error in PostgreSQL connection: Error { kind: Db, cause: Some(DbError { severity: "FATAL", parsed_severity: Some(Fatal), code: SqlState(E57P01), message: "terminating connection due to administrator command", detail: None, hint: None, position: None, where_: None, schema: None, table: None, column: None, datatype: None, constraint: None, file: Some("postgres.c"), line: Some(3318), routine: Some("ProcessInterrupts") }) }
+prisma:error Error in PostgreSQL connection: Error { kind: Db, cause: Some(DbError { severity: "FATAL", parsed_severity: Some(Fatal), code: SqlState(E57P01), message: "terminating connection due to administrator command", detail: None, hint: None, position: None, where_: None, schema: None, table: None, column: None, datatype: None, constraint: None, file: Some("postgres.c"), line: Some(3318), routine: Some("ProcessInterrupts") }) }
+prisma:error Error in PostgreSQL connection: Error { kind: Db, cause: Some(DbError { severity: "FATAL", parsed_severity: Some(Fatal), code: SqlState(E57P01), message: "terminating connection due to administrator command", detail: None, hint: None, position: None, where_: None, schema: None, table: None, column: None, datatype: None, constraint: None, file: Some("postgres.c"), line: Some(3318), routine: Some("ProcessInterrupts") }) }
+prisma:error Error in PostgreSQL connection: Error { kind: Db, cause: Some(DbError { severity: "FATAL", parsed_severity: Some(Fatal), code: SqlState(E57P01), message: "terminating connection due to administrator command", detail: None, hint: None, position: None, where_: None, schema: None, table: None, column: None, datatype: None, constraint: None, file: Some("postgres.c"), line: Some(3318), routine: Some("ProcessInterrupts") }) }
+[?25h

@@ -1,0 +1,4 @@
+
+> ai-multimodel@0.1.0 detector:dev
+> python services/detector/dev_server.py --port 8000
+

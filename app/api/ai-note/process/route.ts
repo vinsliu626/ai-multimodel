@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { devBypassUserId } from "@/lib/auth/devBypass";
 
 import { callGroqTranscribe, callGroqChat } from "@/lib/ai/groq";
 import { callOpenRouterChat, shouldFallback, type ChatMessage } from "@/lib/ai/openrouter";
@@ -115,7 +116,7 @@ function systemPartSummarizer(isZh: boolean) {
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
-    const userId = (session as any)?.user?.id as string | undefined;
+    const userId = ((session as any)?.user?.id as string | undefined) ?? devBypassUserId();
     if (!userId) return bad("AUTH_REQUIRED", 401);
 
     const body = (await req.json().catch(() => null)) as null | { noteId?: string; lang?: "zh" | "en" };

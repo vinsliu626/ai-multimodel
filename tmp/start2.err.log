@@ -1,0 +1,14 @@
+[ai-note/start] ERROR: Error [PrismaClientInitializationError]: 
+Invalid `prisma.aiNoteSession.create()` invocation:
+
+
+Can't reach database server at `ep-young-shadow-a47s4och.us-east-1.aws.neon.tech:5432`
+
+Please make sure your database server is running at `ep-young-shadow-a47s4och.us-east-1.aws.neon.tech:5432`.
+    at async T (C:\Users\gcswz\Desktop\AI\ai-multimodel\.next\server\chunks\[root-of-the-server]__513af1e2._.js:1:2620)
+    at async d (C:\Users\gcswz\Desktop\AI\ai-multimodel\.next\server\chunks\[root-of-the-server]__513af1e2._.js:1:5894)
+    at async l (C:\Users\gcswz\Desktop\AI\ai-multimodel\.next\server\chunks\[root-of-the-server]__513af1e2._.js:1:6935) {
+  clientVersion: '6.12.0',
+  errorCode: undefined,
+  retryable: undefined
+}

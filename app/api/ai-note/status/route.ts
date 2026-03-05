@@ -3,13 +3,14 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { devBypassUserId } from "@/lib/auth/devBypass";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
-  const userId = (session as any)?.user?.id as string | undefined;
+  const userId = ((session as any)?.user?.id as string | undefined) ?? devBypassUserId();
   if (!userId) return NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 });
 
   let body: any = null;
