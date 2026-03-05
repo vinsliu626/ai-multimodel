@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { createHash, randomUUID } from "crypto";
 
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
 import { addUsageEvent } from "@/lib/billing/usage";
@@ -12,15 +13,68 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const DEFAULT_DETECTOR_BASE_URL = "http://127.0.0.1:8000";
+const RETRY_MAX_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 120;
+const RETRY_TOTAL_BUDGET_MS = 1500;
+const RETRY_ATTEMPT_TIMEOUT_MS = 800;
+const DETECTOR_CACHE_TTL_MS = 30_000;
+const DETECTOR_MODEL_VERSION = "python-gpt2ppl-ai-overall + local-heuristic-explanations@v1";
+
+let hasHandledAiDetectorRequest = false;
+
+type DetectorSuccessPayload = {
+  ok: true;
+  aiGenerated: number;
+  humanAiRefined: number;
+  humanWritten: number;
+  sentences: Array<{
+    text: string;
+    start: number;
+    end: number;
+    aiScore: number;
+    reasons: string[];
+  }>;
+  highlights: Highlight[];
+  python: {
+    url: string;
+    message: string;
+    metrics: Record<string, any>;
+  };
+  meta: {
+    words: number;
+    timeoutMs: number;
+    provider: string;
+  };
+};
+
+type DetectorCacheEntry = {
+  expiresAt: number;
+  payload: DetectorSuccessPayload;
+};
+
+const detectorResultCache = new Map<string, DetectorCacheEntry>();
 
 class HttpRouteError extends Error {
   status: number;
   code: string;
+  upstreamStatus?: number;
+  errorCode?: string;
+  transient?: boolean;
+  retryCount?: number;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    opts?: { upstreamStatus?: number; errorCode?: string; transient?: boolean; retryCount?: number }
+  ) {
     super(message);
     this.status = status;
     this.code = code;
+    this.upstreamStatus = opts?.upstreamStatus;
+    this.errorCode = opts?.errorCode;
+    this.transient = opts?.transient;
+    this.retryCount = opts?.retryCount;
   }
 }
 
@@ -113,13 +167,58 @@ function isConnectionRefused(error: any) {
   return msg.includes("ECONNREFUSED");
 }
 
-function prettyCause(cause: any) {
-  if (!cause) return null;
-  const picked: any = {};
-  for (const k of ["code", "errno", "syscall", "address", "port", "message"]) {
-    if (cause?.[k] != null) picked[k] = cause[k];
-  }
-  return Object.keys(picked).length ? picked : String(cause);
+function normalizeErrorCode(error: any) {
+  const causeCode = String(error?.cause?.code ?? "").toUpperCase();
+  if (causeCode) return causeCode;
+  const ownCode = String(error?.code ?? "").toUpperCase();
+  if (ownCode) return ownCode;
+  const msg = String(error?.message ?? "").toUpperCase();
+  if (msg.includes("SOCKET HANG UP")) return "SOCKET_HANG_UP";
+  if (msg.includes("ECONNRESET")) return "ECONNRESET";
+  if (msg.includes("ETIMEDOUT")) return "ETIMEDOUT";
+  if (msg.includes("UND_ERR_CONNECT_TIMEOUT")) return "UND_ERR_CONNECT_TIMEOUT";
+  return "";
+}
+
+function isTransientUpstreamStatus(status: number) {
+  return status === 502 || status === 503 || status === 504;
+}
+
+function isTransientErrorCode(code: string) {
+  const normalized = code.toUpperCase();
+  return (
+    normalized === "ECONNRESET" ||
+    normalized === "ETIMEDOUT" ||
+    normalized === "UND_ERR_CONNECT_TIMEOUT" ||
+    normalized === "SOCKET_HANG_UP"
+  );
+}
+
+function cacheKeyForText(text: string) {
+  const hash = createHash("sha256").update(text).digest("hex");
+  return `${DETECTOR_MODEL_VERSION}:${hash}`;
+}
+
+function readDetectorCache(key: string) {
+  const entry = detectorResultCache.get(key);
+  if (!entry) return { fresh: null as DetectorSuccessPayload | null, stale: null as DetectorSuccessPayload | null };
+  const now = Date.now();
+  return {
+    fresh: entry.expiresAt > now ? entry.payload : null,
+    stale: entry.payload,
+  };
+}
+
+function writeDetectorCache(key: string, payload: DetectorSuccessPayload) {
+  detectorResultCache.set(key, { payload, expiresAt: Date.now() + DETECTOR_CACHE_TTL_MS });
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryJitterMs() {
+  return Math.floor(Math.random() * 80);
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
@@ -130,21 +229,26 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
     const res = await fetch(url, { ...init, signal: controller.signal });
     return res;
   } catch (e: any) {
-    console.error("[ai-detector] fetch failed", {
-      url,
-      timeoutMs,
-      isLocal: isLocalUrl(url),
-      message: e?.message,
-      name: e?.name,
-      cause: prettyCause(e?.cause),
-    });
     if (e?.name === "AbortError") {
-      throw new HttpRouteError(504, "DETECTOR_TIMEOUT", "Detector request timed out.");
+      throw new HttpRouteError(504, "DETECTOR_TIMEOUT", "Detector request timed out.", {
+        upstreamStatus: 504,
+        errorCode: "ABORT_TIMEOUT",
+        transient: true,
+      });
     }
     if (isConnectionRefused(e)) {
-      throw new HttpRouteError(503, "DETECTOR_UNAVAILABLE", detectorDownMessage(url));
+      throw new HttpRouteError(503, "DETECTOR_UNAVAILABLE", detectorDownMessage(url), {
+        upstreamStatus: 503,
+        errorCode: "ECONNREFUSED",
+        transient: true,
+      });
     }
-    throw new HttpRouteError(502, "DETECTOR_FETCH_FAILED", "Failed to reach detector service.");
+    const errorCode = normalizeErrorCode(e);
+    throw new HttpRouteError(502, "DETECTOR_FETCH_FAILED", "Failed to reach detector service.", {
+      upstreamStatus: 502,
+      errorCode: errorCode || undefined,
+      transient: isTransientErrorCode(errorCode),
+    });
   } finally {
     clearTimeout(timer);
   }
@@ -309,9 +413,14 @@ type PyDetectResponse = {
   ];
 };
 
-async function callPythonDetector(text: string) {
+type DetectorAttemptMetrics = {
+  retries: number;
+  upstreamStatus: number | null;
+  errorCode: string | null;
+};
+
+async function callPythonDetectorOnce(text: string, timeoutMs: number) {
   const detectorUrl = resolveDetectorUrl();
-  const timeoutMs = pythonTimeoutMs(text);
 
   if (!process.env.DETECTOR_URL && !process.env.PY_DETECTOR_URL && isLocalUrl(detectorUrl)) {
     console.warn("[ai-detector] DETECTOR_URL not set, using local default:", detectorUrl);
@@ -330,53 +439,173 @@ async function callPythonDetector(text: string) {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new HttpRouteError(502, "DETECTOR_HTTP_ERROR", `Detector HTTP ${res.status}: ${body.slice(0, 250)}`);
+    throw new HttpRouteError(502, "DETECTOR_HTTP_ERROR", `Detector HTTP ${res.status}: ${body.slice(0, 250)}`, {
+      upstreamStatus: res.status,
+      transient: isTransientUpstreamStatus(res.status),
+      errorCode: `HTTP_${res.status}`,
+    });
   }
 
   const data = (await res.json()) as PyDetectResponse;
   if (!data?.ok || !data?.result?.[0]) {
     const maybeErr = (data as any)?.error;
-    throw new HttpRouteError(502, "DETECTOR_INVALID_RESPONSE", maybeErr ? String(maybeErr) : "Detector invalid response.");
+    throw new HttpRouteError(
+      502,
+      "DETECTOR_INVALID_RESPONSE",
+      maybeErr ? String(maybeErr) : "Detector invalid response.",
+      { upstreamStatus: 502, transient: false, errorCode: "INVALID_RESPONSE" }
+    );
   }
   return { data, detectorUrl, timeoutMs };
 }
 
+async function callPythonDetectorWithFastRetry(text: string) {
+  const startedAt = Date.now();
+  const timeoutMs = pythonTimeoutMs(text);
+  const metrics: DetectorAttemptMetrics = {
+    retries: 0,
+    upstreamStatus: null,
+    errorCode: null,
+  };
+
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
+    const elapsed = Date.now() - startedAt;
+    const remainingBudget = RETRY_TOTAL_BUDGET_MS - elapsed;
+    if (remainingBudget <= 0) break;
+
+    const attemptTimeout = Math.max(200, Math.min(RETRY_ATTEMPT_TIMEOUT_MS, remainingBudget, timeoutMs));
+    try {
+      const result = await callPythonDetectorOnce(text, attemptTimeout);
+      return { ...result, timeoutMs: attemptTimeout, metrics };
+    } catch (e) {
+      lastError = e;
+
+      if (e instanceof HttpRouteError) {
+        metrics.upstreamStatus = e.upstreamStatus ?? e.status ?? null;
+        metrics.errorCode = e.errorCode ?? e.code ?? null;
+        const canRetry = Boolean(e.transient || isTransientUpstreamStatus(e.status));
+        if (!canRetry || attempt >= RETRY_MAX_ATTEMPTS) {
+          e.retryCount = metrics.retries;
+          throw e;
+        }
+      } else {
+        const errorCode = normalizeErrorCode(e);
+        metrics.errorCode = errorCode || null;
+        if (!isTransientErrorCode(errorCode) || attempt >= RETRY_MAX_ATTEMPTS) {
+          throw e;
+        }
+      }
+
+      metrics.retries += 1;
+
+      const waitMs = RETRY_BASE_DELAY_MS * attempt + retryJitterMs();
+      const elapsedAfterAttempt = Date.now() - startedAt;
+      const remainingAfterAttempt = RETRY_TOTAL_BUDGET_MS - elapsedAfterAttempt;
+      if (remainingAfterAttempt <= 0) break;
+      await sleep(Math.min(waitMs, Math.max(20, remainingAfterAttempt)));
+    }
+  }
+
+  if (lastError instanceof HttpRouteError) throw lastError;
+  throw new HttpRouteError(502, "DETECTOR_FETCH_FAILED", "Failed to reach detector service.", {
+    upstreamStatus: metrics.upstreamStatus ?? 502,
+    errorCode: metrics.errorCode ?? undefined,
+    transient: true,
+    retryCount: metrics.retries,
+  });
+}
+
 // ---------- route ----------
 export async function POST(req: Request) {
+  const requestId = randomUUID();
+  const coldStartLikely = !hasHandledAiDetectorRequest;
+  hasHandledAiDetectorRequest = true;
+  const requestStartedAt = Date.now();
+  const isProduction = process.env.NODE_ENV === "production";
+
+  let authMs = 0;
+  let dbMs = 0;
+  let detectorFetchMs = 0;
+  let retryCount = 0;
+  let upstreamStatus: number | null = null;
+  let errorCode: string | null = null;
+  let cacheHeader: "hit" | "hit-stale" | "miss" = "miss";
+  let responseStatus = 500;
+
+  const finish = (res: NextResponse) => {
+    const totalMs = Date.now() - requestStartedAt;
+    responseStatus = res.status;
+    if (isProduction) {
+      res.headers.set("x-ai-detector-request-id", requestId);
+      res.headers.set("x-ai-detector-retries", String(retryCount));
+      res.headers.set("x-ai-detector-total-ms", String(totalMs));
+      if (cacheHeader !== "miss") res.headers.set("x-ai-detector-cache", cacheHeader);
+    }
+
+    console.info(
+      JSON.stringify({
+        event: "ai_detector_request",
+        requestId,
+        coldStartLikely,
+        totalMs,
+        status: responseStatus,
+        upstreamStatus,
+        errorCode,
+        phases: {
+          authMs,
+          dbMs,
+          detectorFetchMs,
+          retryCount,
+        },
+        cache: cacheHeader,
+      })
+    );
+    return res;
+  };
+
   try {
+    const authStart = Date.now();
     const session = await getServerSession(authOptions);
+    authMs = Date.now() - authStart;
     const userId = (session as any)?.user?.id as string | undefined;
     if (!userId) {
-      return NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 });
+      return finish(NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 }));
     }
 
     const body = (await req.json()) as { text?: string; lang?: string };
     const text = (body?.text ?? "").trim();
 
-    if (!text) return NextResponse.json({ ok: false, error: "Missing text." }, { status: 400 });
+    if (!text) return finish(NextResponse.json({ ok: false, error: "Missing text." }, { status: 400 }));
     if (hasNonEnglish(text)) {
-      return NextResponse.json({ ok: false, error: "Only English text is supported." }, { status: 400 });
+      return finish(NextResponse.json({ ok: false, error: "Only English text is supported." }, { status: 400 }));
     }
 
     const words = countWords(text);
     if (words < 40) {
-      return NextResponse.json({ ok: false, error: "To analyze text, add at least 40 words." }, { status: 400 });
+      return finish(NextResponse.json({ ok: false, error: "To analyze text, add at least 40 words." }, { status: 400 }));
     }
 
+    const dbStart = Date.now();
     try {
       await withPrismaConnectionRetry(
         () => assertQuotaOrThrow({ userId, action: "detector", amount: words }),
         { maxRetries: 2, retryDelayMs: 200 }
       );
     } catch (e) {
+      dbMs = Date.now() - dbStart;
       if (e instanceof QuotaError) {
-        return NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: 429 });
+        return finish(NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: 429 }));
       }
       if (isTransientPrismaConnectionError(e)) {
-        return dbUnavailableResponse();
+        errorCode = "DB_UNAVAILABLE";
+        upstreamStatus = 503;
+        return finish(dbUnavailableResponse());
       }
       throw e;
     }
+    dbMs = Date.now() - dbStart;
 
     const sents = splitSentencesWithOffsets(text);
     const sentenceResults = sents.map((seg) => ({
@@ -387,13 +616,43 @@ export async function POST(req: Request) {
     }));
 
     const highlights = findPhraseHighlights(text);
+    const cacheKey = cacheKeyForText(text);
+    const cacheLookup = readDetectorCache(cacheKey);
+    if (cacheLookup.fresh) {
+      cacheHeader = "hit";
+      return finish(NextResponse.json(cacheLookup.fresh));
+    }
 
-    const py = await callPythonDetector(text);
+    const detectorStart = Date.now();
+    let py: Awaited<ReturnType<typeof callPythonDetectorWithFastRetry>>;
+    try {
+      py = await callPythonDetectorWithFastRetry(text);
+      retryCount = py.metrics.retries;
+      upstreamStatus = py.metrics.upstreamStatus ?? 200;
+      errorCode = py.metrics.errorCode;
+    } catch (e) {
+      detectorFetchMs = Date.now() - detectorStart;
+      if (e instanceof HttpRouteError) {
+        retryCount = e.retryCount ?? retryCount;
+        upstreamStatus = e.upstreamStatus ?? e.status;
+        errorCode = e.errorCode ?? e.code;
+
+        if (cacheLookup.stale) {
+          cacheHeader = "hit-stale";
+          return finish(NextResponse.json(cacheLookup.stale));
+        }
+        return finish(NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: e.status }));
+      }
+      throw e;
+    }
+    detectorFetchMs = Date.now() - detectorStart;
     const metrics = py.data.result[0];
     const aiOverallRaw = Number(metrics?.["AI overall"]);
 
     if (!Number.isFinite(aiOverallRaw)) {
-      return NextResponse.json({ ok: false, error: "Python detector did not return AI overall." }, { status: 502 });
+      errorCode = "DETECTOR_INVALID_RESPONSE";
+      upstreamStatus = 502;
+      return finish(NextResponse.json({ ok: false, error: "Python detector did not return AI overall." }, { status: 502 }));
     }
 
     const aiGenerated = clamp(Math.round(aiOverallRaw), 0, 100);
@@ -407,7 +666,7 @@ export async function POST(req: Request) {
       console.error("[detector] usageEvent write failed:", err)
     );
 
-    return NextResponse.json({
+    const payload: DetectorSuccessPayload = {
       ok: true,
       aiGenerated,
       humanAiRefined,
@@ -424,17 +683,25 @@ export async function POST(req: Request) {
         timeoutMs: py.timeoutMs,
         provider: "python-gpt2ppl-ai-overall + local-heuristic-explanations",
       },
-    });
+    };
+
+    writeDetectorCache(cacheKey, payload);
+    return finish(NextResponse.json(payload));
   } catch (e: any) {
     if (e instanceof HttpRouteError) {
-      return NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: e.status });
+      upstreamStatus = e.upstreamStatus ?? e.status;
+      errorCode = e.errorCode ?? e.code;
+      return finish(NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: e.status }));
     }
     if (isTransientPrismaConnectionError(e)) {
-      return dbUnavailableResponse();
+      upstreamStatus = 503;
+      errorCode = "DB_UNAVAILABLE";
+      return finish(dbUnavailableResponse());
     }
-    return NextResponse.json(
+    errorCode = normalizeErrorCode(e) || "INTERNAL_ERROR";
+    return finish(NextResponse.json(
       { ok: false, error: "INTERNAL_ERROR", message: e?.message ?? "Unknown error." },
       { status: 500 }
-    );
+    ));
   }
 }
