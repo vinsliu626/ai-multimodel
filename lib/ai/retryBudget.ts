@@ -18,12 +18,8 @@ export function computeRetryDelayMs(params: {
   return params.baseDelayMs * params.attempt + Math.floor(Math.random() * params.jitterMaxMs);
 }
 
-export function canWaitWithinBudget(delayMs: number, deadlineMs: number, safetyMarginMs: number) {
-  return Date.now() + delayMs + safetyMarginMs < deadlineMs;
-}
-
 export function adaptiveAttemptCapMs(attempt: number) {
-  if (attempt <= 1) return 1200;
-  if (attempt === 2) return 260;
-  return 180;
+  if (attempt <= 1) return 1000;
+  if (attempt === 2) return 360;
+  return 220;
 }

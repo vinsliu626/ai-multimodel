@@ -9,7 +9,6 @@ import { addUsageEvent } from "@/lib/billing/usage";
 import { isTransientPrismaConnectionError, withPrismaConnectionRetry } from "@/lib/prismaRetry";
 import {
   adaptiveAttemptCapMs,
-  canWaitWithinBudget,
   computeAttemptTimeoutMs,
   computeRetryDelayMs,
 } from "@/lib/ai/retryBudget";
@@ -19,16 +18,19 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const DEFAULT_DETECTOR_BASE_URL = "http://127.0.0.1:8000";
+const DEV_REMOTE_DETECTOR_FALLBACK_URL = "https://vins0629-py-detector.hf.space/detect";
 const RETRY_MAX_ATTEMPTS = 3;
-const RETRY_BASE_DELAY_MS = 120;
+const RETRY_BASE_DELAY_MS = 45;
 const RETRY_TOTAL_BUDGET_MS = 1500;
 const RETRY_TIMEOUT_SAFETY_MARGIN_MS = 40;
-const RETRY_MIN_ATTEMPT_TIMEOUT_MS = 160;
-const RETRY_JITTER_MAX_MS = 80;
+const RETRY_MIN_ATTEMPT_TIMEOUT_MS = 90;
+const RETRY_MIN_RETRY_REMAINING_MS = 250;
+const RETRY_JITTER_MAX_MS = 20;
 const DETECTOR_CACHE_TTL_MS = 30_000;
 const DETECTOR_CACHE_STALE_TTL_MS = 5 * 60_000;
 const DETECTOR_MODEL_VERSION = "python-gpt2ppl-ai-overall + local-heuristic-explanations@v1";
 const QUICK_WARMING_BUDGET_MS = 150;
+const MIN_DETECTOR_WORDS = 80;
 const DETECTOR_PROBE_TEXT =
   "Readiness probe text for detector endpoint reachability checks only.";
 const DETECTOR_REQUEST_FIELD = "text";
@@ -57,6 +59,8 @@ type DetectorSuccessPayload = {
     words: number;
     timeoutMs: number;
     provider: string;
+    retryCount: number;
+    attemptCount: number;
   };
 };
 
@@ -145,6 +149,8 @@ type DetectorTarget = {
   isConfigured: boolean;
 };
 
+type DetectorCallResult = Awaited<ReturnType<typeof callPythonDetectorWithFastRetry>>;
+
 function resolveDetectorTarget(): DetectorTarget {
   let source: DetectorUrlSource = "DEFAULT";
   let raw = DEFAULT_DETECTOR_BASE_URL;
@@ -185,9 +191,45 @@ function resolveDetectorTarget(): DetectorTarget {
   };
 }
 
+function detectorTargetFromUrl(raw: string, source: DetectorUrlSource): DetectorTarget {
+  const parsed = new URL(raw);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new HttpRouteError(500, "DETECTOR_URL_INVALID", "DETECTOR_URL must start with http:// or https://");
+  }
+  if (parsed.pathname === "/" || parsed.pathname === "") {
+    parsed.pathname = "/detect";
+  }
+  return {
+    url: parsed.toString(),
+    host: parsed.hostname,
+    path: parsed.pathname,
+    source,
+    isConfigured: source !== "DEFAULT",
+  };
+}
+
+function canUseLocalRemoteFallback() {
+  if (process.env.AI_DETECTOR_DISABLE_DEV_FALLBACK === "1") return false;
+  if (process.env.AI_DETECTOR_ENABLE_REMOTE_FALLBACK === "1") return true;
+  // Allow on local/self-hosted runtime (including local production mode), but not on Vercel prod.
+  return process.env.VERCEL !== "1";
+}
+
+function shouldTryDevRemoteFallback(error: HttpRouteError, target: DetectorTarget) {
+  if (!canUseLocalRemoteFallback()) return false;
+  if (!isLocalUrl(target.url)) return false;
+  const code = String(error.code || "").toUpperCase();
+  return (
+    code === "DETECTOR_UNAVAILABLE" ||
+    code === "DETECTOR_FETCH_FAILED" ||
+    code === "DETECTOR_TIMEOUT" ||
+    code === "DETECTOR_TRANSIENT_HTTP"
+  );
+}
+
 function detectorDownMessage(url: string) {
   if (isLocalUrl(url)) {
-    return "Detector service not running. Start it with `npm run detector:dev`.";
+    return "Detector service not running. Start it with `npm run detector:local`.";
   }
   return "Detector service is unavailable.";
 }
@@ -278,12 +320,20 @@ function detectorRequestBody(text: string) {
   return JSON.stringify({ [DETECTOR_REQUEST_FIELD]: text });
 }
 
+function detectorRequestHeaders() {
+  return {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "User-Agent": "ai-multimodel-detector/1.0",
+  };
+}
+
 function fireDetectorWarmup(target: DetectorTarget) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort("timeout"), 900);
   fetch(target.url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: detectorRequestHeaders(),
     body: detectorRequestBody(DETECTOR_PROBE_TEXT),
     cache: "no-store",
     signal: controller.signal,
@@ -298,7 +348,7 @@ async function quickHealthProbe(target: DetectorTarget, timeoutMs: number) {
   try {
     const res = await fetch(target.url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: detectorRequestHeaders(),
       body: detectorRequestBody(DETECTOR_PROBE_TEXT),
       cache: "no-store",
       signal: controller.signal,
@@ -515,14 +565,53 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
     try {
       const res = await fetch(target.url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: detectorRequestHeaders(),
         body: detectorRequestBody(text),
         cache: "no-store",
         signal: controller.signal,
       });
 
       if (res.ok) {
-        const data = (await res.json()) as PyDetectResponse;
+        const rawBody = await res.text().catch(() => "");
+        const snippet = sanitizeSnippet(rawBody || res.statusText || `HTTP ${res.status}`, 120);
+        let data: PyDetectResponse;
+        try {
+          data = JSON.parse(rawBody) as PyDetectResponse;
+        } catch {
+          throw new HttpRouteError(
+            502,
+            "DETECTOR_INVALID_RESPONSE",
+            "Detector returned non-JSON success response.",
+            {
+              upstreamStatus: res.status,
+              errorCode: "INVALID_RESPONSE_JSON",
+              transient: false,
+              retryCount: attempt - 1,
+              upstreamBodySnippet: snippet || undefined,
+              attemptCount: attempt,
+              lastAttemptErrorKind: "INVALID_RESPONSE_JSON",
+              remainingBudgetMs: Math.max(0, deadlineMs - Date.now()),
+            }
+          );
+        }
+        if (data?.ok === false) {
+          const upstreamMessage = sanitizeSnippet(String((data as any)?.error ?? "Detector rejected input."), 120);
+          throw new HttpRouteError(
+            400,
+            "DETECTOR_INPUT_REJECTED",
+            upstreamMessage || "Detector rejected input.",
+            {
+              upstreamStatus: res.status,
+              errorCode: "INPUT_REJECTED",
+              transient: false,
+              retryCount: attempt - 1,
+              upstreamBodySnippet: snippet || undefined,
+              attemptCount: attempt,
+              lastAttemptErrorKind: "INPUT_REJECTED",
+              remainingBudgetMs: Math.max(0, deadlineMs - Date.now()),
+            }
+          );
+        }
         if (!data?.ok || !data?.result?.[0]) {
           throw new HttpRouteError(
             502,
@@ -533,6 +622,7 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
               errorCode: "INVALID_RESPONSE",
               transient: false,
               retryCount: attempt - 1,
+              upstreamBodySnippet: snippet || undefined,
               attemptCount: attempt,
               lastAttemptErrorKind: "INVALID_RESPONSE",
               remainingBudgetMs: Math.max(0, deadlineMs - Date.now()),
@@ -545,7 +635,7 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
       }
 
       const body = await res.text().catch(() => "");
-      const snippet = sanitizeSnippet(body, 120);
+      const snippet = sanitizeSnippet(body || res.statusText || `HTTP ${res.status}`, 120);
       metrics.upstreamStatus = res.status;
       metrics.errorCode = `HTTP_${res.status}`;
       metrics.upstreamBodySnippet = snippet || null;
@@ -618,9 +708,17 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
       attempt,
       jitterMaxMs: RETRY_JITTER_MAX_MS,
     });
-    if (!canWaitWithinBudget(waitMs, deadlineMs, RETRY_TIMEOUT_SAFETY_MARGIN_MS)) break;
+    const remainingBeforeRetry = Math.max(0, deadlineMs - Date.now());
+    if (remainingBeforeRetry < RETRY_MIN_RETRY_REMAINING_MS) break;
+    const maxWaitMs = Math.max(
+      0,
+      remainingBeforeRetry - RETRY_TIMEOUT_SAFETY_MARGIN_MS - RETRY_MIN_ATTEMPT_TIMEOUT_MS
+    );
+    const boundedWaitMs = Math.min(waitMs, maxWaitMs);
     metrics.retries += 1;
-    await sleep(waitMs);
+    if (boundedWaitMs > 0) {
+      await sleep(boundedWaitMs);
+    }
   }
 
   if (lastError) {
@@ -676,6 +774,7 @@ export async function POST(req: Request) {
   let lastAttemptErrorKind: string | null = null;
   let remainingBudgetMs = RETRY_TOTAL_BUDGET_MS;
   let warmupState: "none" | "probe-ready" | "probe-not-ready" | "triggered" = "none";
+  let usedDevRemoteFallback = false;
   let cacheHeader: "hit" | "hit-stale" | "miss" = "miss";
   let responseStatus = 500;
 
@@ -709,6 +808,7 @@ export async function POST(req: Request) {
         lastAttemptErrorKind,
         remainingBudgetMs,
         warmupState,
+        usedDevRemoteFallback,
         phases: {
           authMs,
           dbMs,
@@ -725,7 +825,10 @@ export async function POST(req: Request) {
     const authStart = Date.now();
     const session = await getServerSession(authOptions);
     authMs = Date.now() - authStart;
-    const userId = (session as any)?.user?.id as string | undefined;
+    let userId = (session as any)?.user?.id as string | undefined;
+    if (!userId && !isProduction && process.env.AI_DETECTOR_DEV_BYPASS_AUTH === "1") {
+      userId = "dev_local_user";
+    }
     if (!userId) {
       return finish(NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 }));
     }
@@ -739,8 +842,13 @@ export async function POST(req: Request) {
     }
 
     const words = countWords(text);
-    if (words < 40) {
-      return finish(NextResponse.json({ ok: false, error: "To analyze text, add at least 40 words." }, { status: 400 }));
+    if (words < MIN_DETECTOR_WORDS) {
+      return finish(
+        NextResponse.json(
+          { ok: false, error: `To analyze text, add at least ${MIN_DETECTOR_WORDS} words.` },
+          { status: 400 }
+        )
+      );
     }
 
     const dbStart = Date.now();
@@ -806,36 +914,53 @@ export async function POST(req: Request) {
     }
 
     const detectorStart = Date.now();
-    let py: Awaited<ReturnType<typeof callPythonDetectorWithFastRetry>>;
+    let py: DetectorCallResult | null = null;
     try {
       py = await callPythonDetectorWithFastRetry(text, detectorTarget, Boolean(cacheLookup.stale));
-      retryCount = py.metrics.retries;
-      upstreamStatus = py.metrics.upstreamStatus ?? 200;
-      errorCode = py.metrics.errorCode;
-      upstreamBodySnippet = py.metrics.upstreamBodySnippet;
-      attemptCount = py.metrics.attempts;
-      lastAttemptErrorKind = py.metrics.lastAttemptErrorKind;
-      remainingBudgetMs = py.metrics.remainingBudgetMs;
     } catch (e) {
-      detectorFetchMs = Date.now() - detectorStart;
-      if (e instanceof HttpRouteError) {
-        retryCount = e.retryCount ?? retryCount;
-        upstreamStatus = e.upstreamStatus ?? e.status;
-        errorCode = e.errorCode ?? e.code;
-        upstreamBodySnippet = e.upstreamBodySnippet ?? null;
-        attemptCount = e.attemptCount ?? attemptCount;
-        lastAttemptErrorKind = e.lastAttemptErrorKind ?? lastAttemptErrorKind;
-        remainingBudgetMs = e.remainingBudgetMs ?? remainingBudgetMs;
-
-        if (cacheLookup.stale) {
-          cacheHeader = "hit-stale";
-          return finish(NextResponse.json(cacheLookup.stale));
+      if (e instanceof HttpRouteError && shouldTryDevRemoteFallback(e, detectorTarget)) {
+        try {
+          const fallbackTarget = detectorTargetFromUrl(DEV_REMOTE_DETECTOR_FALLBACK_URL, "DEFAULT");
+          py = await callPythonDetectorWithFastRetry(text, fallbackTarget, false);
+          usedDevRemoteFallback = true;
+          upstreamHost = fallbackTarget.host;
+          upstreamPath = fallbackTarget.path;
+          detectorUrlSource = fallbackTarget.source;
+          detectorUrlConfigured = fallbackTarget.isConfigured;
+        } catch {
+          // Ignore fallback failure and keep original upstream error handling.
         }
-        return finish(NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: e.status }));
       }
-      throw e;
+
+      if (!py) {
+        detectorFetchMs = Date.now() - detectorStart;
+        if (e instanceof HttpRouteError) {
+          retryCount = e.retryCount ?? retryCount;
+          upstreamStatus = e.upstreamStatus ?? e.status;
+          errorCode = e.errorCode ?? e.code;
+          upstreamBodySnippet = e.upstreamBodySnippet ?? null;
+          attemptCount = e.attemptCount ?? attemptCount;
+          lastAttemptErrorKind = e.lastAttemptErrorKind ?? lastAttemptErrorKind;
+          remainingBudgetMs = e.remainingBudgetMs ?? remainingBudgetMs;
+
+          if (cacheLookup.stale) {
+            cacheHeader = "hit-stale";
+            return finish(NextResponse.json(cacheLookup.stale));
+          }
+          return finish(NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: e.status }));
+        }
+        throw e;
+      }
     }
+
     detectorFetchMs = Date.now() - detectorStart;
+    retryCount = py.metrics.retries;
+    upstreamStatus = py.metrics.upstreamStatus ?? 200;
+    errorCode = py.metrics.errorCode;
+    upstreamBodySnippet = py.metrics.upstreamBodySnippet;
+    attemptCount = py.metrics.attempts;
+    lastAttemptErrorKind = py.metrics.lastAttemptErrorKind;
+    remainingBudgetMs = py.metrics.remainingBudgetMs;
     const metrics = py.data.result[0];
     const aiOverallRaw = Number(metrics?.["AI overall"]);
 
@@ -872,6 +997,8 @@ export async function POST(req: Request) {
         words,
         timeoutMs: py.timeoutMs,
         provider: "python-gpt2ppl-ai-overall + local-heuristic-explanations",
+        retryCount: py.metrics.retries,
+        attemptCount: py.metrics.attempts,
       },
     };
 

@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "set NODE_OPTIONS=--dns-result-order=ipv4first && next dev",
     "dev:all": "node scripts/dev-all.mjs",
-    "detector:dev": "python services/detector/dev_server.py --port 8000",
+    "detector:dev": "npm run detector:local",
+    "detector:local": "python services/detector/dev_server.py --port 8000",
+    "detector:probe:hf": "node scripts/detector-probe-hf.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

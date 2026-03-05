@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 $ws = New-LocalhostWebSessionFromCookieFile -CookieFile $CookieFile -BaseUrl $BaseUrl
 $url = "$BaseUrl/api/ai-detector"
 $body = @{
-  text = "This is a local detector test payload for development validation. It intentionally includes enough words to pass the minimum threshold. We are validating status handling in local development, including detector availability, timeout behavior, transient database outage behavior, and robust error mapping for service failures."
+  text = "This is a local detector test payload for development validation. It intentionally includes enough words to pass the minimum threshold required by the detector contract. We are validating status handling in local development, including detector availability, timeout behavior, transient database outage behavior, and robust error mapping for service failures. The message adds extra text so word count exceeds eighty words consistently. This final sentence ensures stable behavior when local and upstream validators enforce the same minimum length expectations during repeated automated checks."
 } | ConvertTo-Json
 
 try {

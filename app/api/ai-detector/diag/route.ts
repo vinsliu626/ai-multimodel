@@ -55,6 +55,14 @@ function detectorRequestBody(text: string) {
   return JSON.stringify({ [DETECTOR_REQUEST_FIELD]: text });
 }
 
+function detectorRequestHeaders() {
+  return {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "User-Agent": "ai-multimodel-detector/1.0",
+  };
+}
+
 function sanitizeSnippet(input: string, maxLen = 180) {
   return input.replace(/[^\x20-\x7E]+/g, " ").trim().slice(0, maxLen);
 }
@@ -66,7 +74,7 @@ async function runProbe(url: string, timeoutMs: number) {
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: detectorRequestHeaders(),
       body: detectorRequestBody(DETECTOR_PROBE_TEXT),
       cache: "no-store",
       signal: controller.signal,
@@ -77,7 +85,7 @@ async function runProbe(url: string, timeoutMs: number) {
       status: res.status,
       latencyMs: Date.now() - started,
       method: "POST" as const,
-      bodySnippet: sanitizeSnippet(bodyText),
+      bodySnippet: sanitizeSnippet(bodyText || res.statusText || `HTTP ${res.status}`),
     };
   } finally {
     clearTimeout(timer);

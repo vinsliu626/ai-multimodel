@@ -3,12 +3,6 @@
 - Network:       http://169.254.83.107:3000
 
 ✓ Starting...
-✓ Ready in 473ms
-[NEXTAUTH] NEXTAUTH_URL = http://localhost:3000
+✓ Ready in 635ms
+[NEXTAUTH] NEXTAUTH_URL = http://127.0.0.1:3000
 [NEXTAUTH] NEXTAUTH_SECRET_LEN = 52
-[ai-note/start] hit { dbHead: 'postgresql://neondb_owner:npg_7bvn4XfuRI' }
-[ai-note/start] hit { dbHead: 'postgresql://neondb_owner:npg_7bvn4XfuRI' }
-[ai-note/start] hit { dbHead: 'postgresql://neondb_owner:npg_7bvn4XfuRI' }
-[ai-note/start] hit { dbHead: 'postgresql://neondb_owner:npg_7bvn4XfuRI' }
-[ai-note/start] hit { dbHead: 'postgresql://neondb_owner:npg_7bvn4XfuRI' }
-[ai-note/start] hit { dbHead: 'postgresql://neondb_owner:npg_7bvn4XfuRI' }

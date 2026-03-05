@@ -59,7 +59,7 @@ export function DetectorUI({
 
   const tooShort = useMemo(() => {
     if (!text.trim()) return false;
-    return words < 40;
+    return words < 80;
   }, [text, words]);
 
   async function detect() {
@@ -79,8 +79,8 @@ export function DetectorUI({
       setError(isZh ? "请粘贴英文文本开始分析。" : "Please paste text to begin analysis.");
       return;
     }
-    if (countWords(t) < 40) {
-      setError(isZh ? "至少需要 40 个英文单词。" : "To analyze text, add at least 40 words.");
+    if (countWords(t) < 80) {
+      setError(isZh ? "至少需要 80 个英文单词。" : "To analyze text, add at least 80 words.");
       return;
     }
     if (hasNonEnglish(t)) {
@@ -103,7 +103,7 @@ export function DetectorUI({
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data?.ok === false) {
-        throw new Error(data?.error || `Detector API error: ${res.status}`);
+        throw new Error(data?.message || data?.error || `Detector API error: ${res.status}`);
       }
 
       const ai = clampPct(Number(data?.aiGenerated ?? data?.ai ?? 0));
@@ -189,7 +189,7 @@ export function DetectorUI({
                 <div className="px-4 py-3 border-b border-white/10 flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-slate-50">{isZh ? "文本" : "Text"}</p>
-                    <p className="text-[11px] text-slate-400">{tooShort ? (isZh ? "至少 40 个英文单词" : "Add at least 40 words") : " "}</p>
+                    <p className="text-[11px] text-slate-400">{tooShort ? (isZh ? "至少 80 个英文单词" : "Add at least 80 words") : " "}</p>
                   </div>
 
                   <button
@@ -215,7 +215,7 @@ export function DetectorUI({
                 </div>
 
                 <div className="flex-1 overflow-hidden px-4 pb-4">
-                  <HighlightEditor value={text} onChange={setText} highlights={result ? highlights : []} placeholder="To analyze text, add at least 40 words." disabled={loading || isLoadingGlobal} />
+                  <HighlightEditor value={text} onChange={setText} highlights={result ? highlights : []} placeholder="To analyze text, add at least 80 words." disabled={loading || isLoadingGlobal} />
                 </div>
 
                 <div className="px-4 py-3 border-t border-white/10 text-[11px] text-slate-400 flex items-center justify-between">
@@ -237,7 +237,7 @@ export function DetectorUI({
                 <div className="flex-1 overflow-y-auto custom-scrollbar px-2 py-3 space-y-1 mt-1">
                   {!result && !error && (
                     <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-3 text-[12px] text-slate-300">
-                      {isZh ? "粘贴英文文本（40+ 单词），点击 Detect AI。" : "Paste English text (40+ words) and click Detect AI."}
+                      {isZh ? "粘贴英文文本（80+ 单词），点击 Detect AI。" : "Paste English text (80+ words) and click Detect AI."}
                     </div>
                   )}
 

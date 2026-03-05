@@ -23,10 +23,16 @@ Open [http://localhost:3000](http://localhost:3000) with your browser to see the
 2. `PY_DETECTOR_URL` (backward compatible)
 3. default `http://127.0.0.1:8000` (with `/detect` path auto-appended)
 
-Start only the detector stub:
+Contract used by both local stub and HF Space:
+- endpoint: `POST /detect`
+- JSON body: `{ "text": "..." }`
+- short input (`<80` words): `200` with `ok:false` and validation message
+- invalid shape: `422` (`text` missing)
+
+Start only the detector stub (HF-compatible):
 
 ```bash
-npm run detector:dev
+npm run detector:local
 ```
 
 Start Next.js + detector together:
@@ -35,13 +41,27 @@ Start Next.js + detector together:
 npm run dev:all
 ```
 
+Probe the live HF endpoint from local machine:
+
+```bash
+npm run detector:probe:hf
+```
+
 The built-in local stub is at `services/detector/dev_server.py` and serves:
 - `POST /detect`
 - `GET /health`
 
-If detector is down, `/api/ai-detector` now returns `503` with a message to run `npm run detector:dev`.
+If detector is down, `/api/ai-detector` now returns `503` with a message to run `npm run detector:local`.
 If detector times out, it returns `504`.
 If Postgres is unavailable, it returns `503` with `DB_UNAVAILABLE`.
+
+For local curl-style testing without login, set:
+
+```bash
+AI_DETECTOR_DEV_BYPASS_AUTH=1
+```
+
+This bypass is only active when `NODE_ENV !== "production"`.
 
 ### Local validation
 

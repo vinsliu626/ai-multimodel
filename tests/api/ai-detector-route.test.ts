@@ -33,7 +33,11 @@ vi.mock("@/lib/billing/usage", () => ({
 }));
 
 const LONG_TEXT =
-  "This local detector route test sends enough words to pass the minimum threshold and exercise the full API flow for detector fetch and database quota handling under local development conditions. The payload also ensures sentence segmentation runs, heuristic scoring executes, and response fields are populated before assertions validate status mapping for service errors.";
+  "This local detector route test sends enough words to pass the minimum threshold and exercise the full API flow for detector fetch and database quota handling under local development conditions. The payload also ensures sentence segmentation runs, heuristic scoring executes, and response fields are populated before assertions validate status mapping for service errors. We intentionally add several more sentences so the text always exceeds eighty words for compatibility with the remote Hugging Face contract. Additional wording here is plain and repetitive on purpose because the test only verifies integration behavior, not linguistic quality. This sentence exists to make the input safely long enough.";
+
+function testText(tag: string) {
+  return `${LONG_TEXT} ${tag} ${Date.now()}`;
+}
 
 describe("POST /api/ai-detector", () => {
   beforeEach(() => {
@@ -54,7 +58,7 @@ describe("POST /api/ai-detector", () => {
     const req = new Request("http://localhost/api/ai-detector", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: LONG_TEXT }),
+      body: JSON.stringify({ text: testText("refused") }),
     });
 
     const res = await POST(req);
@@ -72,7 +76,7 @@ describe("POST /api/ai-detector", () => {
     const req = new Request("http://localhost/api/ai-detector", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: LONG_TEXT }),
+      body: JSON.stringify({ text: testText("timeout") }),
     });
 
     const res = await POST(req);
@@ -94,7 +98,7 @@ describe("POST /api/ai-detector", () => {
     const req = new Request("http://localhost/api/ai-detector", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: LONG_TEXT }),
+      body: JSON.stringify({ text: testText("db-unavailable") }),
     });
 
     const res = await POST(req);
@@ -108,22 +112,24 @@ describe("POST /api/ai-detector", () => {
   it("returns 200 when detector and DB are available", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue({
       ok: true,
-      json: async () => ({
-        ok: true,
-        result: [
-          {
-            "AI overall": 42,
-          },
-          "ok",
-        ],
-      }),
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: [
+            {
+              "AI overall": 42,
+            },
+            "ok",
+          ],
+        }),
     } as Response);
 
     const { POST } = await import("@/app/api/ai-detector/route");
     const req = new Request("http://localhost/api/ai-detector", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: LONG_TEXT }),
+      body: JSON.stringify({ text: testText("available") }),
     });
 
     const res = await POST(req);
@@ -146,22 +152,23 @@ describe("POST /api/ai-detector", () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        json: async () => ({
-          ok: true,
-          result: [
-            {
-              "AI overall": 61,
-            },
-            "ok",
-          ],
-        }),
+        text: async () =>
+          JSON.stringify({
+            ok: true,
+            result: [
+              {
+                "AI overall": 61,
+              },
+              "ok",
+            ],
+          }),
       } as Response);
 
     const { POST } = await import("@/app/api/ai-detector/route");
     const req = new Request("http://localhost/api/ai-detector", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: LONG_TEXT }),
+      body: JSON.stringify({ text: testText("hf-405") }),
     });
 
     const res = await POST(req);
@@ -179,5 +186,141 @@ describe("POST /api/ai-detector", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
     });
+  });
+
+  it("retries once on transient upstream 502 and succeeds within budget", async () => {
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        text: async () => "<html>bad gateway</html>",
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            ok: true,
+            result: [
+              {
+                "AI overall": 55,
+              },
+              "ok",
+            ],
+          }),
+      } as Response);
+
+    const { POST } = await import("@/app/api/ai-detector/route");
+    const req = new Request("http://localhost/api/ai-detector", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: testText("retry-502") }),
+    });
+
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.meta?.retryCount).toBe(1);
+    expect(json.meta?.attemptCount).toBe(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses dev remote fallback when local detector is unavailable", async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevVercel = process.env.VERCEL;
+    process.env.NODE_ENV = "development";
+    process.env.AI_DETECTOR_DISABLE_DEV_FALLBACK = "0";
+    delete process.env.VERCEL;
+    process.env.DETECTOR_URL = "http://127.0.0.1:8000/detect";
+
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }))
+      .mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }))
+      .mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            ok: true,
+            result: [
+              {
+                "AI overall": 49,
+              },
+              "ok",
+            ],
+          }),
+      } as Response);
+
+    const { POST } = await import("@/app/api/ai-detector/route");
+    const req = new Request("http://localhost/api/ai-detector", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: testText("dev-fallback") }),
+    });
+
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.aiGenerated).toBe(49);
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(String(fetchSpy.mock.calls[3]?.[0])).toContain("vins0629-py-detector.hf.space");
+
+    process.env.NODE_ENV = prevNodeEnv;
+    process.env.VERCEL = prevVercel;
+  });
+
+  it("uses remote fallback in local production mode when not on Vercel", async () => {
+    const prevNodeEnv = process.env.NODE_ENV;
+    const prevVercel = process.env.VERCEL;
+    process.env.NODE_ENV = "production";
+    process.env.AI_DETECTOR_DISABLE_DEV_FALLBACK = "0";
+    delete process.env.VERCEL;
+    process.env.DETECTOR_URL = "http://127.0.0.1:8000/detect";
+
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }))
+      .mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }))
+      .mockRejectedValueOnce(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({
+            ok: true,
+            result: [
+              {
+                "AI overall": 51,
+              },
+              "ok",
+            ],
+          }),
+      } as Response);
+
+    const { POST } = await import("@/app/api/ai-detector/route");
+    const req = new Request("http://localhost/api/ai-detector", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: testText("prod-local-fallback") }),
+    });
+
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.aiGenerated).toBe(51);
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    expect(String(fetchSpy.mock.calls[3]?.[0])).toContain("vins0629-py-detector.hf.space");
+
+    process.env.NODE_ENV = prevNodeEnv;
+    process.env.VERCEL = prevVercel;
   });
 });

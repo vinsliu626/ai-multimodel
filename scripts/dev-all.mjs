@@ -13,7 +13,7 @@ function run(cmd, args) {
   return child;
 }
 
-const detector = run("npm", ["run", "detector:dev"]);
+const detector = run("npm", ["run", "detector:local"]);
 const app = run("npm", ["run", "dev"]);
 
 const close = () => {
