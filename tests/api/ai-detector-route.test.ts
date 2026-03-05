@@ -133,4 +133,51 @@ describe("POST /api/ai-detector", () => {
     expect(json.ok).toBe(true);
     expect(json.aiGenerated).toBe(42);
   });
+
+  it("treats HF 405 probe as reachable and continues with detector POST", async () => {
+    process.env.DETECTOR_URL = "https://vins0629-py-detector.hf.space/detect";
+    const fetchSpy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 405,
+        text: async () => '{"detail":"Method Not Allowed"}',
+      } as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          result: [
+            {
+              "AI overall": 61,
+            },
+            "ok",
+          ],
+        }),
+      } as Response);
+
+    const { POST } = await import("@/app/api/ai-detector/route");
+    const req = new Request("http://localhost/api/ai-detector", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: LONG_TEXT }),
+    });
+
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.error).toBeUndefined();
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(fetchSpy.mock.calls[1]?.[1]).toMatchObject({
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+  });
 });

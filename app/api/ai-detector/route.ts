@@ -29,6 +29,9 @@ const DETECTOR_CACHE_TTL_MS = 30_000;
 const DETECTOR_CACHE_STALE_TTL_MS = 5 * 60_000;
 const DETECTOR_MODEL_VERSION = "python-gpt2ppl-ai-overall + local-heuristic-explanations@v1";
 const QUICK_WARMING_BUDGET_MS = 150;
+const DETECTOR_PROBE_TEXT =
+  "Readiness probe text for detector endpoint reachability checks only.";
+const DETECTOR_REQUEST_FIELD = "text";
 
 let hasHandledAiDetectorRequest = false;
 
@@ -271,30 +274,42 @@ function isHfSpaceHost(host: string) {
   return host.toLowerCase().endsWith(".hf.space");
 }
 
+function detectorRequestBody(text: string) {
+  return JSON.stringify({ [DETECTOR_REQUEST_FIELD]: text });
+}
+
 function fireDetectorWarmup(target: DetectorTarget) {
-  const healthUrl = new URL(target.url);
-  healthUrl.pathname = "/health";
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort("timeout"), 900);
-  fetch(healthUrl.toString(), { method: "GET", cache: "no-store", signal: controller.signal }).finally(() => {
+  fetch(target.url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: detectorRequestBody(DETECTOR_PROBE_TEXT),
+    cache: "no-store",
+    signal: controller.signal,
+  }).finally(() => {
     clearTimeout(timer);
   });
 }
 
 async function quickHealthProbe(target: DetectorTarget, timeoutMs: number) {
-  const healthUrl = new URL(target.url);
-  healthUrl.pathname = "/health";
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
   try {
-    const res = await fetch(healthUrl.toString(), { method: "HEAD", cache: "no-store", signal: controller.signal });
-    if (res.status === 405 || res.status === 404) {
-      const res2 = await fetch(healthUrl.toString(), { method: "GET", cache: "no-store", signal: controller.signal });
-      return { ready: res2.ok, status: res2.status };
-    }
-    return { ready: res.ok, status: res.status };
+    const res = await fetch(target.url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: detectorRequestBody(DETECTOR_PROBE_TEXT),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    return {
+      ready: res.ok || res.status === 405 || res.status === 422,
+      status: res.status,
+      methodNotAllowed: res.status === 405,
+    };
   } catch {
-    return { ready: false, status: null as number | null };
+    return { ready: false, status: null as number | null, methodNotAllowed: false };
   } finally {
     clearTimeout(timer);
   }
@@ -501,7 +516,7 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
       const res = await fetch(target.url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: detectorRequestBody(text),
         cache: "no-store",
         signal: controller.signal,
       });
@@ -773,19 +788,20 @@ export async function POST(req: Request) {
     if (isHfSpaceHost(detectorTarget.host) && !cacheLookup.stale) {
       const probe = await quickHealthProbe(detectorTarget, QUICK_WARMING_BUDGET_MS);
       warmupState = probe.ready ? "probe-ready" : "probe-not-ready";
+      if (probe.methodNotAllowed) {
+        console.warn(
+          JSON.stringify({
+            event: "DETECTOR_METHOD_NOT_ALLOWED",
+            requestId,
+            detectorUrl: detectorTarget.url,
+            probeStatus: probe.status,
+            note: "Probe reached detector with HTTP 405; treating upstream as reachable and continuing with POST.",
+          })
+        );
+      }
       if (!probe.ready) {
         fireDetectorWarmup(detectorTarget);
         warmupState = "triggered";
-        upstreamStatus = probe.status ?? 503;
-        errorCode = "DETECTOR_WAKING";
-        lastAttemptErrorKind = "WAKING_PROBE_NOT_READY";
-        remainingBudgetMs = Math.max(0, RETRY_TOTAL_BUDGET_MS - QUICK_WARMING_BUDGET_MS);
-        return finish(
-          NextResponse.json(
-            { ok: false, error: "DETECTOR_WAKING", message: "Detector is waking up, retry in a moment." },
-            { status: 503 }
-          )
-        );
       }
     }
 

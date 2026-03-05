@@ -8,6 +8,9 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 const DEFAULT_DETECTOR_BASE_URL = "http://127.0.0.1:8000";
+const DETECTOR_PROBE_TEXT =
+  "Readiness probe text for detector endpoint reachability checks only.";
+const DETECTOR_REQUEST_FIELD = "text";
 
 type DetectorUrlSource = "DETECTOR_URL" | "PY_DETECTOR_URL" | "DEFAULT";
 
@@ -48,13 +51,34 @@ function normalizeErrorCode(error: any) {
   return "UNKNOWN";
 }
 
-async function runProbe(url: string, method: "HEAD" | "GET", timeoutMs: number) {
+function detectorRequestBody(text: string) {
+  return JSON.stringify({ [DETECTOR_REQUEST_FIELD]: text });
+}
+
+function sanitizeSnippet(input: string, maxLen = 180) {
+  return input.replace(/[^\x20-\x7E]+/g, " ").trim().slice(0, maxLen);
+}
+
+async function runProbe(url: string, timeoutMs: number) {
   const started = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
   try {
-    const res = await fetch(url, { method, cache: "no-store", signal: controller.signal });
-    return { ok: res.ok, status: res.status, latencyMs: Date.now() - started, method };
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: detectorRequestBody(DETECTOR_PROBE_TEXT),
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const bodyText = await res.text().catch(() => "");
+    return {
+      ok: res.ok || res.status === 405 || res.status === 422,
+      status: res.status,
+      latencyMs: Date.now() - started,
+      method: "POST" as const,
+      bodySnippet: sanitizeSnippet(bodyText),
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -78,25 +102,23 @@ export async function GET(req: Request) {
     }
 
     const target = resolveDetectorTarget();
-    const healthUrl = new URL(target.url);
-    healthUrl.pathname = "/health";
+    const detectUrl = new URL(target.url);
+    detectUrl.pathname = "/detect";
 
     try {
-      let probe = await runProbe(healthUrl.toString(), "HEAD", 1200);
-      if (probe.status === 405 || probe.status === 404) {
-        probe = await runProbe(healthUrl.toString(), "GET", 1200);
-      }
+      const probe = await runProbe(detectUrl.toString(), 1200);
       return NextResponse.json({
         ok: probe.ok,
         requestId,
         upstreamHost: target.host,
         upstreamPath: target.path,
-        healthPath: healthUrl.pathname,
+        detectPath: detectUrl.pathname,
         detectorUrlSource: target.source,
         detectorUrlConfigured: target.isConfigured,
         probeMethod: probe.method,
         upstreamStatus: probe.status,
         latencyMs: probe.latencyMs,
+        bodySnippet: probe.bodySnippet || null,
       });
     } catch (e: any) {
       return NextResponse.json(
@@ -105,11 +127,11 @@ export async function GET(req: Request) {
           requestId,
           upstreamHost: target.host,
           upstreamPath: target.path,
-          healthPath: healthUrl.pathname,
+          detectPath: detectUrl.pathname,
           detectorUrlSource: target.source,
           detectorUrlConfigured: target.isConfigured,
           errorCode: e?.name === "AbortError" ? "ABORT_TIMEOUT" : normalizeErrorCode(e),
-          message: "Unable to reach detector health endpoint.",
+          message: "Unable to reach detector /detect endpoint.",
         },
         { status: 503 }
       );
