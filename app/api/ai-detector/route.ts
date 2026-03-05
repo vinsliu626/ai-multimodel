@@ -7,7 +7,12 @@ import { createHash, randomUUID } from "crypto";
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
 import { addUsageEvent } from "@/lib/billing/usage";
 import { isTransientPrismaConnectionError, withPrismaConnectionRetry } from "@/lib/prismaRetry";
-import { canWaitWithinBudget, computeAttemptTimeoutMs, computeRetryDelayMs } from "@/lib/ai/retryBudget";
+import {
+  adaptiveAttemptCapMs,
+  canWaitWithinBudget,
+  computeAttemptTimeoutMs,
+  computeRetryDelayMs,
+} from "@/lib/ai/retryBudget";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,13 +22,13 @@ const DEFAULT_DETECTOR_BASE_URL = "http://127.0.0.1:8000";
 const RETRY_MAX_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 120;
 const RETRY_TOTAL_BUDGET_MS = 1500;
-const RETRY_ATTEMPT_TIMEOUT_MS = 500;
 const RETRY_TIMEOUT_SAFETY_MARGIN_MS = 40;
 const RETRY_MIN_ATTEMPT_TIMEOUT_MS = 160;
 const RETRY_JITTER_MAX_MS = 80;
 const DETECTOR_CACHE_TTL_MS = 30_000;
 const DETECTOR_CACHE_STALE_TTL_MS = 5 * 60_000;
 const DETECTOR_MODEL_VERSION = "python-gpt2ppl-ai-overall + local-heuristic-explanations@v1";
+const QUICK_WARMING_BUDGET_MS = 150;
 
 let hasHandledAiDetectorRequest = false;
 
@@ -68,6 +73,9 @@ class HttpRouteError extends Error {
   transient?: boolean;
   retryCount?: number;
   upstreamBodySnippet?: string;
+  attemptCount?: number;
+  lastAttemptErrorKind?: string;
+  remainingBudgetMs?: number;
 
   constructor(
     status: number,
@@ -79,6 +87,9 @@ class HttpRouteError extends Error {
       transient?: boolean;
       retryCount?: number;
       upstreamBodySnippet?: string;
+      attemptCount?: number;
+      lastAttemptErrorKind?: string;
+      remainingBudgetMs?: number;
     }
   ) {
     super(message);
@@ -89,6 +100,9 @@ class HttpRouteError extends Error {
     this.transient = opts?.transient;
     this.retryCount = opts?.retryCount;
     this.upstreamBodySnippet = opts?.upstreamBodySnippet;
+    this.attemptCount = opts?.attemptCount;
+    this.lastAttemptErrorKind = opts?.lastAttemptErrorKind;
+    this.remainingBudgetMs = opts?.remainingBudgetMs;
   }
 }
 
@@ -251,6 +265,39 @@ function sleep(ms: number) {
 
 function sanitizeSnippet(input: string, maxLen = 120) {
   return input.replace(/[^\x20-\x7E]+/g, " ").trim().slice(0, maxLen);
+}
+
+function isHfSpaceHost(host: string) {
+  return host.toLowerCase().endsWith(".hf.space");
+}
+
+function fireDetectorWarmup(target: DetectorTarget) {
+  const healthUrl = new URL(target.url);
+  healthUrl.pathname = "/health";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort("timeout"), 900);
+  fetch(healthUrl.toString(), { method: "GET", cache: "no-store", signal: controller.signal }).finally(() => {
+    clearTimeout(timer);
+  });
+}
+
+async function quickHealthProbe(target: DetectorTarget, timeoutMs: number) {
+  const healthUrl = new URL(target.url);
+  healthUrl.pathname = "/health";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  try {
+    const res = await fetch(healthUrl.toString(), { method: "HEAD", cache: "no-store", signal: controller.signal });
+    if (res.status === 405 || res.status === 404) {
+      const res2 = await fetch(healthUrl.toString(), { method: "GET", cache: "no-store", signal: controller.signal });
+      return { ready: res2.ok, status: res2.status };
+    }
+    return { ready: res.ok, status: res.status };
+  } catch {
+    return { ready: false, status: null as number | null };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // ---------- heuristic pieces ----------
@@ -418,6 +465,8 @@ type DetectorAttemptMetrics = {
   upstreamStatus: number | null;
   errorCode: string | null;
   upstreamBodySnippet: string | null;
+  lastAttemptErrorKind: string | null;
+  remainingBudgetMs: number;
 };
 
 async function callPythonDetectorWithFastRetry(text: string, target: DetectorTarget, allowFastStaleFallback: boolean) {
@@ -428,14 +477,18 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
     upstreamStatus: null,
     errorCode: null,
     upstreamBodySnippet: null,
+    lastAttemptErrorKind: null,
+    remainingBudgetMs: RETRY_TOTAL_BUDGET_MS,
   };
 
   let lastError: HttpRouteError | null = null;
 
   for (let attempt = 1; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
+    const remainingBeforeAttempt = Math.max(0, deadlineMs - Date.now());
+    metrics.remainingBudgetMs = remainingBeforeAttempt;
     const attemptTimeout = computeAttemptTimeoutMs({
       deadlineMs,
-      perAttemptCapMs: RETRY_ATTEMPT_TIMEOUT_MS,
+      perAttemptCapMs: adaptiveAttemptCapMs(attempt),
       safetyMarginMs: RETRY_TIMEOUT_SAFETY_MARGIN_MS,
       minAttemptMs: RETRY_MIN_ATTEMPT_TIMEOUT_MS,
     });
@@ -460,7 +513,15 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
             502,
             "DETECTOR_INVALID_RESPONSE",
             "Detector invalid response.",
-            { upstreamStatus: 502, errorCode: "INVALID_RESPONSE", transient: false, retryCount: attempt - 1 }
+            {
+              upstreamStatus: 502,
+              errorCode: "INVALID_RESPONSE",
+              transient: false,
+              retryCount: attempt - 1,
+              attemptCount: attempt,
+              lastAttemptErrorKind: "INVALID_RESPONSE",
+              remainingBudgetMs: Math.max(0, deadlineMs - Date.now()),
+            }
           );
         }
         metrics.upstreamStatus = res.status;
@@ -473,6 +534,7 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
       metrics.upstreamStatus = res.status;
       metrics.errorCode = `HTTP_${res.status}`;
       metrics.upstreamBodySnippet = snippet || null;
+      metrics.lastAttemptErrorKind = `HTTP_${res.status}`;
 
       const transientHttp = isTransientUpstreamStatus(res.status);
       lastError = new HttpRouteError(
@@ -487,6 +549,9 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
           transient: transientHttp,
           retryCount: attempt - 1,
           upstreamBodySnippet: snippet || undefined,
+          attemptCount: attempt,
+          lastAttemptErrorKind: `HTTP_${res.status}`,
+          remainingBudgetMs: Math.max(0, deadlineMs - Date.now()),
         }
       );
       if (!transientHttp || attempt >= RETRY_MAX_ATTEMPTS) throw lastError;
@@ -516,11 +581,15 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
 
         metrics.upstreamStatus = status;
         metrics.errorCode = errorCode || code;
+        metrics.lastAttemptErrorKind = errorCode || code;
         lastError = new HttpRouteError(status, code, message, {
           upstreamStatus: status,
           errorCode: errorCode || code,
           transient,
           retryCount: attempt - 1,
+          attemptCount: attempt,
+          lastAttemptErrorKind: errorCode || code,
+          remainingBudgetMs: Math.max(0, deadlineMs - Date.now()),
         });
       }
       if (!lastError.transient || attempt >= RETRY_MAX_ATTEMPTS) throw lastError;
@@ -550,6 +619,9 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
         transient: true,
         retryCount: metrics.retries,
         upstreamBodySnippet: lastError.upstreamBodySnippet,
+        attemptCount: metrics.attempts,
+        lastAttemptErrorKind: metrics.lastAttemptErrorKind ?? lastError.lastAttemptErrorKind,
+        remainingBudgetMs: Math.max(0, deadlineMs - Date.now()),
       }
     );
   }
@@ -560,6 +632,9 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
     transient: true,
     retryCount: metrics.retries,
     upstreamBodySnippet: metrics.upstreamBodySnippet ?? undefined,
+    attemptCount: metrics.attempts,
+    lastAttemptErrorKind: metrics.lastAttemptErrorKind ?? "BUDGET_EXHAUSTED",
+    remainingBudgetMs: Math.max(0, deadlineMs - Date.now()),
   });
 }
 
@@ -582,6 +657,10 @@ export async function POST(req: Request) {
   let upstreamPath: string | null = null;
   let detectorUrlSource: DetectorUrlSource | null = null;
   let detectorUrlConfigured: boolean | null = null;
+  let attemptCount = 0;
+  let lastAttemptErrorKind: string | null = null;
+  let remainingBudgetMs = RETRY_TOTAL_BUDGET_MS;
+  let warmupState: "none" | "probe-ready" | "probe-not-ready" | "triggered" = "none";
   let cacheHeader: "hit" | "hit-stale" | "miss" = "miss";
   let responseStatus = 500;
 
@@ -592,6 +671,8 @@ export async function POST(req: Request) {
       res.headers.set("x-ai-detector-request-id", requestId);
       res.headers.set("x-ai-detector-retries", String(retryCount));
       res.headers.set("x-ai-detector-total-ms", String(totalMs));
+      if (upstreamHost) res.headers.set("x-ai-detector-upstream-host", upstreamHost);
+      res.headers.set("x-ai-detector-warmup", warmupState);
       if (cacheHeader !== "miss") res.headers.set("x-ai-detector-cache", cacheHeader);
     }
 
@@ -609,6 +690,10 @@ export async function POST(req: Request) {
         upstreamPath,
         detectorUrlSource,
         detectorUrlConfigured,
+        attemptCount,
+        lastAttemptErrorKind,
+        remainingBudgetMs,
+        warmupState,
         phases: {
           authMs,
           dbMs,
@@ -685,6 +770,25 @@ export async function POST(req: Request) {
       return finish(NextResponse.json(cacheLookup.fresh));
     }
 
+    if (isHfSpaceHost(detectorTarget.host) && !cacheLookup.stale) {
+      const probe = await quickHealthProbe(detectorTarget, QUICK_WARMING_BUDGET_MS);
+      warmupState = probe.ready ? "probe-ready" : "probe-not-ready";
+      if (!probe.ready) {
+        fireDetectorWarmup(detectorTarget);
+        warmupState = "triggered";
+        upstreamStatus = probe.status ?? 503;
+        errorCode = "DETECTOR_WAKING";
+        lastAttemptErrorKind = "WAKING_PROBE_NOT_READY";
+        remainingBudgetMs = Math.max(0, RETRY_TOTAL_BUDGET_MS - QUICK_WARMING_BUDGET_MS);
+        return finish(
+          NextResponse.json(
+            { ok: false, error: "DETECTOR_WAKING", message: "Detector is waking up, retry in a moment." },
+            { status: 503 }
+          )
+        );
+      }
+    }
+
     const detectorStart = Date.now();
     let py: Awaited<ReturnType<typeof callPythonDetectorWithFastRetry>>;
     try {
@@ -693,6 +797,9 @@ export async function POST(req: Request) {
       upstreamStatus = py.metrics.upstreamStatus ?? 200;
       errorCode = py.metrics.errorCode;
       upstreamBodySnippet = py.metrics.upstreamBodySnippet;
+      attemptCount = py.metrics.attempts;
+      lastAttemptErrorKind = py.metrics.lastAttemptErrorKind;
+      remainingBudgetMs = py.metrics.remainingBudgetMs;
     } catch (e) {
       detectorFetchMs = Date.now() - detectorStart;
       if (e instanceof HttpRouteError) {
@@ -700,6 +807,9 @@ export async function POST(req: Request) {
         upstreamStatus = e.upstreamStatus ?? e.status;
         errorCode = e.errorCode ?? e.code;
         upstreamBodySnippet = e.upstreamBodySnippet ?? null;
+        attemptCount = e.attemptCount ?? attemptCount;
+        lastAttemptErrorKind = e.lastAttemptErrorKind ?? lastAttemptErrorKind;
+        remainingBudgetMs = e.remainingBudgetMs ?? remainingBudgetMs;
 
         if (cacheLookup.stale) {
           cacheHeader = "hit-stale";
@@ -756,6 +866,9 @@ export async function POST(req: Request) {
       upstreamStatus = e.upstreamStatus ?? e.status;
       errorCode = e.errorCode ?? e.code;
       upstreamBodySnippet = e.upstreamBodySnippet ?? null;
+      attemptCount = e.attemptCount ?? attemptCount;
+      lastAttemptErrorKind = e.lastAttemptErrorKind ?? lastAttemptErrorKind;
+      remainingBudgetMs = e.remainingBudgetMs ?? remainingBudgetMs;
       return finish(NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: e.status }));
     }
     if (isTransientPrismaConnectionError(e)) {
