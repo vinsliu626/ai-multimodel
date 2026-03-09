@@ -231,7 +231,7 @@ describe("POST /api/ai-detector", () => {
   it("uses dev remote fallback when local detector is unavailable", async () => {
     const prevNodeEnv = process.env.NODE_ENV;
     const prevVercel = process.env.VERCEL;
-    process.env.NODE_ENV = "development";
+    vi.stubEnv("NODE_ENV", "development");
     process.env.AI_DETECTOR_DISABLE_DEV_FALLBACK = "0";
     delete process.env.VERCEL;
     process.env.DETECTOR_URL = "http://127.0.0.1:8000/detect";
@@ -272,14 +272,18 @@ describe("POST /api/ai-detector", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(4);
     expect(String(fetchSpy.mock.calls[3]?.[0])).toContain("vins0629-py-detector.hf.space");
 
-    process.env.NODE_ENV = prevNodeEnv;
-    process.env.VERCEL = prevVercel;
+    if (prevNodeEnv === undefined) {
+      vi.unstubAllEnvs();
+    } else {
+      vi.stubEnv("NODE_ENV", prevNodeEnv);
+      process.env.VERCEL = prevVercel;
+    }
   });
 
   it("uses remote fallback in local production mode when not on Vercel", async () => {
     const prevNodeEnv = process.env.NODE_ENV;
     const prevVercel = process.env.VERCEL;
-    process.env.NODE_ENV = "production";
+    vi.stubEnv("NODE_ENV", "production");
     process.env.AI_DETECTOR_DISABLE_DEV_FALLBACK = "0";
     delete process.env.VERCEL;
     process.env.DETECTOR_URL = "http://127.0.0.1:8000/detect";
@@ -320,7 +324,11 @@ describe("POST /api/ai-detector", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(4);
     expect(String(fetchSpy.mock.calls[3]?.[0])).toContain("vins0629-py-detector.hf.space");
 
-    process.env.NODE_ENV = prevNodeEnv;
-    process.env.VERCEL = prevVercel;
+    if (prevNodeEnv === undefined) {
+      vi.unstubAllEnvs();
+    } else {
+      vi.stubEnv("NODE_ENV", prevNodeEnv);
+      process.env.VERCEL = prevVercel;
+    }
   });
 });

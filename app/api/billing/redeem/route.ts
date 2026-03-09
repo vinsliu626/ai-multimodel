@@ -120,7 +120,6 @@ async function redeemWithGiftTables(input: { userId: string; normalizedCode: str
         },
         create: {
           userId,
-          plan: "basic",
           ...proFlags,
           promoPlan: policy.plan,
           promoAccessStartAt: now,

@@ -77,7 +77,7 @@ export function TopControls({
           <PillSelect
             value={mode}
             options={modeOptions}
-            onChange={(v) => setMode(v as Mode)}
+            onChange={(v: string) => setMode(v as Mode)}
             disabled={isLoading}
           />
         </div>
@@ -104,9 +104,9 @@ export function TopControls({
           </span>
 
           {mode === "single" ? (
-            <PillSelect value={singleModelKey} options={singleModelOptions} onChange={(v) => setSingleModelKey(v as SingleModelKey)} disabled={isLoading} />
+            <PillSelect value={singleModelKey} options={singleModelOptions} onChange={(v: string) => setSingleModelKey(v as SingleModelKey)} disabled={isLoading} />
           ) : mode === "team" ? (
-            <PillSelect value={modelKind} options={teamQualityOptions} onChange={(v) => setModelKind(v as ModelKind)} disabled={isLoading} />
+            <PillSelect value={modelKind} options={teamQualityOptions} onChange={(v: string) => setModelKind(v as ModelKind)} disabled={isLoading} />
           ) : mode === "detector" ? (
             <div className="w-full rounded-full border border-white/15 bg-slate-900/90 px-3 py-1 text-[11px] text-slate-100 shadow-inner shadow-slate-900/50">
               English only
