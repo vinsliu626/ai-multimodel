@@ -14,6 +14,8 @@ function labelFor(mode: ChatMode, lang: Lang) {
       return isZh ? "AI 检测" : "AI Detector";
     case "note":
       return isZh ? "AI 笔记" : "AI Note";
+    case "study":
+      return isZh ? "文档学习" : "Document Study";
     default:
       return mode;
   }
@@ -55,6 +57,11 @@ export function ModeDropdown({
         value: "note",
         title: isZh ? "AI 笔记" : "AI Note",
         desc: isZh ? "音频/文本生成笔记" : "Notes from audio/text",
+        },
+        {
+        value: "study",
+        title: isZh ? "文档学习" : "Document Study",
+        desc: isZh ? "上传文档生成笔记和测验" : "Upload docs for notes + quiz",
         },
     ];
     }, [isZh]);

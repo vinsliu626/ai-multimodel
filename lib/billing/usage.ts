@@ -22,10 +22,25 @@ export async function getUsage(userId: string) {
     }),
   ]);
 
+  let usedStudyCountToday = 0;
+  try {
+    const dayStudy = await prisma.usageEvent.aggregate({
+      where: { userId, type: "study_count", createdAt: { gte: dayStart } },
+      _sum: { amount: true },
+    });
+    usedStudyCountToday = dayStudy._sum.amount ?? 0;
+  } catch (error) {
+    console.warn("[billing.getUsage] study usage lookup failed; defaulting to zero", {
+      userId,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   return {
     usedDetectorWordsThisWeek: weekDetector._sum.amount ?? 0,
     usedNoteSecondsThisWeek: weekNote._sum.amount ?? 0,
     usedChatCountToday: dayChat._sum.amount ?? 0,
+    usedStudyCountToday,
   };
 }
 

@@ -855,7 +855,7 @@ export async function POST(req: Request) {
     try {
       await withPrismaConnectionRetry(
         () => assertQuotaOrThrow({ userId, action: "detector", amount: words }),
-        { maxRetries: 2, retryDelayMs: 200 }
+        { maxRetries: 2, retryDelayMs: 200, operationName: "detector-quota-check" }
       );
     } catch (e) {
       dbMs = Date.now() - dbStart;
@@ -977,6 +977,7 @@ export async function POST(req: Request) {
     await withPrismaConnectionRetry(() => addUsageEvent(userId, "detector_words", words), {
       maxRetries: 2,
       retryDelayMs: 200,
+      operationName: "detector-usage-event-write",
     }).catch((err) =>
       console.error("[detector] usageEvent write failed:", err)
     );

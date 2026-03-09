@@ -9,6 +9,16 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+enum PromoCodeType {
+  LIMITED
+  INTERNAL
+}
+
+enum PromoTargetPlan {
+  PRO
+  ULTRA
+}
+
 /// *
 /// * ===================== Chat =====================
 model ChatSession {
@@ -59,6 +69,17 @@ model UserEntitlement {
   usedChatCountToday        Int       @default(0)
   usedDetectorWordsThisWeek Int       @default(0)
   usedNoteSecondsThisWeek   Int       @default(0)
+  developerBypass           Boolean   @default(false)
+  developerBypassSetAt      DateTime?
+  developerBypassNote       String?
+  promoPlan                 String?
+  promoAccessStartAt        DateTime?
+  promoAccessEndAt          DateTime?
+  promoAccessActive         Boolean   @default(false)
+  promoRedemptions          PromoRedemption[]
+
+  @@index([developerBypass])
+  @@index([promoAccessActive, promoAccessEndAt])
 }
 
 model ProcessedStripeEvent {
@@ -93,6 +114,46 @@ model GiftCodeRedemption {
   @@index([code, createdAt])
 }
 
+model PromoCode {
+  id               String            @id @default(cuid())
+  codeHash         String            @unique
+  codeType         PromoCodeType     @default(LIMITED)
+  targetPlan       PromoTargetPlan   @default(PRO)
+  startsAt         DateTime?
+  expiresAt        DateTime?
+  grantDurationDays Int?
+  grantFixedEndsAt DateTime?
+  maxRedemptions   Int?
+  redeemedCount    Int               @default(0)
+  perUserLimit     Int               @default(1)
+  isActive         Boolean           @default(true)
+  notes            String?
+  createdBy        String?
+  lastRedeemedAt   DateTime?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  redemptions      PromoRedemption[]
+
+  @@index([isActive, expiresAt])
+  @@index([createdAt])
+}
+
+model PromoRedemption {
+  id             String      @id @default(cuid())
+  promoCodeId    String
+  userId         String
+  redeemedAt     DateTime    @default(now())
+  grantedPlan    PromoTargetPlan @default(PRO)
+  grantStartAt   DateTime
+  grantEndAt     DateTime?
+  grantStatus    String      @default("active")
+  promoCode      PromoCode   @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+  entitlement    UserEntitlement @relation(fields: [userId], references: [userId], onDelete: Restrict)
+
+  @@index([promoCodeId, redeemedAt])
+  @@index([userId, redeemedAt])
+}
+
 model UsageEvent {
   id        String   @id @default(cuid())
   userId    String
@@ -102,6 +163,23 @@ model UsageEvent {
 
   @@index([userId, type, createdAt])
   @@index([createdAt])
+}
+
+model StudySession {
+  id            String   @id @default(cuid())
+  userId        String
+  title         String
+  fileName      String?
+  fileSizeBytes Int?
+  mimeType      String?
+  selectedModes String[]
+  selectedQuizTypes String[]
+  resultJson    Json
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId, updatedAt])
+  @@index([userId, createdAt])
 }
 
 /// *

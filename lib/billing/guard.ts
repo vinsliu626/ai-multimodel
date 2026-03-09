@@ -1,7 +1,8 @@
 // lib/billing/guard.ts
 import { prisma } from "@/lib/prisma";
 import { stripe } from "@/lib/stripe";
-import { normalizePlan, planToFlags } from "@/lib/billing/planFlags";
+import { planToFlags } from "@/lib/billing/planFlags";
+import { resolveEffectiveAccessFromEntitlement } from "@/lib/billing/access";
 
 export type QuotaAction = "chat" | "detector" | "note";
 
@@ -16,18 +17,16 @@ export class QuotaError extends Error {
   }
 }
 
-// ------------------- time windows (UTC) -------------------
 function startOfTodayUTC() {
   const d = new Date();
   d.setUTCHours(0, 0, 0, 0);
   return d;
 }
 
-/** ISO week start (Mon) */
 function startOfISOWeekUTC() {
   const d = new Date();
   d.setUTCHours(0, 0, 0, 0);
-  const day = d.getUTCDay(); // 0 Sun ... 6 Sat
+  const day = d.getUTCDay();
   const diffToMon = day === 0 ? -6 : 1 - day;
   d.setUTCDate(d.getUTCDate() + diffToMon);
   return d;
@@ -50,35 +49,15 @@ function errorCodeOf(action: QuotaAction) {
   return "NOTE_QUOTA_EXCEEDED";
 }
 
-function limitOf(ent: { plan: string; detectorWordsPerWeek: number | null; noteSecondsPerWeek: number | null; chatPerDay: number | null }, action: QuotaAction) {
-  // 优先用 DB 里的额度（可以被礼包/自定义覆盖）
+function limitOf(
+  ent: { plan: string; detectorWordsPerWeek: number | null; noteSecondsPerWeek: number | null; chatPerDay: number | null },
+  action: QuotaAction
+) {
   if (action === "chat") return ent.chatPerDay;
   if (action === "detector") return ent.detectorWordsPerWeek;
   return ent.noteSecondsPerWeek;
 }
 
-function isActivePaidPlan(plan: string) {
-  const p = normalizePlan(plan);
-  return p === "pro" || p === "ultra";
-}
-
-/**
- * ✅ 核心：配额检查
- * - DEV_BYPASS_QUOTA=true -> 放行（仅本地）
- * - unlimited=true -> 放行
- * - plan=ultra -> 放行
- * - plan=pro:
- *    - chat -> 放行
- *    - detector/note -> 按周额度
- * - plan=basic:
- *    - chat -> 按天
- *    - detector/note -> 按周
- *
- * ✅ 严格订阅校验：
- * - 只要 plan 不是 basic：必须 stripeStatus=active
- * - 有 stripeSubId：实时 retrieve 同步
- * - 没 stripeSubId：直接降 basic（避免出现“伪 pro”）
- */
 export async function assertQuotaOrThrow(input: {
   userId: string;
   action: QuotaAction;
@@ -89,25 +68,31 @@ export async function assertQuotaOrThrow(input: {
 
   if (process.env.DEV_BYPASS_QUOTA === "true") return;
 
-  // 1) 读 ent（没有则创建 basic）
   let ent = await prisma.userEntitlement.upsert({
     where: { userId },
     update: {},
     create: { userId, plan: "basic" },
   });
 
-  const plan = normalizePlan(ent.plan);
-  const unlimited = Boolean(ent.unlimited);
+  // Runtime expiry enforcement for promo grants.
+  if (ent.promoAccessActive && ent.promoAccessEndAt && ent.promoAccessEndAt.getTime() <= Date.now()) {
+    ent = await prisma.userEntitlement.update({
+      where: { userId },
+      data: { promoAccessActive: false },
+    });
+  }
 
-  // 2) unlimited / ultra -> 放行
-  if (unlimited || plan === "ultra") return;
+  const access = resolveEffectiveAccessFromEntitlement(userId, ent);
+  const plan = access.plan;
 
-  // 3) 严格：非 basic 需要订阅有效
-  if (plan !== "basic") {
-    // 没有 stripeSubId：不允许
+  if (access.source === "developer_override") return;
+  if (access.unlimited || plan === "ultra") return;
+
+  // Promo grant path: trust runtime grant validity, no stripe checks.
+  if (access.source !== "promo" && plan !== "basic") {
     if (!ent.stripeSubId) {
       const flags = planToFlags("basic");
-      ent = await prisma.userEntitlement.update({
+      await prisma.userEntitlement.update({
         where: { userId },
         data: { ...flags, stripeStatus: "missing", stripeSubId: null, unlimited: false },
       });
@@ -116,14 +101,13 @@ export async function assertQuotaOrThrow(input: {
 
     try {
       const subResp = await stripe.subscriptions.retrieve(ent.stripeSubId);
-      const sub: any = (subResp as any).data ?? subResp;
+      const sub = (subResp as any).data ?? subResp;
 
       const status = (sub?.status as string | undefined) ?? null;
       const periodEnd = sub?.current_period_end ? new Date(sub.current_period_end * 1000) : null;
       const cancelAtPeriodEnd = Boolean(sub?.cancel_at_period_end ?? false);
 
-      // 同步状态到 DB
-      ent = await prisma.userEntitlement.update({
+      await prisma.userEntitlement.update({
         where: { userId },
         data: {
           stripeStatus: status ?? ent.stripeStatus ?? null,
@@ -132,18 +116,15 @@ export async function assertQuotaOrThrow(input: {
         },
       });
 
-      // 非 active：降 basic 并拒绝
       if (status !== "active") {
         const flags = planToFlags("basic");
         await prisma.userEntitlement.update({
           where: { userId },
           data: { ...flags, stripeStatus: status ?? "inactive", unlimited: false },
         });
-
         throw new QuotaError("PAYMENT_REQUIRED", "Subscription inactive (payment failed/canceled). Please renew.", 402);
       }
-    } catch (e: any) {
-      // Stripe 查不到 / 网络错误：为了安全，降 basic 并拒绝
+    } catch {
       const flags = planToFlags("basic");
       await prisma.userEntitlement.update({
         where: { userId },
@@ -160,11 +141,9 @@ export async function assertQuotaOrThrow(input: {
     }
   }
 
-  // 4) pro chat -> 放行
   if (plan === "pro" && action === "chat") return;
 
-  // 5) 额度上限：优先用 DB 的字段；如果为空就用 planToFlags 的默认
-  const flags = planToFlags(plan);
+  const flags = access.flags;
   const effective = {
     plan,
     detectorWordsPerWeek: (ent.detectorWordsPerWeek ?? flags.detectorWordsPerWeek ?? null) as number | null,
@@ -173,11 +152,8 @@ export async function assertQuotaOrThrow(input: {
   };
 
   const limit = limitOf(effective, action);
-
-  // null => 无限
   if (limit === null) return;
 
-  // 6) 查窗口内已用量
   const usageType = usageTypeOf(action);
   const since = windowStartOf(action);
 

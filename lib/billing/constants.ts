@@ -1,6 +1,6 @@
 // lib/billing/constants.ts
 export type PlanId = "basic" | "pro" | "ultra";
-export type UsageType = "detector_words" | "note_seconds" | "chat_count";
+export type UsageType = "detector_words" | "note_seconds" | "chat_count" | "study_count";
 
 export type PlanLimits = {
   detectorWordsPerWeek: number | null; // null = unlimited

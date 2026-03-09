@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 type RetryOptions = {
   maxRetries?: number;
   retryDelayMs?: number;
+  operationName?: string;
 };
 
 const TRANSIENT_CODES = new Set(["E57P01", "57P01", "P1001", "P1002", "P1017"]);
@@ -56,6 +57,7 @@ export async function withPrismaConnectionRetry<T>(
 ): Promise<T> {
   const maxRetries = options.maxRetries ?? 1;
   const retryDelayMs = options.retryDelayMs ?? 120;
+  const operationName = options.operationName ?? "prisma-operation";
 
   let retries = 0;
   while (true) {
@@ -66,6 +68,15 @@ export async function withPrismaConnectionRetry<T>(
         throw error;
       }
       retries += 1;
+      const code = getErrorCode(error);
+      console.warn("[prisma-retry] transient error; retrying", {
+        operation: operationName,
+        attempt: retries,
+        maxRetries,
+        retryDelayMs,
+        code,
+        message: getErrorMessage(error).slice(0, 180),
+      });
       if (retryDelayMs > 0) {
         const backoffMs = retryDelayMs * Math.pow(2, retries - 1);
         await sleep(backoffMs);

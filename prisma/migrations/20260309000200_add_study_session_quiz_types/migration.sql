@@ -1,0 +1,2 @@
+ALTER TABLE "StudySession"
+ADD COLUMN IF NOT EXISTS "selectedQuizTypes" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

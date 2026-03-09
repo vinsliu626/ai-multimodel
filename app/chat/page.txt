@@ -12,7 +12,6 @@ import { SettingsModal } from "@/components/chat/settings/SettingsModal";
 import { ChatHistoryRow } from "@/components/chat/sidebar/ChatHistoryRow";
 import { DetectorUI } from "@/components/workspace/detector/DetectorUI";
 import { NoteUI } from "@/components/workspace/note/NoteUI";
-import { StudyUI } from "@/components/workspace/study/StudyUI";
 
 // workflow UI
 import { Bubble } from "@/components/chat/ui/workflow/Bubble";
@@ -43,14 +42,6 @@ type Entitlement = {
   usedDetectorWordsThisWeek: number;
   usedNoteSecondsThisWeek: number;
   usedChatCountToday: number;
-  usedStudyCountToday: number;
-
-  studyGenerationsPerDay: number;
-  studyMaxFileSizeBytes: number;
-  studyMaxExtractedChars: number;
-  studyMaxQuizQuestions: number;
-  studyMaxSelectableModes?: number;
-  studyAllowedDifficulties: ("easy" | "medium" | "hard")[];
 
   canSeeSuspiciousSentences: boolean;
 };
@@ -223,7 +214,6 @@ function ChatPageInner() {
   // login gating
   const detectorLocked = !sessionExists;
   const noteLocked = !sessionExists;
-  const studyLocked = !sessionExists;
 
   // Stripe redirect: success/canceled
   useEffect(() => {
@@ -244,12 +234,6 @@ function ChatPageInner() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-
-  useEffect(() => {
-    if (mode === "study") {
-      setSidebarOpen(false);
-    }
-  }, [mode]);
 
   // ===== Settings persistence (lang/theme) =====
   useEffect(() => {
@@ -274,14 +258,6 @@ function ChatPageInner() {
     } catch {}
     document.documentElement.classList.toggle("dark", theme === "dark");
   }, [theme]);
-
-  // auto scroll to bottom when messages change
-  const chatContainerRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (chatContainerRef.current) {
-      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
-    }
-  }, [messages, isLoading]);
 
   // ===== Sessions =====
   async function loadSessions() {
@@ -352,6 +328,7 @@ function ChatPageInner() {
       setChatSessionId(sessionId);
       setSidebarOpen(false);
     } catch (err: any) {
+      // 不用 console（避免 no-console 直接 build fail）
       const msg = normalizeFetchError(err, isZh);
       setMessages([{ id: uid(), stage: "assistant", title: "AI", subtitle: "Error", content: msg }]);
     } finally {
@@ -495,7 +472,7 @@ function ChatPageInner() {
   }
 
   async function handleSend() {
-    if (mode === "detector" || mode === "note" || mode === "study") return;
+    if (mode === "detector" || mode === "note") return;
     if (!input.trim() || isLoading) return;
 
     const userText = input.trim();
@@ -623,7 +600,7 @@ function ChatPageInner() {
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (mode === "detector" || mode === "note" || mode === "study") return;
+    if (mode === "detector" || mode === "note") return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -686,134 +663,202 @@ function ChatPageInner() {
   const userInitial = effectiveSession?.user?.name?.[0] || effectiveSession?.user?.email?.[0] || "U";
 
   function setModeSafely(next: ChatMode) {
-    if (!sessionExists && (next === "detector" || next === "note" || next === "study")) {
+    if (!sessionExists && (next === "detector" || next === "note")) {
       setPlanOpen(true);
       return;
     }
     setMode(next);
   }
 
-  // 始终强制黑色/未来感主题基调
-  const isDark = theme === "dark" || true;
-
   return (
-    <main className="h-screen w-screen overflow-hidden text-slate-200 bg-[#030303] font-sans selection:bg-blue-500/30 selection:text-blue-100 relative">
+    <main
+      className={[
+        "h-screen w-screen overflow-hidden",
+        theme === "dark"
+          ? "text-slate-100 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950"
+          : "text-slate-900 bg-gradient-to-b from-slate-50 via-white to-slate-100",
+      ].join(" ")}
+    >
       <PlanPillStyles />
 
-      <div className="absolute inset-0 z-0 opacity-20 pointer-events-none base-grid" />
+      <div className="h-full w-full border border-white/10 bg-white/5 shadow-[0_18px_60px_rgba(15,23,42,0.8)] backdrop-blur-xl flex">
+        {sidebarOpen && <div className="fixed inset-0 z-40 bg-black/55 backdrop-blur-[1px]" onClick={() => setSidebarOpen(false)} />}
 
-      <div className="relative z-10 h-full w-full flex">
-        {/* 全局遮罩：桌面和移动端都一样，只有 sidebarOpen 时显示 */}
-        {sidebarOpen && (
-          <div
-            className="fixed inset-0 z-40 bg-black/60 transition-opacity"
-            onClick={() => setSidebarOpen(false)}
-          />
-        )}
-
-        {/* Sidebar：默认隐藏，点击菜单按钮才展开 */}
+        {/* Sidebar */}
         <aside
           className={[
-            "fixed z-50 left-0 top-0 h-full w-[280px]",
-            "border-r border-white/5 bg-[#080808]",
-            "transform transition-transform duration-300 ease-out flex flex-col",
+            "fixed z-50 left-0 top-0 h-full w-[290px] md:w-72",
+            "border-r border-white/10",
+            "bg-gradient-to-b from-slate-950/90 via-slate-900/85 to-slate-950/90",
+            "shadow-2xl shadow-black/40",
+            "backdrop-blur-xl",
+            "transform transition-transform duration-200 ease-out",
             sidebarOpen ? "translate-x-0" : "-translate-x-full",
           ].join(" ")}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Sidebar Header */}
-          <div className="px-5 pt-5 pb-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="relative h-6 w-6 flex items-center justify-center">
-                <div className="absolute inset-0 rounded-full bg-blue-500/20 blur-sm" />
-                <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse shadow-[0_0_8px_rgba(96,165,250,0.8)]" />
-              </div>
+          <div className="px-4 pt-4 pb-3 border-b border-white/5 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 rounded-2xl bg-gradient-to-br from-blue-500 via-cyan-400 to-emerald-400 animate-pulse shadow-lg shadow-blue-500/40" />
               <div className="leading-tight">
-                <p className="text-[10px] uppercase tracking-widest text-slate-500 font-mono">Terminal</p>
-                <p className="text-sm font-bold text-slate-200">{isZh ? "AI 工作台" : "Workspace"}</p>
+                <p className="text-xs uppercase tracking-widest text-slate-400">Workspace</p>
+                <p className="text-sm font-semibold text-slate-50">{isZh ? "AI 工作台" : "AI Workspace"}</p>
+
+                <button
+                  onClick={() => setSettingsOpen(true)}
+                  className="absolute right-3 bottom-3 w-10 h-10 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition flex items-center justify-center"
+                  title={isZh ? "设置" : "Settings"}
+                >
+                  ⚙️
+                </button>
               </div>
             </div>
 
             <div className="flex items-center gap-2">
               <button
                 onClick={handleNewChat}
-                className="h-7 w-7 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-colors flex items-center justify-center text-slate-300 shadow-sm"
-                title={isZh ? "新对话" : "New Chat"}
+                className="px-2.5 py-1.5 rounded-full text-xs font-medium bg-slate-900/80 text-slate-100 border border-white/10 hover:border-blue-500/60 hover:bg-slate-900 shadow-sm transition-all duration-150"
               >
-                +
+                {isZh ? "+ 新对话" : "+ New"}
               </button>
+
               <button
                 onClick={() => setSidebarOpen(false)}
-                className="h-7 w-7 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:bg-white/10 transition-colors"
-                title={isZh ? "关闭侧边栏" : "Close sidebar"}
+                className="h-8 w-8 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition flex items-center justify-center text-slate-200"
+                title={isZh ? "关闭" : "Close"}
               >
                 ✕
               </button>
             </div>
           </div>
 
-          <div className="px-5 pb-2">
-            <div className="h-px w-full bg-gradient-to-r from-white/10 to-transparent" />
-          </div>
+          <div className="flex-1 overflow-y-auto overflow-x-hidden px-2 pr-1 pb-3 space-y-1 mt-1 custom-scrollbar">
+            {!sessionExists && <div className="px-3 py-3 text-xs text-slate-400">{isZh ? "未登录：不会保存历史会话。" : "Not signed in: conversations are not saved."}</div>}
 
-          {/* Sidebar Content */}
-          <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 pb-3 space-y-0.5 custom-scrollbar">
-            {!sessionExists && (
-              <div className="px-3 py-4 text-xs text-slate-500 bg-white/[0.02] rounded-xl border border-white/5">
-                {isZh ? "未登录：不会保存历史会话。" : "Not signed in: sessions are not saved."}
-              </div>
-            )}
-
-            {sessionExists && sessionsLoading && (
-              <div className="px-3 py-4 text-xs text-slate-500 font-mono flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-slate-600 animate-ping" />
-                {isZh ? "加载缓存中..." : "Loading cache..."}
-              </div>
-            )}
+            {sessionExists && sessionsLoading && <div className="px-3 py-2 text-xs text-slate-400">{isZh ? "正在加载历史会话…" : "Loading sessions…"}</div>}
 
             {sessionExists && !sessionsLoading && sessions.length === 0 && (
-              <div className="px-3 py-4 text-xs text-slate-500 italic">
-                {isZh ? "暂无连接记录。" : "No connections found."}
+              <div className="px-3 py-2 text-xs text-slate-500">
+                {isZh ? (
+                  <>
+                    还没有保存的会话。<br />
+                    开始一次新的对话试试吧 👆
+                  </>
+                ) : (
+                  <>
+                    No conversations yet.<br />
+                    Start a new one 👆
+                  </>
+                )}
               </div>
             )}
 
             {sessionExists &&
-              sessions.map((s) => (
-                <ChatHistoryRow
-                  key={s.id}
-                  s={s}
-                  isActive={s.id === chatSessionId}
-                  isZh={isZh}
-                  busy={isLoading}
-                  onSelect={() => handleSelectSession(s.id)}
-                  onRenamed={() => loadSessions()}
-                  onPinnedChange={() => loadSessions()}
-                  onDeleted={() => {
-                    if (chatSessionId === s.id) {
-                      setMessages([]);
-                      setInput("");
-                      setChatSessionId(null);
-                    }
-                    loadSessions();
-                  }}
-                />
-              ))}
+              sessions.map((s) => {
+                const isActive = s.id === chatSessionId;
+                return (
+                  <ChatHistoryRow
+                    key={s.id}
+                    s={s}
+                    isActive={isActive}
+                    isZh={isZh}
+                    busy={isLoading}
+                    onSelect={() => handleSelectSession(s.id)}
+                    onRenamed={() => loadSessions()}
+                    onPinnedChange={() => loadSessions()}
+                    onDeleted={() => {
+                      if (chatSessionId === s.id) {
+                        setMessages([]);
+                        setInput("");
+                        setChatSessionId(null);
+                      }
+                      loadSessions();
+                    }}
+                  />
+                );
+              })}
           </div>
+        </aside>
 
-          {/* Sidebar Footer (Settings & User) */}
-          <div className="p-4 mt-auto border-t border-white/5 bg-[#050505]">
-            <div className="flex items-center justify-between">
+        {/* Main */}
+        <div className="flex-1 flex flex-col bg-slate-950/60">
+          <header className="border-b border-white/10 px-4 py-3 flex items-center justify-between gap-4 bg-slate-950/60">
+            {/* Left */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="h-9 w-9 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition flex items-center justify-center shadow-md shadow-blue-500/10"
+                title={isZh ? "打开历史会话" : "Open history"}
+              >
+                <span className="text-slate-200 text-sm">☰</span>
+              </button>
+
+              <div className="h-8 w-8 rounded-2xl bg-gradient-to-br from-blue-500 via-sky-500 to-emerald-400 shadow-md shadow-blue-500/40" />
+              <div className="flex flex-col gap-0.5">
+                <h1 className="font-semibold text-sm text-slate-100">
+                  {mode === "workflow"
+                    ? isZh
+                      ? "聊天 · 工作流"
+                      : "Chat · Workflow"
+                    : mode === "normal"
+                    ? isZh
+                      ? "聊天 · 普通"
+                      : "Chat · Normal"
+                    : mode === "detector"
+                    ? isZh
+                      ? "AI 检测"
+                      : "AI Detector"
+                    : isZh
+                    ? "AI 笔记"
+                    : "AI Note"}
+                </h1>
+                <p className="text-[11px] text-slate-400">
+                  {mode === "workflow"
+                    ? "Planner · Writer · Reviewer · Final"
+                    : mode === "normal"
+                    ? isZh
+                      ? "快速，传统对话模式"
+                      : "Fast, classic chat mode"
+                    : mode === "detector"
+                    ? isZh
+                      ? "文本检测"
+                      : "Text analysis"
+                    : isZh
+                    ? "笔记生成"
+                    : "Note generation"}
+                </p>
+              </div>
+            </div>
+
+            {/* Center */}
+            <div className="hidden md:flex items-center justify-center flex-1">
+              <PlanPillButton
+                isZh={isZh}
+                plan={ent?.plan ?? "basic"}
+                unlimited={!!ent?.unlimited}
+                onClick={() => {
+                  refreshEnt();
+                  setPlanOpen(true);
+                }}
+              />
+            </div>
+
+            {/* Right */}
+            <div className="flex items-center gap-2">
+              <ModeDropdown value={mode} onChange={setModeSafely} lang={lang} disabled={isLoading} />
+
               <button
                 onClick={() => setSettingsOpen(true)}
-                className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                className="h-9 w-9 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition flex items-center justify-center"
+                title={isZh ? "设置" : "Settings"}
               >
-                <span className="text-sm">⚙️</span> {isZh ? "系统设置" : "Settings"}
+                ⚙️
               </button>
 
               {sessionExists ? (
                 <button
                   onClick={() => signOut()}
-                  className="h-8 w-8 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-colors flex items-center justify-center text-xs font-mono text-slate-300"
+                  className="h-9 px-3 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
                   title={effectiveSession?.user?.email || ""}
                 >
                   {String(userInitial).toUpperCase()}
@@ -821,84 +866,11 @@ function ChatPageInner() {
               ) : (
                 <button
                   onClick={() => signIn()}
-                  className="px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 transition-colors text-xs font-medium"
+                  className="h-9 px-3 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 transition text-xs"
                 >
-                  {isZh ? "接入认证" : "Authenticate"}
+                  {isZh ? "登录" : "Sign in"}
                 </button>
               )}
-            </div>
-          </div>
-        </aside>
-
-        {/* Main Content */}
-        <div className="flex-1 flex flex-col relative min-w-0 bg-[#030303]">
-          {/* Header */}
-          <header className="h-16 border-b border-white/5 px-4 md:px-6 flex items-center justify-between gap-4 bg-[#080808]/80 backdrop-blur-md z-20 shrink-0">
-            {/* Left */}
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => {
-                  if (mode === "study") {
-                    window.dispatchEvent(new Event("study:open-history"));
-                    return;
-                  }
-                  setSidebarOpen(true);
-                }}
-                className="h-8 w-8 rounded-lg border border-white/10 bg-white/5 flex items-center justify-center text-slate-300 hover:bg-white/10 transition-colors"
-                title={mode === "study" ? "Open Study History" : isZh ? "打开侧边栏" : "Open sidebar"}
-              >
-                ☰
-              </button>
-
-              <div className="flex flex-col">
-                <h1 className="font-semibold text-sm text-slate-100 tracking-wide flex items-center gap-2">
-                  {mode === "workflow"
-                    ? isZh
-                      ? "多角色矩阵"
-                      : "Team Matrix"
-                    : mode === "normal"
-                    ? isZh
-                      ? "标准终端"
-                      : "Standard Terminal"
-                    : mode === "detector"
-                    ? isZh
-                      ? "AI 侦测"
-                      : "AI Detector"
-                    : isZh
-                    ? "智能笔记"
-                    : "Smart Note"}
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                </h1>
-                <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">
-                  {mode === "workflow"
-                    ? "P-W-R Flow Active"
-                    : mode === "normal"
-                    ? "Direct Connection"
-                    : mode === "detector"
-                    ? "Analysis Mode"
-                    : "Parsing Mode"}
-                </p>
-              </div>
-            </div>
-
-            {/* Center (Billing) */}
-            <div className="hidden md:flex items-center justify-center flex-1">
-              <div className="bg-[#050505] rounded-full p-0.5 border border-white/5 shadow-inner">
-                <PlanPillButton
-                  isZh={isZh}
-                  plan={ent?.plan ?? "basic"}
-                  unlimited={!!ent?.unlimited}
-                  onClick={() => {
-                    refreshEnt();
-                    setPlanOpen(true);
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Right */}
-            <div className="flex items-center gap-3">
-              <ModeDropdown value={mode} onChange={setModeSafely} lang={lang} disabled={isLoading} />
             </div>
           </header>
 
@@ -907,21 +879,9 @@ function ChatPageInner() {
             <DetectorUI isLoadingGlobal={isLoading} isZh={isZh} locked={detectorLocked} canSeeSuspicious={!!ent?.canSeeSuspiciousSentences} />
           ) : mode === "note" ? (
             <NoteUI isLoadingGlobal={isLoading} isZh={isZh} locked={noteLocked} />
-          ) : mode === "study" ? (
-            <StudyUI isZh={isZh} locked={studyLocked} entitlement={ent} onUsageRefresh={refreshEnt} />
           ) : (
             <>
-              {/* Chat Message Area */}
-              <div ref={chatContainerRef} className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-6 custom-scrollbar scroll-smooth">
-                {messages.length === 0 && !isLoading && (
-                  <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
-                    <div className="w-12 h-12 mb-4 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-                      <span className="text-xl">⚡️</span>
-                    </div>
-                    <p className="text-sm font-medium">{isZh ? "系统已就绪，等待输入" : "System ready. Awaiting input."}</p>
-                  </div>
-                )}
-
+              <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 py-4 space-y-4 custom-scrollbar">
                 {mode === "workflow" ? (
                   messages.map((m) => (
                     <Bubble
@@ -935,13 +895,13 @@ function ChatPageInner() {
                   ))
                 ) : (
                   messages.map((m) => (
-                    <div key={m.id} className={`flex w-full ${m.stage === "user" ? "justify-end" : "justify-start"}`}>
+                    <div key={m.id} className={`flex ${m.stage === "user" ? "justify-end" : "justify-start"}`}>
                       <div
                         className={[
-                          "px-4 py-3 rounded-2xl text-[14px] leading-relaxed max-w-[85%] md:max-w-[75%] whitespace-pre-wrap transition-all",
+                          "px-3 py-2 rounded-2xl text-sm whitespace-pre-wrap max-w-[80%] border backdrop-blur-sm",
                           m.stage === "user"
-                            ? "bg-blue-600/15 text-blue-50 border border-blue-500/20 rounded-br-sm shadow-[0_0_15px_rgba(59,130,246,0.05)]"
-                            : "bg-[#0f0f0f] text-slate-200 border border-white/5 rounded-bl-sm shadow-sm",
+                            ? "bg-slate-800/70 text-slate-100 border-slate-700/60"
+                            : "bg-slate-900/80 text-slate-100 border-white/10",
                         ].join(" ")}
                       >
                         {m.content}
@@ -951,70 +911,52 @@ function ChatPageInner() {
                 )}
 
                 {isLoading && (
-                  <div className="flex items-center gap-2 text-[11px] text-emerald-400 font-mono tracking-widest uppercase mt-4 opacity-80 pl-2">
-                    <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]" />
-                    {isZh ? "数据处理中..." : "Processing..."}
+                  <div className="text-[11px] text-slate-400 mt-2 flex items-center gap-2">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    {isZh ? "生成中……" : "Generating…"}
                   </div>
                 )}
-
-                <div className="h-4" />
               </div>
 
-              {/* Input Area (Console Style) */}
-              <div className="p-4 md:px-8 md:pb-6 pt-2 bg-gradient-to-t from-[#030303] via-[#030303] to-transparent shrink-0">
-                <div className="max-w-4xl mx-auto relative flex flex-col gap-2">
-                  <div className="relative flex items-end bg-[#0a0a0a] rounded-3xl border border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.8)] transition-all focus-within:border-blue-500/40 focus-within:shadow-[0_0_20px_rgba(59,130,246,0.1)]">
-                    <textarea
-                      className="flex-1 max-h-40 min-h-[52px] w-full bg-transparent text-slate-100 placeholder:text-slate-600 px-5 py-4 text-sm resize-none focus:outline-none focus:ring-0 custom-scrollbar"
-                      placeholder={isZh ? "输入指令，Enter 执行，Shift+Enter 换行" : "Enter command, press Enter to execute"}
-                      value={input}
-                      onChange={(e) => setInput(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      disabled={isLoading}
-                      rows={1}
-                      style={{ height: "auto" }}
-                      onInput={(e) => {
-                        const target = e.target as HTMLTextAreaElement;
-                        target.style.height = "auto";
-                        target.style.height = `${Math.min(target.scrollHeight, 160)}px`;
-                      }}
-                    />
+              <div className="border-t border-white/10 px-4 py-3 bg-slate-950/80">
+                <div className="flex gap-2 items-end">
+                  <textarea
+                    className="flex-1 border border-white/10 rounded-2xl px-3 py-2 text-sm resize-none h-20 bg-slate-950/70 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/70 focus:border-transparent"
+                    placeholder={isZh ? "输入你的问题，按 Enter 发送，Shift+Enter 换行" : "Type your question, press Enter to send, Shift+Enter for new line"}
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    disabled={isLoading}
+                  />
 
-                    <div className="pr-3 pb-3 shrink-0">
-                      <button
-                        onClick={handleSend}
-                        disabled={isLoading || !input.trim()}
-                        className="h-10 w-10 md:w-auto md:px-5 rounded-2xl bg-white text-black text-sm font-bold flex items-center justify-center gap-2 disabled:bg-white/10 disabled:text-slate-500 disabled:cursor-not-allowed transition-all duration-200 hover:scale-105 active:scale-95"
-                      >
-                        <span className="hidden md:inline">{isZh ? "发送" : "Send"}</span>
-                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                        </svg>
-                      </button>
-                    </div>
-                  </div>
-
-                  {sessionExists && ent && !ent.unlimited && ent.plan === "basic" && (
-                    <div className="px-4 flex items-center justify-between text-[10px] text-slate-500 font-mono uppercase tracking-wide">
-                      <span>
-                        {isZh ? "今日调用限制:" : "Daily limit:"}{" "}
-                        <span className="text-slate-300">
-                          {ent.usedChatCountToday}/{ent.chatPerDay}
-                        </span>
-                      </span>
-                      <button onClick={() => setPlanOpen(true)} className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2">
-                        {isZh ? "升级权限" : "Upgrade Access"}
-                      </button>
-                    </div>
-                  )}
+                  <button
+                    onClick={handleSend}
+                    disabled={isLoading || !input.trim()}
+                    className="w-28 h-10 rounded-2xl bg-gradient-to-r from-blue-500 via-sky-500 to-emerald-400 text-white text-sm font-medium shadow-md shadow-blue-500/40 disabled:from-slate-600 disabled:via-slate-700 disabled:to-slate-700 disabled:shadow-none disabled:cursor-not-allowed transition-all duration-150 hover:brightness-110"
+                  >
+                    {isLoading ? (isZh ? "思考中..." : "Thinking...") : isZh ? "发送 →" : "Send →"}
+                  </button>
                 </div>
+
+                {sessionExists && ent && !ent.unlimited && ent.plan === "basic" && (
+                  <div className="mt-2 text-[11px] text-slate-500">
+                    {isZh ? "Basic 今日聊天额度：" : "Basic chat quota today: "}
+                    <span className="text-slate-300">
+                      {ent.usedChatCountToday}/{ent.chatPerDay}
+                    </span>
+                    {" · "}
+                    <button onClick={() => setPlanOpen(true)} className="underline underline-offset-4 hover:text-slate-300">
+                      {isZh ? "升级解锁更多" : "Upgrade"}
+                    </button>
+                  </div>
+                )}
               </div>
             </>
           )}
         </div>
       </div>
 
-      {/* Modals */}
+      {/* Plan modal */}
       <PlanModal
         open={planOpen}
         onClose={() => setPlanOpen(false)}
@@ -1030,6 +972,7 @@ function ChatPageInner() {
         refreshEnt={refreshEnt}
       />
 
+      {/* Redeem modal */}
       <RedeemModal
         open={redeemOpen}
         onClose={() => setRedeemOpen(false)}
@@ -1039,6 +982,7 @@ function ChatPageInner() {
         error={redeemError}
       />
 
+      {/* Settings */}
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -1048,50 +992,13 @@ function ChatPageInner() {
         lang={lang}
         setLang={setLang}
       />
-
-      <style jsx global>{`
-        .base-grid {
-          background-image: radial-gradient(rgba(255, 255, 255, 0.1) 1px, transparent 1px);
-          background-size: 24px 24px;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 6px;
-          height: 6px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: transparent;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: rgba(255, 255, 255, 0.1);
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: rgba(255, 255, 255, 0.2);
-        }
-        .custom-scrollbar {
-          scrollbar-width: thin;
-          scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
-        }
-
-        textarea {
-          outline: none;
-        }
-      `}</style>
     </main>
   );
 }
 
 export default function ChatPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="h-screen w-screen bg-[#030303] flex items-center justify-center text-slate-500 font-mono text-sm">
-          <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse mr-3" />
-          INITIALIZING...
-        </div>
-      }
-    >
+    <Suspense fallback={<div className="p-6 text-slate-400">Loading…</div>}>
       <ChatPageInner />
     </Suspense>
   );

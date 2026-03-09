@@ -1,54 +1,224 @@
 // app/api/billing/redeem/route.ts
+import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
+import { Prisma } from "@prisma/client";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { hashPromoCode, normalizePromoCode } from "@/lib/promo/codeHash";
+import { redeemPromoCodeTx } from "@/lib/promo/service";
+import { planToFlags } from "@/lib/billing/planFlags";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
-  const userId = (session as any)?.user?.id as string | undefined;
-  if (!userId) return NextResponse.json({ ok: false, error: "UNAUTHENTICATED" }, { status: 401 });
+function makeRequestId(req: Request): string {
+  const headerId = req.headers.get("x-request-id")?.trim();
+  if (headerId) return headerId.slice(0, 128);
+  return randomUUID();
+}
 
-  const body = await req.json().catch(() => null);
-  const code = String(body?.code || "").trim();
-  if (!code) return NextResponse.json({ ok: false, error: "MISSING_CODE" }, { status: 400 });
+function resolveUserId(sessionUserId: string | undefined, req: Request): string | undefined {
+  if (sessionUserId) return sessionUserId;
+  if (process.env.NODE_ENV !== "production" && process.env.DEV_BYPASS_AUTH === "true") {
+    const headerUserId = req.headers.get("x-dev-user-id")?.trim();
+    if (headerUserId) return headerUserId.slice(0, 128);
+    const envUser = process.env.DEV_USER_EMAIL?.trim();
+    if (envUser) return envUser.slice(0, 128);
+    return "dev_user";
+  }
+  return undefined;
+}
 
-  try {
-    const result = await prisma.$transaction(async () => {
-      const gift = await prisma.giftCode.findUnique({ where: { code } });
-      if (!gift || !gift.isActive) return { ok: false as const, error: "INVALID_CODE" };
+function isPromoTableMissingError(error: unknown): boolean {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") {
+    const table = String((error.meta as { table?: unknown } | undefined)?.table ?? "");
+    if (table.includes("PromoCode") || table.includes("PromoRedemption")) return true;
+  }
 
-      if (gift.maxUses !== null && gift.usedCount >= gift.maxUses) {
-        return { ok: false as const, error: "CODE_EXHAUSTED" };
-      }
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("PromoCode") && message.includes("does not exist");
+}
 
-      const existing = await prisma.giftCodeRedemption.findUnique({
-        where: { code_userId: { code, userId } },
-      });
+type GiftCampaignPolicy = {
+  plan: "pro";
+  grantDurationDays: number;
+  codeExpiresAt: Date;
+};
 
-      if (!existing) {
-        await prisma.giftCodeRedemption.create({ data: { code, userId } });
-        await prisma.giftCode.update({
-          where: { code },
-          data: { usedCount: { increment: 1 } },
-        });
-      }
+const GIFT_CAMPAIGN_BY_CODE: Record<string, GiftCampaignPolicy> = {
+  HELLO_WORLD: {
+    plan: "pro",
+    grantDurationDays: 7,
+    // Code expires after this UTC timestamp.
+    codeExpiresAt: new Date("2026-03-09T00:00:00.000Z"),
+  },
+};
 
-      await prisma.userEntitlement.upsert({
-        where: { userId },
-        create: { userId, plan: "basic", unlimited: true, unlimitedSource: "gift" },
-        update: { unlimited: true, unlimitedSource: "gift" },
-      });
+function resolveGiftCampaignPolicy(code: string): GiftCampaignPolicy {
+  const policy = GIFT_CAMPAIGN_BY_CODE[code];
+  if (policy) return policy;
+  return {
+    plan: "pro",
+    grantDurationDays: 7,
+    codeExpiresAt: new Date("2099-01-01T00:00:00.000Z"),
+  };
+}
 
-      return { ok: true as const };
+function resolveNow(req: Request): Date {
+  if (process.env.NODE_ENV !== "production") {
+    const devNow = req.headers.get("x-dev-now")?.trim();
+    if (devNow) {
+      const parsed = new Date(devNow);
+      if (Number.isFinite(parsed.getTime())) return parsed;
+    }
+  }
+  return new Date();
+}
+
+async function redeemWithGiftTables(input: { userId: string; normalizedCode: string; requestId: string; now: Date }) {
+  const { userId, normalizedCode, requestId, now } = input;
+  const policy = resolveGiftCampaignPolicy(normalizedCode);
+
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`gift:${normalizedCode}`}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`gift-user:${normalizedCode}:${userId}`}))`;
+
+    const gift = await tx.giftCode.findUnique({ where: { code: normalizedCode } });
+    if (!gift) return { ok: false as const, error: "INVALID_CODE" as const };
+    if (!gift.isActive) return { ok: false as const, error: "INACTIVE_CODE" as const };
+    if (policy.codeExpiresAt.getTime() <= now.getTime()) return { ok: false as const, error: "CODE_EXPIRED" as const };
+    if (gift.maxUses !== null && gift.usedCount >= gift.maxUses) {
+      return { ok: false as const, error: "CODE_EXHAUSTED" as const };
+    }
+
+    const redeemed = await tx.giftCodeRedemption.findFirst({
+      where: { code: normalizedCode, userId },
+      select: { id: true },
+    });
+    if (redeemed) return { ok: false as const, error: "PER_USER_LIMIT_REACHED" as const };
+
+    await tx.giftCodeRedemption.create({
+      data: { code: normalizedCode, userId },
+    });
+    await tx.giftCode.update({
+      where: { code: normalizedCode },
+      data: { usedCount: { increment: 1 } },
     });
 
-    if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: 400 });
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json({ ok: false, error: e?.message || "REDEEM_FAILED" }, { status: 500 });
+    const proFlags = planToFlags(policy.plan);
+    const grantEndAt = new Date(now.getTime() + policy.grantDurationDays * 24 * 60 * 60 * 1000);
+    try {
+      await tx.userEntitlement.upsert({
+        where: { userId },
+        update: {
+          ...proFlags,
+          promoPlan: policy.plan,
+          promoAccessStartAt: now,
+          promoAccessEndAt: grantEndAt,
+          promoAccessActive: true,
+        },
+        create: {
+          userId,
+          plan: "basic",
+          ...proFlags,
+          promoPlan: policy.plan,
+          promoAccessStartAt: now,
+          promoAccessEndAt: grantEndAt,
+          promoAccessActive: true,
+        },
+      });
+    } catch {
+      // Local legacy schemas may not include promo fields; redemption record is still committed.
+    }
+
+    return {
+      ok: true as const,
+      plan: policy.plan,
+      grantEndAt,
+      source: "gift" as const,
+      requestId,
+    };
+  });
+
+  return result;
+}
+
+export async function POST(req: Request) {
+  const requestId = makeRequestId(req);
+  const now = resolveNow(req);
+  const session = await getServerSession(authOptions);
+  const userId = resolveUserId((session as any)?.user?.id as string | undefined, req);
+  if (!userId) return NextResponse.json({ ok: false, error: "UNAUTHENTICATED", requestId }, { status: 401 });
+
+  const body = await req.json().catch(() => null);
+  const rawCode = String(body?.code || "");
+  const normalizedCode = normalizePromoCode(rawCode);
+  if (!normalizedCode) return NextResponse.json({ ok: false, error: "MISSING_CODE", requestId }, { status: 400 });
+
+  try {
+    const codeHash = hashPromoCode(normalizedCode);
+    let result:
+      | { ok: false; error: "INVALID_CODE" | "INACTIVE_CODE" | "NOT_STARTED" | "CODE_EXPIRED" | "CODE_EXHAUSTED" | "PER_USER_LIMIT_REACHED" | "INVALID_GRANT_WINDOW" }
+      | { ok: true; plan: string; grantEndAt: Date | null; source: string };
+
+    try {
+      result = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`promo:${codeHash}`}))`;
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`promo-user:${codeHash}:${userId}`}))`;
+
+        const promo = await tx.promoCode.findUnique({ where: { codeHash } });
+        if (!promo) return { ok: false as const, error: "INVALID_CODE" as const };
+
+        return redeemPromoCodeTx(tx, userId, promo, now);
+      });
+    } catch (error) {
+      if (!isPromoTableMissingError(error)) throw error;
+      console.warn("[billing.redeem] promo tables missing; falling back to GiftCode", { requestId, userId });
+      result = await redeemWithGiftTables({ userId, normalizedCode, requestId, now });
+    }
+
+    if (!result.ok) {
+      return NextResponse.json({ ok: false, error: result.error, requestId }, { status: 400 });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      plan: result.plan,
+      grantEndAt: result.grantEndAt,
+      source: result.source,
+      requestId,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const reason =
+      message === "PROMO_CONFIG_MISSING_SECRET" || message === "PROMO_CONFIG_INVALID_SECRET"
+        ? message
+        : "REDEEM_RUNTIME_ERROR";
+    console.error("[billing.redeem] failed", { requestId, userId, reason });
+
+    if (message === "PROMO_CONFIG_MISSING_SECRET") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "PROMO_CONFIG_MISSING_SECRET",
+          message: "Server promo config is missing. Set PROMO_CODE_SECRET.",
+          requestId,
+        },
+        { status: 500 }
+      );
+    }
+    if (message === "PROMO_CONFIG_INVALID_SECRET") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: "PROMO_CONFIG_INVALID_SECRET",
+          message: "Server promo config is invalid. Replace PROMO_CODE_SECRET with a non-placeholder secret.",
+          requestId,
+        },
+        { status: 500 }
+      );
+    }
+    return NextResponse.json({ ok: false, error: "REDEEM_FAILED", requestId }, { status: 500 });
   }
 }

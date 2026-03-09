@@ -82,6 +82,31 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Document Study Generator
+
+The chat workspace now includes a `Document Study` mode for signed-in users:
+
+- Upload `PDF`, `DOCX`, or `PPTX`
+- Extract text in the browser when possible
+- Generate concise notes plus a bounded quiz from `/api/study/generate`
+
+Cost controls are enforced server-side by plan:
+
+- `basic`: 1 generation/day, 2 MB upload, 8,000 chars to model, max 5 quiz questions
+- `pro`: 5 generations/day, 5 MB upload, 20,000 chars, max 10 quiz questions
+- `ultra`: 12 generations/day, 10 MB upload, 35,000 chars, max 15 quiz questions
+
+At least one AI provider key must be configured:
+
+- `GROQ_API_KEY`
+- `DEEPSEEK_API_KEY`
+- `KIMI_API_KEY`
+
+Notes:
+
+- repeated identical requests are cached in-process to reduce duplicate AI spend
+- PPTX extraction is best-effort and reads slide text from the presentation XML; speaker notes and complex embedded objects are not guaranteed
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
