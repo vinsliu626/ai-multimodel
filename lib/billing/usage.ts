@@ -6,8 +6,9 @@ import type { UsageType } from "./constants";
 export async function getUsage(userId: string) {
   const weekStart = startOfThisWeekUTC();
   const dayStart = startOfTodayUTC();
+  const chatBudgetWindowStart = new Date(Date.now() - 3 * 60 * 60 * 1000);
 
-  const [weekDetector, weekNote, dayChat] = await Promise.all([
+  const [weekDetector, weekNote, dayChat, dayNoteGenerates, chatBudgetWindow] = await Promise.all([
     prisma.usageEvent.aggregate({
       where: { userId, type: "detector_words", createdAt: { gte: weekStart } },
       _sum: { amount: true },
@@ -18,6 +19,14 @@ export async function getUsage(userId: string) {
     }),
     prisma.usageEvent.aggregate({
       where: { userId, type: "chat_count", createdAt: { gte: dayStart } },
+      _sum: { amount: true },
+    }),
+    prisma.usageEvent.aggregate({
+      where: { userId, type: "note_generate_count", createdAt: { gte: dayStart } },
+      _sum: { amount: true },
+    }),
+    prisma.usageEvent.aggregate({
+      where: { userId, type: "chat_input_chars", createdAt: { gte: chatBudgetWindowStart } },
       _sum: { amount: true },
     }),
   ]);
@@ -40,6 +49,8 @@ export async function getUsage(userId: string) {
     usedDetectorWordsThisWeek: weekDetector._sum.amount ?? 0,
     usedNoteSecondsThisWeek: weekNote._sum.amount ?? 0,
     usedChatCountToday: dayChat._sum.amount ?? 0,
+    usedNoteGeneratesToday: dayNoteGenerates._sum.amount ?? 0,
+    usedChatInputCharsWindow: chatBudgetWindow._sum.amount ?? 0,
     usedStudyCountToday,
   };
 }

@@ -9,10 +9,12 @@ export function useNoteController({
   locked,
   isLoadingGlobal,
   isZh,
+  onUsageRefresh,
 }: {
   locked: boolean;
   isLoadingGlobal: boolean;
   isZh: boolean;
+  onUsageRefresh?: () => Promise<void> | void;
 }) {
   const [tab, setTab] = useState<NoteTab>("upload");
 
@@ -29,6 +31,7 @@ export function useNoteController({
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   // finalize progress (record only)
   const [finalizeStage, setFinalizeStage] = useState<string>("idle"); // idle|asr|summarize|merge|done|failed
@@ -58,6 +61,21 @@ export function useNoteController({
   function resetAll() {
     setError(null);
     setResult("");
+    setSuccess(null);
+  }
+
+  function friendlyMessageFromApi(payload: any, fallback: string) {
+    const code = String(payload?.error || "");
+    if (code === "NOTE_DAILY_LIMIT_REACHED") {
+      return isZh ? "今天的 AI 笔记次数已经用完了。" : "You've used all AI Note generations for today.";
+    }
+    if (code === "NOTE_COOLDOWN_ACTIVE") {
+      return isZh ? "请稍等片刻后再试。" : "Please wait a moment before sending another request.";
+    }
+    if (code === "NOTE_INPUT_TOO_LARGE") {
+      return isZh ? "这段文本超过了当前套餐限制。" : "This text is too long for your current plan.";
+    }
+    return payload?.message || fallback;
   }
 
   function stopTimer() {
@@ -272,6 +290,7 @@ export function useNoteController({
     setLoading(true);
     setError(null);
     setResult("");
+    setSuccess(null);
 
     try {
       // Text
@@ -284,9 +303,11 @@ export function useNoteController({
 
         const data = await res.json().catch(() => ({}));
         if (!res.ok || data?.ok === false) {
-          throw new Error(data?.error || `AI Note API error: ${res.status}`);
+          throw new Error(friendlyMessageFromApi(data, isZh ? "生成笔记失败。" : "Unable to generate notes."));
         }
         setResult(String(data?.note ?? data?.result ?? ""));
+        setSuccess(isZh ? "笔记已生成。" : "Notes generated.");
+        onUsageRefresh?.();
         return;
       }
 
@@ -300,9 +321,11 @@ export function useNoteController({
         const res = await fetch("/api/ai-note", { method: "POST", body: fd });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || data?.ok === false) {
-          throw new Error(data?.error || `AI Note API error: ${res.status}`);
+          throw new Error(friendlyMessageFromApi(data, isZh ? "生成笔记失败。" : "Unable to generate notes."));
         }
         setResult(String(data?.note ?? data?.result ?? ""));
+        setSuccess(isZh ? "笔记已生成。" : "Notes generated.");
+        onUsageRefresh?.();
         return;
       }
 
@@ -341,8 +364,7 @@ export function useNoteController({
 
         if (!r.ok || j?.ok === false) {
           const msg =
-            j?.error ||
-            j?.message ||
+            friendlyMessageFromApi(j, "") ||
             (raw ? raw.slice(0, 300) : "") ||
             `Finalize error: ${r.status}`;
           setFinalizeStage("failed");
@@ -354,6 +376,8 @@ export function useNoteController({
         setFinalizeProgress(Number.isFinite(j?.progress) ? Number(j.progress) : 100);
 
         setResult(String(j?.note ?? j?.result ?? ""));
+        setSuccess(isZh ? "笔记已生成。" : "Notes generated.");
+        onUsageRefresh?.();
         return;
       }
 
@@ -410,6 +434,7 @@ export function useNoteController({
     loading,
     result,
     error,
+    success,
     noteId,
     uploadedChunks,
     chunkError,

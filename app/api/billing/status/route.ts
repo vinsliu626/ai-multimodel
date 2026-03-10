@@ -9,6 +9,8 @@ import { getUsage } from "@/lib/billing/usage";
 import { isTransientPrismaConnectionError, withPrismaConnectionRetry } from "@/lib/prismaRetry";
 import { resolveEffectiveAccessFromEntitlement } from "@/lib/billing/access";
 import { getStudyPlanLimits } from "@/lib/study/limits";
+import { ensureRuntimeEntitlement, runtimeEntitlementSelect } from "@/lib/billing/entitlementDb";
+import { getChatPlanLimits, getNotePlanLimits } from "@/lib/plans/productLimits";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +27,8 @@ function fallbackBillingStatus(userId: string) {
   const plan = normalizePlan("basic");
   const flags = planToFlags(plan);
   const studyLimits = getStudyPlanLimits(plan);
+  const chatLimits = getChatPlanLimits(plan);
+  const noteLimits = getNotePlanLimits(plan);
 
   return NextResponse.json({
     ok: true,
@@ -45,6 +49,16 @@ function fallbackBillingStatus(userId: string) {
     usedDetectorWordsThisWeek: 0,
     usedNoteSecondsThisWeek: 0,
     usedChatCountToday: 0,
+    usedNoteGeneratesToday: 0,
+    usedChatInputCharsWindow: 0,
+    chatInputMaxChars: chatLimits.maxInputChars,
+    chatBudgetCharsPerWindow: chatLimits.budgetCharsPerWindow,
+    chatBudgetWindowHours: chatLimits.budgetWindowHours,
+    chatCooldownMs: chatLimits.cooldownMs,
+    noteGeneratesPerDay: noteLimits.generatesPerDay,
+    noteInputMaxChars: noteLimits.maxInputChars,
+    noteMaxItems: noteLimits.maxItems,
+    noteCooldownMs: noteLimits.cooldownMs,
     studyGenerationsPerDay: studyLimits.generationsPerDay,
     studyMaxFileSizeBytes: studyLimits.maxFileSizeBytes,
     studyMaxExtractedChars: studyLimits.maxExtractedChars,
@@ -64,11 +78,7 @@ export async function GET() {
         if (!userId) return NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 });
 
         try {
-          let ent = await prisma.userEntitlement.upsert({
-            where: { userId },
-            update: {},
-            create: { userId, plan: "basic" },
-          });
+          let ent = await ensureRuntimeEntitlement(prisma, userId);
 
           if (ent.stripeSubId) {
             try {
@@ -88,6 +98,7 @@ export async function GET() {
                   currentPeriodEnd: currentPeriodEnd ?? undefined,
                   cancelAtPeriodEnd,
                 },
+                select: runtimeEntitlementSelect,
               });
 
               if (!ent.unlimited && normalizePlan(ent.plan) !== "basic" && ent.stripeStatus !== "active") {
@@ -98,6 +109,7 @@ export async function GET() {
                     ...basicFlags,
                     stripeStatus: ent.stripeStatus ?? "inactive",
                   },
+                  select: runtimeEntitlementSelect,
                 });
               }
             } catch {
@@ -112,21 +124,16 @@ export async function GET() {
                     currentPeriodEnd: null,
                     cancelAtPeriodEnd: false,
                   },
+                  select: runtimeEntitlementSelect,
                 });
               } else {
                 ent = await prisma.userEntitlement.update({
                   where: { userId },
                   data: { stripeStatus: "missing", stripeSubId: null },
+                  select: runtimeEntitlementSelect,
                 });
               }
             }
-          }
-
-          if (ent.promoAccessActive && ent.promoAccessEndAt && ent.promoAccessEndAt.getTime() <= Date.now()) {
-            ent = await prisma.userEntitlement.update({
-              where: { userId },
-              data: { promoAccessActive: false },
-            });
           }
 
           const access = resolveEffectiveAccessFromEntitlement(userId, ent);
@@ -149,6 +156,7 @@ export async function GET() {
                   chatPerDay: flags.chatPerDay ?? null,
                   canSeeSuspiciousSentences: flags.canSeeSuspiciousSentences,
                 },
+                select: runtimeEntitlementSelect,
               });
             }
           }
@@ -156,6 +164,8 @@ export async function GET() {
           const usage = await getUsage(userId);
           const entitled = access.entitled;
           const studyLimits = getStudyPlanLimits(plan);
+          const chatLimits = getChatPlanLimits(plan);
+          const noteLimits = getNotePlanLimits(plan);
           const daysLeft =
             access.source === "promo"
               ? daysLeftFromDate(access.promoExpiresAt)
@@ -181,8 +191,8 @@ export async function GET() {
             entitled,
             source: access.source,
             unlimited: access.unlimited,
-            unlimitedSource: access.source === "promo" ? "promo" : ent.unlimitedSource ?? null,
-            promoAccessEndAt: ent.promoAccessEndAt ?? null,
+            unlimitedSource: ent.unlimitedSource ?? null,
+            promoAccessEndAt: null,
             developerBypass: access.source === "developer_override",
             detectorWordsPerWeek: ent.detectorWordsPerWeek ?? flags.detectorWordsPerWeek ?? null,
             noteSecondsPerWeek: ent.noteSecondsPerWeek ?? flags.noteSecondsPerWeek ?? null,
@@ -191,6 +201,16 @@ export async function GET() {
             usedDetectorWordsThisWeek: usage.usedDetectorWordsThisWeek,
             usedNoteSecondsThisWeek: usage.usedNoteSecondsThisWeek,
             usedChatCountToday: usage.usedChatCountToday,
+            usedNoteGeneratesToday: usage.usedNoteGeneratesToday,
+            usedChatInputCharsWindow: usage.usedChatInputCharsWindow,
+            chatInputMaxChars: chatLimits.maxInputChars,
+            chatBudgetCharsPerWindow: chatLimits.budgetCharsPerWindow,
+            chatBudgetWindowHours: chatLimits.budgetWindowHours,
+            chatCooldownMs: chatLimits.cooldownMs,
+            noteGeneratesPerDay: noteLimits.generatesPerDay,
+            noteInputMaxChars: noteLimits.maxInputChars,
+            noteMaxItems: noteLimits.maxItems,
+            noteCooldownMs: noteLimits.cooldownMs,
             studyGenerationsPerDay: studyLimits.generationsPerDay,
             studyMaxFileSizeBytes: studyLimits.maxFileSizeBytes,
             studyMaxExtractedChars: studyLimits.maxExtractedChars,

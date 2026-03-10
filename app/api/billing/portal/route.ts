@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { stripe } from "@/lib/stripe";
 import { prisma } from "@/lib/prisma";
+import { mutationResultSelect } from "@/lib/billing/entitlementDb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +13,13 @@ export async function POST() {
   const userId = (session as any)?.user?.id as string | undefined;
   if (!userId) return NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 });
 
-  const ent = await prisma.userEntitlement.findUnique({ where: { userId } });
+  const ent = await prisma.userEntitlement.findUnique({
+    where: { userId },
+    select: {
+      ...mutationResultSelect,
+      stripeCustomerId: true,
+    },
+  });
   const customerId = ent?.stripeCustomerId;
 
   if (!customerId) {

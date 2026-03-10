@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
 import { addUsageEvent } from "@/lib/billing/usage";
+import { assertChatRequestAllowed, ChatLimitError } from "@/lib/chat/quota";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -505,6 +506,18 @@ export async function POST(request: Request) {
     const isZh = body.lang === "zh" || /[\u4e00-\u9fff]/.test(getLastUserText(messages));
     const userRequest = getLastUserText(messages);
     if (!userRequest) return jsonErr(400, "NO_USER_INPUT", "No user message found");
+    let chatInputChars = 0;
+    if (shouldBillChat) {
+      try {
+        const chatCheck = await assertChatRequestAllowed(userId!, userRequest);
+        chatInputChars = chatCheck.inputChars;
+      } catch (e) {
+        if (e instanceof ChatLimitError) {
+          return NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: e.status });
+        }
+        throw e;
+      }
+    }
 
     // ========= SSE 模式 =========
     if (wantsSSE(request)) {
@@ -530,7 +543,7 @@ export async function POST(request: Request) {
 
               const writerMsgs = buildStageMessages(
                 messages,
-                systemWriter(isZh),
+                systemAssistant(isZh),
                 isZh
                   ? `用户需求：\n${userRequest}\n\n请直接给出最终回答。`
                   : `User request:\n${userRequest}\n\nGive the final answer.`
@@ -664,7 +677,7 @@ export async function POST(request: Request) {
     if (mode === "single") {
       const writerMsgs = buildStageMessages(
         messages,
-        systemWriter(isZh),
+        systemAssistant(isZh),
         isZh ? `用户需求：\n${userRequest}\n\n请直接给出最终回答。` : `User request:\n${userRequest}\n\nGive the final answer.`
       );
 
@@ -766,4 +779,22 @@ export async function POST(request: Request) {
     const mapped = mapUpstreamError(err);
     return jsonErr(mapped.status, mapped.error, mapped.message, mapped.extra);
   }
+}
+
+function systemAssistant(isZh: boolean) {
+  return isZh
+    ? [
+        "你是一个自然、直接、可靠的 AI 助手。",
+        "直接回答用户问题，像正常对话一样输出。",
+        "除非用户明确要求，否则不要使用 Workflow/Review 风格结构。",
+        "不要输出 Review、Revised Draft、Conclusion、Key Improvements 这类标签。",
+        "回答要清晰、实用、不过度铺陈。",
+      ].join("\n")
+    : [
+        "You are a natural, direct, reliable AI assistant.",
+        "Answer the user's message as a normal conversational reply.",
+        "Unless the user explicitly asks for it, do not use workflow/review formatting.",
+        "Do not output labels like Review, Revised Draft, Conclusion, or Key Improvements.",
+        "Be clear, practical, and concise.",
+      ].join("\n");
 }

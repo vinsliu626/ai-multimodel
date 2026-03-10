@@ -15,6 +15,7 @@ import { Buffer } from "node:buffer";
 import { transcribeAudioToText } from "@/lib/asr/transcribe";
 import { callGroqTranscribe } from "@/lib/ai/groq";
 import { runAiNotePipeline } from "@/lib/aiNote/pipeline";
+import { assertNoteRequestAllowed, markNoteAttempt, NoteLimitError, recordNoteGenerateSuccess } from "@/lib/aiNote/quota";
 
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
 import { addUsageEvent } from "@/lib/billing/usage";
@@ -536,6 +537,15 @@ export async function POST(req: Request) {
 
         const transcriptAll = rows.map((r) => r.text || "").filter(Boolean).join("\n").trim();
         if (!transcriptAll) return bad("ASR_FAILED", 422, "Transcript is empty.");
+        try {
+          await assertNoteRequestAllowed(userId, transcriptAll.length);
+          markNoteAttempt(userId);
+        } catch (error) {
+          if (error instanceof NoteLimitError) {
+            return NextResponse.json({ ok: false, error: error.code, message: error.message }, { status: error.status });
+          }
+          throw error;
+        }
 
         if (isOfflineMode()) {
           const preview = transcriptAll.slice(0, 2000);
@@ -628,6 +638,7 @@ export async function POST(req: Request) {
           });
 
           await addUsageEvent(userId, "note_seconds", seconds).catch(() => {});
+          await recordNoteGenerateSuccess(userId).catch(() => {});
 
           await prisma.aiNoteJob.update({
             where: { noteId },

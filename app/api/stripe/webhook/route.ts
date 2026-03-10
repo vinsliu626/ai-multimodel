@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { prisma } from "@/lib/prisma";
 import { normalizePlan, planToFlags, type PlanId } from "@/lib/billing/planFlags";
+import { mutationResultSelect } from "@/lib/billing/entitlementDb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -103,6 +104,7 @@ export async function POST(req: Request) {
               stripeSubId: subscriptionId,
               stripeStatus: "pending",
             },
+            select: mutationResultSelect,
           });
         }
         break;
@@ -161,6 +163,7 @@ export async function POST(req: Request) {
             cancelAtPeriodEnd: cancelAtPeriodEnd ?? undefined,
             // ??unlimited/unlimitedSource
           },
+          select: mutationResultSelect,
         });
 
         break;
@@ -194,6 +197,7 @@ export async function POST(req: Request) {
             stripeStatus: "past_due",
             //  stripeSubId/stripeCustomerId 
           },
+          select: mutationResultSelect,
         });
 
         break;
@@ -236,6 +240,7 @@ export async function POST(req: Request) {
               currentPeriodEnd: currentPeriodEnd ?? undefined,
               cancelAtPeriodEnd,
             },
+            select: mutationResultSelect,
           });
         } else {
           // ? active  basic
@@ -249,6 +254,7 @@ export async function POST(req: Request) {
               currentPeriodEnd: currentPeriodEnd ?? undefined,
               cancelAtPeriodEnd,
             },
+            select: mutationResultSelect,
           });
         }
 

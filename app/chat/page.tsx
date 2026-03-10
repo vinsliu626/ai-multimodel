@@ -43,8 +43,18 @@ type Entitlement = {
   usedDetectorWordsThisWeek: number;
   usedNoteSecondsThisWeek: number;
   usedChatCountToday: number;
+  usedNoteGeneratesToday?: number;
+  usedChatInputCharsWindow?: number;
   usedStudyCountToday: number;
 
+  chatInputMaxChars?: number;
+  chatBudgetCharsPerWindow?: number;
+  chatBudgetWindowHours?: number;
+  chatCooldownMs?: number;
+  noteGeneratesPerDay?: number;
+  noteInputMaxChars?: number;
+  noteMaxItems?: number;
+  noteCooldownMs?: number;
   studyGenerationsPerDay: number;
   studyMaxFileSizeBytes: number;
   studyMaxExtractedChars: number;
@@ -572,7 +582,7 @@ function ChatPageInner() {
       }
       if (sessionExists) refreshEnt();
 
-      const parsed = tryParseWorkflowReply(reply);
+      const parsed = (okData?.workflow ? tryParseWorkflowReply(reply) : null) as WorkflowMessage[] | null;
       if (parsed && parsed.length) {
         let finalStep = parsed.find((s) => s.stage === "final") || null;
         if (!finalStep) finalStep = parsed[parsed.length - 1];
@@ -906,7 +916,7 @@ function ChatPageInner() {
           {mode === "detector" ? (
             <DetectorUI isLoadingGlobal={isLoading} isZh={isZh} locked={detectorLocked} canSeeSuspicious={!!ent?.canSeeSuspiciousSentences} />
           ) : mode === "note" ? (
-            <NoteUI isLoadingGlobal={isLoading} isZh={isZh} locked={noteLocked} />
+            <NoteUI isLoadingGlobal={isLoading} isZh={isZh} locked={noteLocked} entitlement={ent} onUsageRefresh={refreshEnt} />
           ) : mode === "study" ? (
             <StudyUI isZh={isZh} locked={studyLocked} entitlement={ent} onUsageRefresh={refreshEnt} />
           ) : (

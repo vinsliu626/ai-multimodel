@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { hashPromoCode, normalizePromoCode } from "@/lib/promo/codeHash";
 import { redeemPromoCodeTx } from "@/lib/promo/service";
 import { planToFlags } from "@/lib/billing/planFlags";
+import { mutationResultSelect } from "@/lib/billing/entitlementDb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -126,6 +127,7 @@ async function redeemWithGiftTables(input: { userId: string; normalizedCode: str
           promoAccessEndAt: grantEndAt,
           promoAccessActive: true,
         },
+        select: mutationResultSelect,
       });
     } catch {
       // Local legacy schemas may not include promo fields; redemption record is still committed.

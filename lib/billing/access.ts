@@ -1,6 +1,6 @@
-import type { UserEntitlement } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { normalizePlan, planToFlags, type PlanId, type PlanFlags } from "@/lib/billing/planFlags";
+import { ensureRuntimeEntitlement, type RuntimeUserEntitlement } from "@/lib/billing/entitlementDb";
 
 export type AccessSource = "developer_override" | "paid_subscription" | "promo" | "free";
 
@@ -29,11 +29,11 @@ function hasAllowlistBypass(userId: string): boolean {
   return allowlist.has(userId.trim().toLowerCase());
 }
 
-function hasDeveloperBypass(userId: string, _ent: UserEntitlement): boolean {
+function hasDeveloperBypass(userId: string, _ent: RuntimeUserEntitlement): boolean {
   return hasAllowlistBypass(userId);
 }
 
-function hasActivePaidSubscription(ent: UserEntitlement, now: Date): boolean {
+function hasActivePaidSubscription(ent: RuntimeUserEntitlement, now: Date): boolean {
   const plan = normalizePlan(ent.plan);
   if (plan === "basic") return false;
   if (!ent.stripeSubId) return false;
@@ -42,15 +42,7 @@ function hasActivePaidSubscription(ent: UserEntitlement, now: Date): boolean {
   return true;
 }
 
-function hasActivePromoGrant(ent: UserEntitlement, now: Date): boolean {
-  if (!ent.promoAccessActive) return false;
-  if (!ent.promoPlan) return false;
-  if (ent.promoAccessStartAt && ent.promoAccessStartAt.getTime() > now.getTime()) return false;
-  if (ent.promoAccessEndAt && ent.promoAccessEndAt.getTime() <= now.getTime()) return false;
-  return true;
-}
-
-export function resolveEffectiveAccessFromEntitlement(userId: string, ent: UserEntitlement, now = new Date()): EffectiveAccess {
+export function resolveEffectiveAccessFromEntitlement(userId: string, ent: RuntimeUserEntitlement, now = new Date()): EffectiveAccess {
   if (hasDeveloperBypass(userId, ent)) {
     const plan = normalizePlan("ultra");
     return {
@@ -58,7 +50,7 @@ export function resolveEffectiveAccessFromEntitlement(userId: string, ent: UserE
       source: "developer_override",
       unlimited: true,
       entitled: true,
-      promoExpiresAt: ent.promoAccessEndAt ?? null,
+      promoExpiresAt: null,
       subscriptionExpiresAt: ent.currentPeriodEnd ?? null,
       flags: planToFlags(plan),
     };
@@ -71,20 +63,7 @@ export function resolveEffectiveAccessFromEntitlement(userId: string, ent: UserE
       source: "paid_subscription",
       unlimited: Boolean(ent.unlimited) || plan === "ultra",
       entitled: true,
-      promoExpiresAt: ent.promoAccessEndAt ?? null,
-      subscriptionExpiresAt: ent.currentPeriodEnd ?? null,
-      flags: planToFlags(plan),
-    };
-  }
-
-  if (hasActivePromoGrant(ent, now)) {
-    const plan = normalizePlan(ent.promoPlan);
-    return {
-      plan,
-      source: "promo",
-      unlimited: plan === "ultra",
-      entitled: true,
-      promoExpiresAt: ent.promoAccessEndAt ?? null,
+      promoExpiresAt: null,
       subscriptionExpiresAt: ent.currentPeriodEnd ?? null,
       flags: planToFlags(plan),
     };
@@ -96,7 +75,7 @@ export function resolveEffectiveAccessFromEntitlement(userId: string, ent: UserE
     source: "free",
     unlimited: false,
     entitled: true,
-    promoExpiresAt: ent.promoAccessEndAt ?? null,
+    promoExpiresAt: null,
     subscriptionExpiresAt: ent.currentPeriodEnd ?? null,
     flags: planToFlags(plan),
   };
@@ -128,13 +107,9 @@ function resolveBasicAccess(userId: string): EffectiveAccess {
   };
 }
 
-export async function resolveEffectiveAccess(userId: string): Promise<{ entitlement: UserEntitlement | null; access: EffectiveAccess }> {
+export async function resolveEffectiveAccess(userId: string): Promise<{ entitlement: RuntimeUserEntitlement | null; access: EffectiveAccess }> {
   try {
-    const entitlement = await prisma.userEntitlement.upsert({
-      where: { userId },
-      update: {},
-      create: { userId, plan: "basic" },
-    });
+    const entitlement = await ensureRuntimeEntitlement(prisma, userId);
 
     const access = resolveEffectiveAccessFromEntitlement(userId, entitlement);
     return { entitlement, access };

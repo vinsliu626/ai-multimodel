@@ -4,16 +4,13 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { stripe } from "@/lib/stripe";
 import { prisma } from "@/lib/prisma";
+import { ensureRuntimeEntitlement, mutationResultSelect } from "@/lib/billing/entitlementDb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 async function ensureCustomerId(userId: string) {
-  const ent = await prisma.userEntitlement.upsert({
-    where: { userId },
-    update: {},
-    create: { userId },
-  });
+  const ent = await ensureRuntimeEntitlement(prisma, userId);
 
   let customerId = ent.stripeCustomerId;
 
@@ -22,6 +19,7 @@ async function ensureCustomerId(userId: string) {
     await prisma.userEntitlement.update({
       where: { userId },
       data: { stripeCustomerId: c.id },
+      select: mutationResultSelect,
     });
     return c.id;
   }
@@ -34,6 +32,7 @@ async function ensureCustomerId(userId: string) {
     await prisma.userEntitlement.update({
       where: { userId },
       data: { stripeCustomerId: c.id },
+      select: mutationResultSelect,
     });
     return c.id;
   }

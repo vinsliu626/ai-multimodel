@@ -1,4 +1,4 @@
-import { normalizePlan, type PlanId } from "@/lib/billing/planFlags";
+import { getStudyBasePlanLimits, normalizePlan, type PlanId } from "@/lib/plans/productLimits";
 import type { StudyPlanLimits } from "./types";
 
 export const SUPPORTED_STUDY_MIME_TYPES = new Set([
@@ -10,39 +10,9 @@ export const SUPPORTED_STUDY_MIME_TYPES = new Set([
 export const SUPPORTED_STUDY_EXTENSIONS = [".pdf", ".docx", ".pptx"];
 
 export const STUDY_PLAN_LIMITS: Record<PlanId, StudyPlanLimits> = {
-  basic: {
-    generationsPerDay: 1,
-    maxFileSizeBytes: 2 * 1024 * 1024,
-    maxExtractedChars: 8_000,
-    maxQuizQuestions: 6,
-    maxSelectableModes: 2,
-    allowedDifficulties: ["easy", "medium"],
-    maxNotes: 6,
-    maxFlashcards: 6,
-    cooldownMs: 90_000,
-  },
-  pro: {
-    generationsPerDay: 3,
-    maxFileSizeBytes: 4 * 1024 * 1024,
-    maxExtractedChars: 15_000,
-    maxQuizQuestions: 12,
-    maxSelectableModes: 3,
-    allowedDifficulties: ["easy", "medium", "hard"],
-    maxNotes: 8,
-    maxFlashcards: 10,
-    cooldownMs: 60_000,
-  },
-  ultra: {
-    generationsPerDay: 8,
-    maxFileSizeBytes: 8 * 1024 * 1024,
-    maxExtractedChars: 25_000,
-    maxQuizQuestions: 20,
-    maxSelectableModes: 3,
-    allowedDifficulties: ["easy", "medium", "hard"],
-    maxNotes: 10,
-    maxFlashcards: 14,
-    cooldownMs: 45_000,
-  },
+  basic: getStudyBasePlanLimits("basic"),
+  pro: getStudyBasePlanLimits("pro"),
+  ultra: getStudyBasePlanLimits("ultra"),
 };
 
 function parseCooldownOverrideMs(): number | null {

@@ -22,6 +22,16 @@ export type BillingStatus = {
   usedDetectorWordsThisWeek: number;
   usedNoteSecondsThisWeek: number;
   usedChatCountToday: number;
+  usedNoteGeneratesToday?: number;
+  usedChatInputCharsWindow?: number;
+  chatInputMaxChars?: number;
+  chatBudgetCharsPerWindow?: number;
+  chatBudgetWindowHours?: number;
+  chatCooldownMs?: number;
+  noteGeneratesPerDay?: number;
+  noteInputMaxChars?: number;
+  noteMaxItems?: number;
+  noteCooldownMs?: number;
 };
 
 export function useBillingStatus() {

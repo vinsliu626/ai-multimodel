@@ -1,8 +1,0 @@
-▲ Next.js 16.1.5
-- Local:         http://localhost:3000
-- Network:       http://169.254.83.107:3000
-
-✓ Starting...
-✓ Ready in 635ms
-[NEXTAUTH] NEXTAUTH_URL = http://127.0.0.1:3000
-[NEXTAUTH] NEXTAUTH_SECRET_LEN = 52

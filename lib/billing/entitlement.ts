@@ -1,6 +1,7 @@
 // lib/billing/entitlement.ts
 import { prisma } from "@/lib/prisma";
 import { normalizePlan, planToFlags } from "@/lib/billing/planFlags";
+import { ensureRuntimeEntitlement, mutationResultSelect, runtimeEntitlementSelect } from "@/lib/billing/entitlementDb";
 
 export type UsageType = "chat_count" | "detector_words" | "note_seconds";
 
@@ -56,11 +57,7 @@ export async function requireAndConsume(userId: string, type: UsageType, amount:
     // 注意：用 $executeRaw（参数化）替代 unsafe
     await prisma.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${userId}))`;
 
-    const ent = await prisma.userEntitlement.upsert({
-      where: { userId },
-      update: {},
-      create: { userId, plan: "basic" },
-    });
+    const ent = await ensureRuntimeEntitlement(prisma, userId);
 
     // 重置（跨天/跨周）
     const needDailyReset = ent.dailyUsageKey !== today;
@@ -78,6 +75,7 @@ export async function requireAndConsume(userId: string, type: UsageType, amount:
           usedDetectorWordsThisWeek: needWeeklyReset ? 0 : ent.usedDetectorWordsThisWeek,
           usedNoteSecondsThisWeek: needWeeklyReset ? 0 : ent.usedNoteSecondsThisWeek,
         },
+        select: runtimeEntitlementSelect,
       });
     }
 
@@ -110,6 +108,7 @@ export async function requireAndConsume(userId: string, type: UsageType, amount:
         await prisma.userEntitlement.update({
           where: { userId },
           data: { usedDetectorWordsThisWeek: { increment: amount } },
+          select: mutationResultSelect,
         });
       } else if (type === "note_seconds") {
         const used = ent2.usedNoteSecondsThisWeek ?? 0;
@@ -119,6 +118,7 @@ export async function requireAndConsume(userId: string, type: UsageType, amount:
         await prisma.userEntitlement.update({
           where: { userId },
           data: { usedNoteSecondsThisWeek: { increment: amount } },
+          select: mutationResultSelect,
         });
       } else if (type === "chat_count") {
         const used = ent2.usedChatCountToday ?? 0;
@@ -128,6 +128,7 @@ export async function requireAndConsume(userId: string, type: UsageType, amount:
         await prisma.userEntitlement.update({
           where: { userId },
           data: { usedChatCountToday: { increment: amount } },
+          select: mutationResultSelect,
         });
       }
     }

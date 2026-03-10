@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { stripe } from "@/lib/stripe";
 import { planToFlags } from "@/lib/billing/planFlags";
 import { resolveEffectiveAccessFromEntitlement } from "@/lib/billing/access";
+import { ensureRuntimeEntitlement, mutationResultSelect } from "@/lib/billing/entitlementDb";
 
 export type QuotaAction = "chat" | "detector" | "note";
 
@@ -68,19 +69,7 @@ export async function assertQuotaOrThrow(input: {
 
   if (process.env.DEV_BYPASS_QUOTA === "true") return;
 
-  let ent = await prisma.userEntitlement.upsert({
-    where: { userId },
-    update: {},
-    create: { userId, plan: "basic" },
-  });
-
-  // Runtime expiry enforcement for promo grants.
-  if (ent.promoAccessActive && ent.promoAccessEndAt && ent.promoAccessEndAt.getTime() <= Date.now()) {
-    ent = await prisma.userEntitlement.update({
-      where: { userId },
-      data: { promoAccessActive: false },
-    });
-  }
+  let ent = await ensureRuntimeEntitlement(prisma, userId);
 
   const access = resolveEffectiveAccessFromEntitlement(userId, ent);
   const plan = access.plan;
@@ -88,13 +77,13 @@ export async function assertQuotaOrThrow(input: {
   if (access.source === "developer_override") return;
   if (access.unlimited || plan === "ultra") return;
 
-  // Promo grant path: trust runtime grant validity, no stripe checks.
-  if (access.source !== "promo" && plan !== "basic") {
+  if (plan !== "basic") {
     if (!ent.stripeSubId) {
       const flags = planToFlags("basic");
       await prisma.userEntitlement.update({
         where: { userId },
         data: { ...flags, stripeStatus: "missing", stripeSubId: null, unlimited: false },
+        select: mutationResultSelect,
       });
       throw new QuotaError("PAYMENT_REQUIRED", "No active subscription found. Please subscribe.", 402);
     }
@@ -114,6 +103,7 @@ export async function assertQuotaOrThrow(input: {
           currentPeriodEnd: periodEnd ?? undefined,
           cancelAtPeriodEnd,
         },
+        select: mutationResultSelect,
       });
 
       if (status !== "active") {
@@ -121,6 +111,7 @@ export async function assertQuotaOrThrow(input: {
         await prisma.userEntitlement.update({
           where: { userId },
           data: { ...flags, stripeStatus: status ?? "inactive", unlimited: false },
+          select: mutationResultSelect,
         });
         throw new QuotaError("PAYMENT_REQUIRED", "Subscription inactive (payment failed/canceled). Please renew.", 402);
       }
@@ -136,6 +127,7 @@ export async function assertQuotaOrThrow(input: {
           cancelAtPeriodEnd: false,
           unlimited: false,
         },
+        select: mutationResultSelect,
       });
       throw new QuotaError("PAYMENT_REQUIRED", "Subscription missing. Please renew.", 402);
     }

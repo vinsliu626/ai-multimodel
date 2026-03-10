@@ -1,5 +1,6 @@
 import { Prisma, PromoTargetPlan, type PromoCode } from "@prisma/client";
 import { normalizePlan, type PlanId } from "@/lib/billing/planFlags";
+import { mutationResultSelect } from "@/lib/billing/entitlementDb";
 
 type RedeemFailureCode =
   | "INVALID_CODE"
@@ -99,24 +100,27 @@ export async function redeemPromoCodeTx(
     },
   });
 
-  const entitlement = await tx.userEntitlement.upsert({
+  await tx.userEntitlement.upsert({
     where: { userId },
     update: {},
     create: { userId, plan: "basic" },
+    select: mutationResultSelect,
   });
 
-  const nextPromoPlan = pickHigherPlan(entitlement.promoPlan, promo.targetPlan);
-  const nextPromoEndAt = pickLongerExpiry(entitlement.promoAccessEndAt ?? null, grantEndAt);
-
-  await tx.userEntitlement.update({
-    where: { userId },
-    data: {
-      promoPlan: nextPromoPlan,
-      promoAccessStartAt: entitlement.promoAccessStartAt ?? grantStartAt,
-      promoAccessEndAt: nextPromoEndAt,
-      promoAccessActive: true,
-    },
-  });
+  try {
+    await tx.userEntitlement.update({
+      where: { userId },
+      data: {
+        promoPlan: pickHigherPlan(null, promo.targetPlan),
+        promoAccessStartAt: grantStartAt,
+        promoAccessEndAt: pickLongerExpiry(null, grantEndAt),
+        promoAccessActive: true,
+      },
+      select: mutationResultSelect,
+    });
+  } catch {
+    // Older live schemas may not have promo entitlement columns yet.
+  }
 
   return {
     ok: true,
