@@ -34,6 +34,9 @@ type PlanId = "basic" | "pro" | "ultra" | "gift";
 type Entitlement = {
   ok: true;
   plan: PlanId;
+  source?: "developer_override" | "paid_subscription" | "promo" | "free";
+  stripeStatus?: string | null;
+  daysLeft?: number | null;
   unlimited: boolean;
 
   detectorWordsPerWeek: number | null;
@@ -211,7 +214,6 @@ function ChatPageInner() {
   // settings
   const [lang, setLang] = useState<Lang>("en");
   const isZh = lang === "zh";
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
 
   // dropdown mode
   const [mode, setMode] = useState<ChatMode>("normal");
@@ -261,13 +263,11 @@ function ChatPageInner() {
     }
   }, [mode]);
 
-  // ===== Settings persistence (lang/theme) =====
+  // ===== Settings persistence (language) =====
   useEffect(() => {
     try {
       const savedLang = (localStorage.getItem("lang") as Lang) || "en";
-      const savedTheme = (localStorage.getItem("theme") as "dark" | "light") || "dark";
       setLang(savedLang);
-      setTheme(savedTheme);
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -277,13 +277,6 @@ function ChatPageInner() {
       localStorage.setItem("lang", lang);
     } catch {}
   }, [lang]);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("theme", theme);
-    } catch {}
-    document.documentElement.classList.toggle("dark", theme === "dark");
-  }, [theme]);
 
   // auto scroll to bottom when messages change
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -704,8 +697,6 @@ function ChatPageInner() {
   }
 
   // 始终强制黑色/未来感主题基调
-  const isDark = theme === "dark" || true;
-
   return (
     <main className="h-screen w-screen overflow-hidden text-slate-200 bg-[#030303] font-sans selection:bg-blue-500/30 selection:text-blue-100 relative">
       <PlanPillStyles />
@@ -1053,10 +1044,22 @@ function ChatPageInner() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         isZh={isZh}
-        theme={theme}
-        setTheme={setTheme}
         lang={lang}
         setLang={setLang}
+        sessionExists={sessionExists}
+        accountLabel={effectiveSession?.user?.email ?? effectiveSession?.user?.name ?? null}
+        ent={ent}
+        mode={mode}
+        onOpenPlan={() => {
+          refreshEnt();
+          setPlanOpen(true);
+        }}
+        onOpenRedeem={() => {
+          if (!sessionExists) return signIn();
+          setRedeemError(null);
+          setRedeemOpen(true);
+        }}
+        onSignOut={sessionExists ? () => signOut() : undefined}
       />
 
       <style jsx global>{`

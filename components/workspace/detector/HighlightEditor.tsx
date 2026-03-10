@@ -2,14 +2,7 @@
 import React from "react";
 import type { DetectorHighlight } from "./detector-utils";
 
-function renderHighlightLayer(text: string, highlights: DetectorHighlight[]) {
-  if (!text) return null;
-  const ghost = (s: string) => s.replace(/\n/g, "\n\u200b");
-
-  if (!highlights || highlights.length === 0) {
-    return <span className="whitespace-pre-wrap break-words">{ghost(text)}</span>;
-  }
-
+function normalizeHighlights(text: string, highlights: DetectorHighlight[]) {
   const sorted = [...highlights]
     .filter((h) => Number.isFinite(h.start) && Number.isFinite(h.end) && h.end > h.start)
     .map((h) => ({
@@ -22,31 +15,50 @@ function renderHighlightLayer(text: string, highlights: DetectorHighlight[]) {
   const merged: DetectorHighlight[] = [];
   for (const h of sorted) {
     const last = merged[merged.length - 1];
-    if (last && h.start <= (last.end ?? 0)) last.end = Math.max(last.end ?? 0, h.end);
-    else merged.push({ ...h });
+    if (last && h.start <= last.end) {
+      last.end = Math.max(last.end, h.end);
+      last.severity = Math.max(last.severity ?? 0, h.severity ?? 0);
+    } else {
+      merged.push({ ...h });
+    }
+  }
+  return merged;
+}
+
+function renderHighlightedText(text: string, highlights: DetectorHighlight[]) {
+  if (!text) return null;
+
+  const normalized = normalizeHighlights(text, highlights);
+  if (normalized.length === 0) {
+    return <span>{text}</span>;
   }
 
   const nodes: React.ReactNode[] = [];
   let cursor = 0;
 
-  merged.forEach((h, idx) => {
-    const s = h.start!;
-    const e = h.end!;
-    if (cursor < s) nodes.push(<span key={`t-${idx}-a`}>{ghost(text.slice(cursor, s))}</span>);
+  normalized.forEach((highlight, index) => {
+    if (cursor < highlight.start) {
+      nodes.push(<span key={`text-${index}`}>{text.slice(cursor, highlight.start)}</span>);
+    }
+
     nodes.push(
       <mark
-        key={`t-${idx}-m`}
-        className="rounded px-0.5 py-[1px] bg-amber-300/85 text-slate-950"
-        title={h.label || "AI-like"}
+        key={`mark-${index}`}
+        className="rounded px-0.5 py-[1px] bg-amber-300/85 text-slate-950 selection:bg-blue-500/35 selection:text-white"
+        title={highlight.label || "AI-like"}
       >
-        {ghost(text.slice(s, e))}
+        {text.slice(highlight.start, highlight.end)}
       </mark>
     );
-    cursor = e;
+
+    cursor = highlight.end;
   });
 
-  if (cursor < text.length) nodes.push(<span key="tail">{ghost(text.slice(cursor))}</span>);
-  return <span className="whitespace-pre-wrap break-words">{nodes}</span>;
+  if (cursor < text.length) {
+    nodes.push(<span key="tail">{text.slice(cursor)}</span>);
+  }
+
+  return nodes;
 }
 
 export function HighlightEditor({
@@ -62,50 +74,58 @@ export function HighlightEditor({
   placeholder: string;
   disabled?: boolean;
 }) {
-  const taRef = React.useRef<HTMLTextAreaElement | null>(null);
-  const layerRef = React.useRef<HTMLDivElement | null>(null);
+  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const [isEditing, setIsEditing] = React.useState(true);
+  const hasHighlights = value.trim().length > 0 && highlights.length > 0;
 
-  function syncScroll() {
-    const ta = taRef.current;
-    const layer = layerRef.current;
-    if (!ta || !layer) return;
-    layer.scrollTop = ta.scrollTop;
-    layer.scrollLeft = ta.scrollLeft;
-  }
+  React.useEffect(() => {
+    setIsEditing(!hasHighlights);
+  }, [hasHighlights]);
 
-  React.useLayoutEffect(() => {
-    syncScroll();
-  }, [value, highlights]);
+  React.useEffect(() => {
+    if (!isEditing) return;
+    textareaRef.current?.focus();
+  }, [isEditing]);
 
-  const sharedTextStyle = "px-4 py-3 text-[14px] leading-6 whitespace-pre-wrap break-words font-sans";
+  const sharedTextStyle =
+    "h-full w-full px-4 py-3 text-[14px] leading-6 font-sans whitespace-pre-wrap break-words";
 
   return (
     <div className="relative h-full w-full rounded-2xl border border-white/10 bg-slate-950/30 overflow-hidden">
-      <div
-        ref={layerRef}
-        className={["absolute inset-0", "overflow-auto scrollbar-none", sharedTextStyle, "text-slate-100", "pointer-events-none"].join(" ")}
-      >
-        {value ? renderHighlightLayer(value, highlights) : <span className="text-slate-500">{placeholder}</span>}
-      </div>
-
-      <textarea
-        ref={taRef}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onScroll={syncScroll}
-        placeholder={placeholder}
-        disabled={disabled}
-        className={[
-          "absolute inset-0 w-full h-full resize-none",
-          "overflow-auto purple-scrollbar scroll-stable",
-          sharedTextStyle,
-          "bg-transparent text-transparent caret-white",
-          "placeholder:text-slate-500",
-          "selection:bg-blue-500/35",
-          "focus:outline-none",
-        ].join(" ")}
-        spellCheck={false}
-      />
+      {hasHighlights && !isEditing ? (
+        <div
+          role="textbox"
+          aria-readonly="true"
+          tabIndex={0}
+          title="Double-click to edit"
+          onDoubleClick={() => setIsEditing(true)}
+          className={[
+            sharedTextStyle,
+            "overflow-auto purple-scrollbar scroll-stable",
+            "text-slate-100 selection:bg-blue-500/35 selection:text-white",
+            "cursor-text",
+          ].join(" ")}
+        >
+          {renderHighlightedText(value, highlights)}
+        </div>
+      ) : (
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          disabled={disabled}
+          className={[
+            "h-full w-full resize-none overflow-auto purple-scrollbar scroll-stable",
+            sharedTextStyle,
+            "bg-transparent text-slate-100 caret-white",
+            "placeholder:text-slate-500",
+            "selection:bg-blue-500/35",
+            "focus:outline-none",
+          ].join(" ")}
+          spellCheck={false}
+        />
+      )}
     </div>
   );
 }

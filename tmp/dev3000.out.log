@@ -1,0 +1,40 @@
+
+> ai-multimodel@0.1.0 dev
+> set NODE_OPTIONS=--dns-result-order=ipv4first && next dev
+
+▲ Next.js 16.1.5 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://169.254.83.107:3000
+- Environments: .env.local, .env
+
+✓ Starting...
+✓ Ready in 710ms
+ GET /chat 200 in 1028ms (compile: 911ms, render: 117ms)
+[prisma] initializing client {
+  nodeEnv: 'development',
+  databaseUrl: 'postgresql://ep-young-shadow-a47s4och.us-east-1.aws.neon.tech:(default)/neondb',
+  directUrlPresent: true,
+  useGlobalCache: true
+}
+prisma:error 
+Invalid `tx.promoCode.findUnique()` invocation in
+C:\Users\gcswz\Desktop\AI\ai-multimodel\.next\dev\server\chunks\[root-of-the-server]__0422dcb3._.js:1111:50
+
+  1108 result = await __TURBOPACK__imported__module__$5b$project$5d2f$lib$2f$prisma$2e$ts__$5b$app$2d$route$5d$__$28$ecmascript$29$__["prisma"].$transaction(async (tx)=>{
+  1109     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`promo:${codeHash}`}))`;
+  1110     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`promo-user:${codeHash}:${userId}`}))`;
+→ 1111     const promo = await tx.promoCode.findUnique(
+The table `public.PromoCode` does not exist in the current database.
+[prisma] startup connectivity check passed { durationMs: 1043 }
+ POST /api/billing/redeem 200 in 1951ms (compile: 131ms, render: 1820ms)
+prisma:error 
+Invalid `tx.promoCode.findUnique()` invocation in
+C:\Users\gcswz\Desktop\AI\ai-multimodel\.next\dev\server\chunks\[root-of-the-server]__0422dcb3._.js:1111:50
+
+  1108 result = await __TURBOPACK__imported__module__$5b$project$5d2f$lib$2f$prisma$2e$ts__$5b$app$2d$route$5d$__$28$ecmascript$29$__["prisma"].$transaction(async (tx)=>{
+  1109     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`promo:${codeHash}`}))`;
+  1110     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`promo-user:${codeHash}:${userId}`}))`;
+→ 1111     const promo = await tx.promoCode.findUnique(
+The table `public.PromoCode` does not exist in the current database.
+ POST /api/billing/redeem 400 in 717ms (compile: 1488µs, render: 715ms)
+[?25h

@@ -1,7 +1,39 @@
-import crypto from "crypto";
-import { PromoCodeType, PromoTargetPlan } from "@prisma/client";
-import { prisma } from "../lib/prisma";
-import { hashPromoCode, normalizePromoCode } from "../lib/promo/codeHash";
+export {};
+
+const fs = require("fs") as typeof import("fs");
+const path = require("path") as typeof import("path");
+
+function loadEnvFile(fileName: string) {
+  const fullPath = path.join(process.cwd(), fileName);
+  if (!fs.existsSync(fullPath)) return;
+  for (const line of fs.readFileSync(fullPath, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const idx = trimmed.indexOf("=");
+    if (idx < 0) continue;
+    const key = trimmed.slice(0, idx).trim();
+    if (!key || process.env[key] != null) continue;
+    let value = trimmed.slice(idx + 1).trim();
+    if (
+      (value.startsWith("\"") && value.endsWith("\"")) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+loadEnvFile(".env.local");
+loadEnvFile(".env");
+
+const nodeCrypto = require("crypto") as typeof import("crypto");
+const { PrismaClient, PromoCodeType, PromoTargetPlan } = require("@prisma/client") as typeof import("@prisma/client");
+const { hashPromoCode, normalizePromoCode } = require("../lib/promo/codeHash") as typeof import("../lib/promo/codeHash");
+
+const prisma = new PrismaClient({
+  log: ["error", "warn"],
+});
 
 type ArgMap = Record<string, string>;
 
@@ -36,7 +68,7 @@ function parseIntArg(value: string | undefined, label: string): number | null {
 }
 
 function randomCode(prefix: string): string {
-  const token = crypto.randomBytes(9).toString("base64url").toUpperCase();
+  const token = nodeCrypto.randomBytes(9).toString("base64url").toUpperCase();
   return `${prefix}-${token}`;
 }
 
@@ -45,8 +77,8 @@ async function main() {
 
   const rawCode = args.code ? normalizePromoCode(args.code) : randomCode(args.prefix ?? "PROMO");
   const codeHash = hashPromoCode(rawCode);
-  const codeType = (args.codeType?.toUpperCase() ?? "LIMITED") as PromoCodeType;
-  const targetPlan = (args.targetPlan?.toUpperCase() ?? "PRO") as PromoTargetPlan;
+  const codeType = (args.codeType?.toUpperCase() ?? "LIMITED") as keyof typeof PromoCodeType;
+  const targetPlan = (args.targetPlan?.toUpperCase() ?? "PRO") as keyof typeof PromoTargetPlan;
 
   if (!Object.values(PromoCodeType).includes(codeType)) {
     throw new Error(`Invalid codeType: ${args.codeType}`);
@@ -74,24 +106,30 @@ async function main() {
     throw new Error("startsAt must be before expiresAt");
   }
 
-  const created = await prisma.promoCode.create({
-    data: {
+  const data = {
+    codeType,
+    targetPlan,
+    startsAt: startsAt ?? undefined,
+    expiresAt: expiresAt ?? undefined,
+    grantDurationDays: grantDurationDays ?? undefined,
+    grantFixedEndsAt: grantFixedEndsAt ?? undefined,
+    maxRedemptions: maxRedemptions ?? undefined,
+    perUserLimit,
+    isActive,
+    notes: args.notes,
+    createdBy: args.createdBy,
+  };
+
+  const created = await prisma.promoCode.upsert({
+    where: { codeHash },
+    update: data,
+    create: {
       codeHash,
-      codeType,
-      targetPlan,
-      startsAt: startsAt ?? undefined,
-      expiresAt: expiresAt ?? undefined,
-      grantDurationDays: grantDurationDays ?? undefined,
-      grantFixedEndsAt: grantFixedEndsAt ?? undefined,
-      maxRedemptions: maxRedemptions ?? undefined,
-      perUserLimit,
-      isActive,
-      notes: args.notes,
-      createdBy: args.createdBy,
+      ...data,
     },
   });
 
-  console.log("Promo code created:");
+  console.log("Promo code saved:");
   console.log(`  id: ${created.id}`);
   console.log(`  code: ${rawCode}`);
   console.log(`  type: ${created.codeType}`);

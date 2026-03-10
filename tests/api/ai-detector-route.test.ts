@@ -140,6 +140,38 @@ describe("POST /api/ai-detector", () => {
     expect(json.aiGenerated).toBe(42);
   });
 
+  it("accepts HF detector responses that return AI Generated percentage", async () => {
+    process.env.DETECTOR_URL = "https://vins0629-py-detector.hf.space/detect";
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: [
+            {
+              "AI Generated percentage": 61.4,
+            },
+            "ok",
+          ],
+        }),
+    } as Response);
+
+    const { POST } = await import("@/app/api/ai-detector/route");
+    const req = new Request("http://localhost/api/ai-detector", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: testText("hf-percentage") }),
+    });
+
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.aiGenerated).toBe(61);
+  });
+
   it("treats HF 405 probe as reachable and continues with detector POST", async () => {
     process.env.DETECTOR_URL = "https://vins0629-py-detector.hf.space/detect";
     const fetchSpy = vi
@@ -226,6 +258,30 @@ describe("POST /api/ai-detector", () => {
     expect(json.meta?.retryCount).toBe(1);
     expect(json.meta?.attemptCount).toBe(2);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a clean message when the remote detector keeps returning 502", async () => {
+    process.env.DETECTOR_URL = "https://vins0629-py-detector.hf.space/detect";
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 502,
+      text: async () => "<html>bad gateway</html>",
+    } as Response);
+
+    const { POST } = await import("@/app/api/ai-detector/route");
+    const req = new Request("http://localhost/api/ai-detector", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text: testText("hf-502") }),
+    });
+
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(503);
+    expect(json.ok).toBe(false);
+    expect(json.error).toBe("DETECTOR_TRANSIENT_HTTP");
+    expect(json.message).toBe("Detector service is temporarily unavailable. Please retry in a moment.");
   });
 
   it("uses dev remote fallback when local detector is unavailable", async () => {

@@ -30,7 +30,7 @@ function hasAllowlistBypass(userId: string): boolean {
 }
 
 function hasDeveloperBypass(userId: string, _ent: RuntimeUserEntitlement): boolean {
-  return hasAllowlistBypass(userId);
+  return Boolean((_ent as any)?.developerBypass) || hasAllowlistBypass(userId);
 }
 
 function hasActivePaidSubscription(ent: RuntimeUserEntitlement, now: Date): boolean {
@@ -40,6 +40,23 @@ function hasActivePaidSubscription(ent: RuntimeUserEntitlement, now: Date): bool
   if (ent.stripeStatus !== "active") return false;
   if (ent.currentPeriodEnd && ent.currentPeriodEnd.getTime() <= now.getTime()) return false;
   return true;
+}
+
+function hasActivePromoAccess(ent: RuntimeUserEntitlement, now: Date): boolean {
+  if (!ent.promoAccessActive) return false;
+  if (!ent.promoPlan) return false;
+  if (ent.promoAccessStartAt && now.getTime() < ent.promoAccessStartAt.getTime()) return false;
+  if (ent.promoAccessEndAt && now.getTime() >= ent.promoAccessEndAt.getTime()) return false;
+  return true;
+}
+
+function hasLegacyGiftAccess(ent: RuntimeUserEntitlement, now: Date): boolean {
+  const plan = normalizePlan(ent.plan);
+  if (plan === "basic") return false;
+  if (ent.stripeSubId) return false;
+  if (ent.stripeStatus !== "gift") return false;
+  if (!ent.currentPeriodEnd) return false;
+  return ent.currentPeriodEnd.getTime() > now.getTime();
 }
 
 export function resolveEffectiveAccessFromEntitlement(userId: string, ent: RuntimeUserEntitlement, now = new Date()): EffectiveAccess {
@@ -64,6 +81,32 @@ export function resolveEffectiveAccessFromEntitlement(userId: string, ent: Runti
       unlimited: Boolean(ent.unlimited) || plan === "ultra",
       entitled: true,
       promoExpiresAt: null,
+      subscriptionExpiresAt: ent.currentPeriodEnd ?? null,
+      flags: planToFlags(plan),
+    };
+  }
+
+  if (hasActivePromoAccess(ent, now)) {
+    const plan = normalizePlan(ent.promoPlan ?? "basic");
+    return {
+      plan,
+      source: "promo",
+      unlimited: false,
+      entitled: true,
+      promoExpiresAt: ent.promoAccessEndAt ?? null,
+      subscriptionExpiresAt: ent.currentPeriodEnd ?? null,
+      flags: planToFlags(plan),
+    };
+  }
+
+  if (hasLegacyGiftAccess(ent, now)) {
+    const plan = normalizePlan(ent.plan);
+    return {
+      plan,
+      source: "promo",
+      unlimited: false,
+      entitled: true,
+      promoExpiresAt: ent.currentPeriodEnd ?? null,
       subscriptionExpiresAt: ent.currentPeriodEnd ?? null,
       flags: planToFlags(plan),
     };

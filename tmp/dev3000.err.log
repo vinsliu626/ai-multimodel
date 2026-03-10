@@ -1,0 +1,8 @@
+[billing.redeem] promo tables missing; falling back to GiftCode {
+  requestId: '20c303fd-97c9-4464-8323-5926a087878c',
+  userId: 'newapp-local-223ecd1b'
+}
+[billing.redeem] promo tables missing; falling back to GiftCode {
+  requestId: '5379cd5d-b05a-4e39-b5ee-ce47c1078e1d',
+  userId: 'newapp-expired-a0b960bf'
+}

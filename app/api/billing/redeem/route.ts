@@ -54,6 +54,11 @@ const GIFT_CAMPAIGN_BY_CODE: Record<string, GiftCampaignPolicy> = {
     // Code expires after this UTC timestamp.
     codeExpiresAt: new Date("2026-03-09T00:00:00.000Z"),
   },
+  NEWAPP: {
+    plan: "pro",
+    grantDurationDays: 7,
+    codeExpiresAt: new Date("2026-03-19T04:58:40.202Z"),
+  },
 };
 
 function resolveGiftCampaignPolicy(code: string): GiftCampaignPolicy {
@@ -75,6 +80,91 @@ function resolveNow(req: Request): Date {
     }
   }
   return new Date();
+}
+
+async function supportsPromoEntitlementColumns(tx: Prisma.TransactionClient) {
+  const rows = await tx.$queryRaw<Array<{ column_name: string }>>`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'UserEntitlement'
+      AND column_name IN ('promoPlan', 'promoAccessStartAt', 'promoAccessEndAt', 'promoAccessActive', 'developerBypass')
+  `;
+  const columns = new Set(rows.map((row) => row.column_name));
+  return (
+    columns.has("promoPlan") &&
+    columns.has("promoAccessStartAt") &&
+    columns.has("promoAccessEndAt") &&
+    columns.has("promoAccessActive") &&
+    columns.has("developerBypass")
+  );
+}
+
+async function writeLegacyGiftEntitlement(
+  tx: Prisma.TransactionClient,
+  input: {
+    userId: string;
+    plan: "pro" | "ultra";
+    grantEndAt: Date;
+    canSeeSuspiciousSentences: boolean;
+    chatPerDay: number | null;
+    detectorWordsPerWeek: number | null;
+    noteSecondsPerWeek: number | null;
+  }
+) {
+  const now = new Date();
+  await tx.$executeRaw`
+    INSERT INTO "UserEntitlement" (
+      "id",
+      "userId",
+      "plan",
+      "createdAt",
+      "updatedAt",
+      "stripeStatus",
+      "stripeSubId",
+      "currentPeriodEnd",
+      "canSeeSuspiciousSentences",
+      "chatPerDay",
+      "detectorWordsPerWeek",
+      "noteSecondsPerWeek",
+      "unlimited",
+      "cancelAtPeriodEnd",
+      "usedChatCountToday",
+      "usedDetectorWordsThisWeek",
+      "usedNoteSecondsThisWeek"
+    )
+    VALUES (
+      ${randomUUID()},
+      ${input.userId},
+      ${input.plan},
+      ${now},
+      ${now},
+      ${"gift"},
+      ${null},
+      ${input.grantEndAt},
+      ${input.canSeeSuspiciousSentences},
+      ${input.chatPerDay},
+      ${input.detectorWordsPerWeek},
+      ${input.noteSecondsPerWeek},
+      ${false},
+      ${false},
+      ${0},
+      ${0},
+      ${0}
+    )
+    ON CONFLICT ("userId") DO UPDATE SET
+      "plan" = EXCLUDED."plan",
+      "updatedAt" = EXCLUDED."updatedAt",
+      "stripeStatus" = EXCLUDED."stripeStatus",
+      "stripeSubId" = EXCLUDED."stripeSubId",
+      "currentPeriodEnd" = EXCLUDED."currentPeriodEnd",
+      "canSeeSuspiciousSentences" = EXCLUDED."canSeeSuspiciousSentences",
+      "chatPerDay" = EXCLUDED."chatPerDay",
+      "detectorWordsPerWeek" = EXCLUDED."detectorWordsPerWeek",
+      "noteSecondsPerWeek" = EXCLUDED."noteSecondsPerWeek",
+      "unlimited" = EXCLUDED."unlimited",
+      "cancelAtPeriodEnd" = EXCLUDED."cancelAtPeriodEnd"
+  `;
 }
 
 async function redeemWithGiftTables(input: { userId: string; normalizedCode: string; requestId: string; now: Date }) {
@@ -109,7 +199,8 @@ async function redeemWithGiftTables(input: { userId: string; normalizedCode: str
 
     const proFlags = planToFlags(policy.plan);
     const grantEndAt = new Date(now.getTime() + policy.grantDurationDays * 24 * 60 * 60 * 1000);
-    try {
+    const entitlementSupportsPromoColumns = await supportsPromoEntitlementColumns(tx);
+    if (entitlementSupportsPromoColumns) {
       await tx.userEntitlement.upsert({
         where: { userId },
         update: {
@@ -129,8 +220,18 @@ async function redeemWithGiftTables(input: { userId: string; normalizedCode: str
         },
         select: mutationResultSelect,
       });
-    } catch {
-      // Local legacy schemas may not include promo fields; redemption record is still committed.
+    } else {
+      const legacyPlan = policy.plan;
+      const legacyFlags = planToFlags(legacyPlan);
+      await writeLegacyGiftEntitlement(tx, {
+        userId,
+        plan: legacyPlan,
+        grantEndAt,
+        canSeeSuspiciousSentences: legacyFlags.canSeeSuspiciousSentences,
+        chatPerDay: legacyFlags.chatPerDay,
+        detectorWordsPerWeek: legacyFlags.detectorWordsPerWeek,
+        noteSecondsPerWeek: legacyFlags.noteSecondsPerWeek,
+      });
     }
 
     return {

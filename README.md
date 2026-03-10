@@ -35,6 +35,8 @@ Start only the detector stub (HF-compatible):
 npm run detector:local
 ```
 
+This starts the local detector at `http://127.0.0.1:8000/detect` and requires Python on `PATH`.
+
 Start Next.js + detector together:
 
 ```bash
@@ -51,7 +53,7 @@ The built-in local stub is at `services/detector/dev_server.py` and serves:
 - `POST /detect`
 - `GET /health`
 
-If detector is down, `/api/ai-detector` now returns `503` with a message to run `npm run detector:local`.
+If detector is down, `/api/ai-detector` returns `503` with a message to run `npm run detector:local` and verify `http://127.0.0.1:8000/detect` is reachable.
 If detector times out, it returns `504`.
 If Postgres is unavailable, it returns `503` with `DB_UNAVAILABLE`.
 

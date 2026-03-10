@@ -22,18 +22,22 @@ const DEV_REMOTE_DETECTOR_FALLBACK_URL = "https://vins0629-py-detector.hf.space/
 const RETRY_MAX_ATTEMPTS = 3;
 const RETRY_BASE_DELAY_MS = 45;
 const RETRY_TOTAL_BUDGET_MS = 1500;
+const HF_SPACE_RETRY_TOTAL_BUDGET_MS = 6500;
 const RETRY_TIMEOUT_SAFETY_MARGIN_MS = 40;
 const RETRY_MIN_ATTEMPT_TIMEOUT_MS = 90;
 const RETRY_MIN_RETRY_REMAINING_MS = 250;
+const HF_SPACE_RETRY_MIN_RETRY_REMAINING_MS = 900;
 const RETRY_JITTER_MAX_MS = 20;
 const DETECTOR_CACHE_TTL_MS = 30_000;
 const DETECTOR_CACHE_STALE_TTL_MS = 5 * 60_000;
 const DETECTOR_MODEL_VERSION = "python-gpt2ppl-ai-overall + local-heuristic-explanations@v1";
 const QUICK_WARMING_BUDGET_MS = 150;
+const HF_SPACE_QUICK_WARMING_BUDGET_MS = 1200;
 const MIN_DETECTOR_WORDS = 80;
 const DETECTOR_PROBE_TEXT =
   "Readiness probe text for detector endpoint reachability checks only.";
 const DETECTOR_REQUEST_FIELD = "text";
+const DETECTOR_SCORE_FIELDS = ["AI overall", "AI Generated percentage", "aiGenerated", "ai_generated"];
 
 let hasHandledAiDetectorRequest = false;
 
@@ -227,11 +231,15 @@ function shouldTryDevRemoteFallback(error: HttpRouteError, target: DetectorTarge
   );
 }
 
+function remoteDetectorUnavailableMessage() {
+  return "Detector service is temporarily unavailable. Please retry in a moment.";
+}
+
 function detectorDownMessage(url: string) {
   if (isLocalUrl(url)) {
-    return "Detector service not running. Start it with `npm run detector:local`.";
+    return "Detector service not running. Start it with `npm run detector:local` and use http://127.0.0.1:8000/detect.";
   }
-  return "Detector service is unavailable.";
+  return remoteDetectorUnavailableMessage();
 }
 
 function dbUnavailableMessage() {
@@ -314,6 +322,23 @@ function sanitizeSnippet(input: string, maxLen = 120) {
 
 function isHfSpaceHost(host: string) {
   return host.toLowerCase().endsWith(".hf.space");
+}
+
+function detectorRetryPolicy(target: DetectorTarget) {
+  if (isHfSpaceHost(target.host)) {
+    return {
+      totalBudgetMs: HF_SPACE_RETRY_TOTAL_BUDGET_MS,
+      minRetryRemainingMs: HF_SPACE_RETRY_MIN_RETRY_REMAINING_MS,
+      quickProbeBudgetMs: HF_SPACE_QUICK_WARMING_BUDGET_MS,
+      attemptCapMs: [5000, 1600, 900],
+    };
+  }
+  return {
+    totalBudgetMs: RETRY_TOTAL_BUDGET_MS,
+    minRetryRemainingMs: RETRY_MIN_RETRY_REMAINING_MS,
+    quickProbeBudgetMs: QUICK_WARMING_BUDGET_MS,
+    attemptCapMs: [adaptiveAttemptCapMs(1), adaptiveAttemptCapMs(2), adaptiveAttemptCapMs(3)],
+  };
 }
 
 function detectorRequestBody(text: string) {
@@ -535,7 +560,8 @@ type DetectorAttemptMetrics = {
 };
 
 async function callPythonDetectorWithFastRetry(text: string, target: DetectorTarget, allowFastStaleFallback: boolean) {
-  const deadlineMs = Date.now() + RETRY_TOTAL_BUDGET_MS;
+  const retryPolicy = detectorRetryPolicy(target);
+  const deadlineMs = Date.now() + retryPolicy.totalBudgetMs;
   const metrics: DetectorAttemptMetrics = {
     retries: 0,
     attempts: 0,
@@ -543,7 +569,7 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
     errorCode: null,
     upstreamBodySnippet: null,
     lastAttemptErrorKind: null,
-    remainingBudgetMs: RETRY_TOTAL_BUDGET_MS,
+    remainingBudgetMs: retryPolicy.totalBudgetMs,
   };
 
   let lastError: HttpRouteError | null = null;
@@ -553,7 +579,7 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
     metrics.remainingBudgetMs = remainingBeforeAttempt;
     const attemptTimeout = computeAttemptTimeoutMs({
       deadlineMs,
-      perAttemptCapMs: adaptiveAttemptCapMs(attempt),
+      perAttemptCapMs: retryPolicy.attemptCapMs[attempt - 1] ?? adaptiveAttemptCapMs(attempt),
       safetyMarginMs: RETRY_TIMEOUT_SAFETY_MARGIN_MS,
       minAttemptMs: RETRY_MIN_ATTEMPT_TIMEOUT_MS,
     });
@@ -646,7 +672,7 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
         transientHttp ? 503 : 502,
         transientHttp ? "DETECTOR_TRANSIENT_HTTP" : "DETECTOR_HTTP_ERROR",
         transientHttp
-          ? `Detector transient HTTP ${res.status}.`
+          ? detectorDownMessage(target.url)
           : `Detector HTTP ${res.status}.`,
         {
           upstreamStatus: res.status,
@@ -677,11 +703,13 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
               ? "DETECTOR_FETCH_FAILED"
               : "DETECTOR_FETCH_ERROR";
         const message = e?.name === "AbortError"
-          ? "Detector request timed out."
+          ? isLocalUrl(target.url)
+            ? "Detector request timed out."
+            : remoteDetectorUnavailableMessage()
           : isRefused
             ? detectorDownMessage(target.url)
             : transient
-              ? "Detector upstream connection failed."
+              ? detectorDownMessage(target.url)
               : "Detector fetch failed.";
 
         metrics.upstreamStatus = status;
@@ -709,7 +737,7 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
       jitterMaxMs: RETRY_JITTER_MAX_MS,
     });
     const remainingBeforeRetry = Math.max(0, deadlineMs - Date.now());
-    if (remainingBeforeRetry < RETRY_MIN_RETRY_REMAINING_MS) break;
+    if (remainingBeforeRetry < retryPolicy.minRetryRemainingMs) break;
     const maxWaitMs = Math.max(
       0,
       remainingBeforeRetry - RETRY_TIMEOUT_SAFETY_MARGIN_MS - RETRY_MIN_ATTEMPT_TIMEOUT_MS
@@ -725,7 +753,7 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
     throw new HttpRouteError(
       lastError.status === 502 ? 503 : lastError.status,
       lastError.code,
-      `Detector unavailable within ${RETRY_TOTAL_BUDGET_MS}ms budget.`,
+      lastError.transient ? detectorDownMessage(target.url) : lastError.message,
       {
         upstreamStatus: lastError.upstreamStatus ?? lastError.status,
         errorCode: lastError.errorCode ?? lastError.code,
@@ -749,6 +777,17 @@ async function callPythonDetectorWithFastRetry(text: string, target: DetectorTar
     lastAttemptErrorKind: metrics.lastAttemptErrorKind ?? "BUDGET_EXHAUSTED",
     remainingBudgetMs: Math.max(0, deadlineMs - Date.now()),
   });
+}
+
+function readAiOverallScore(metrics: Record<string, any> | null | undefined) {
+  if (!metrics || typeof metrics !== "object") return null;
+  for (const field of DETECTOR_SCORE_FIELDS) {
+    const value = Number(metrics[field]);
+    if (Number.isFinite(value)) {
+      return { field, value };
+    }
+  }
+  return null;
 }
 
 // ---------- route ----------
@@ -894,7 +933,7 @@ export async function POST(req: Request) {
     }
 
     if (isHfSpaceHost(detectorTarget.host) && !cacheLookup.stale) {
-      const probe = await quickHealthProbe(detectorTarget, QUICK_WARMING_BUDGET_MS);
+      const probe = await quickHealthProbe(detectorTarget, detectorRetryPolicy(detectorTarget).quickProbeBudgetMs);
       warmupState = probe.ready ? "probe-ready" : "probe-not-ready";
       if (probe.methodNotAllowed) {
         console.warn(
@@ -962,12 +1001,18 @@ export async function POST(req: Request) {
     lastAttemptErrorKind = py.metrics.lastAttemptErrorKind;
     remainingBudgetMs = py.metrics.remainingBudgetMs;
     const metrics = py.data.result[0];
-    const aiOverallRaw = Number(metrics?.["AI overall"]);
+    const parsedScore = readAiOverallScore(metrics);
+    const aiOverallRaw = parsedScore?.value ?? null;
 
-    if (!Number.isFinite(aiOverallRaw)) {
+    if (aiOverallRaw === null || !Number.isFinite(aiOverallRaw)) {
       errorCode = "DETECTOR_INVALID_RESPONSE";
       upstreamStatus = 502;
-      return finish(NextResponse.json({ ok: false, error: "Python detector did not return AI overall." }, { status: 502 }));
+      return finish(
+        NextResponse.json(
+          { ok: false, error: "Detector response did not include a supported score field." },
+          { status: 502 }
+        )
+      );
     }
 
     const aiGenerated = clamp(Math.round(aiOverallRaw), 0, 100);

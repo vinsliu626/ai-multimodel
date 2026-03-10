@@ -51,6 +51,15 @@ export function DetectorUI({
 
   const words = useMemo(() => countWords(text), [text]);
 
+  function handleTextChange(nextText: string) {
+    setText(nextText);
+    if (nextText === text) return;
+    if (result) setResult(null);
+    if (error) setError(null);
+    if (highlights.length > 0) setHighlights([]);
+    if (sentences.length > 0) setSentences([]);
+  }
+
   const englishWarning = useMemo(() => {
     if (!text.trim()) return null;
     if (hasNonEnglish(text)) return isZh ? "检测器仅支持英文文本。" : "Only English text is supported.";
@@ -215,7 +224,7 @@ export function DetectorUI({
                 </div>
 
                 <div className="flex-1 overflow-hidden px-4 pb-4">
-                  <HighlightEditor value={text} onChange={setText} highlights={result ? highlights : []} placeholder="To analyze text, add at least 80 words." disabled={loading || isLoadingGlobal} />
+                  <HighlightEditor value={text} onChange={handleTextChange} highlights={result ? highlights : []} placeholder="To analyze text, add at least 80 words." disabled={loading || isLoadingGlobal} />
                 </div>
 
                 <div className="px-4 py-3 border-t border-white/10 text-[11px] text-slate-400 flex items-center justify-between">
