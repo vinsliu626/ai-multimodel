@@ -1,7 +1,7 @@
 "use client";
 
 import React, { Suspense, useEffect, useRef, useState } from "react";
-import { useSession, signIn, signOut } from "next-auth/react";
+import { useSession, signIn, signOut, getProviders, type ClientSafeProvider } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 
 // 组件（你现有）
@@ -71,6 +71,7 @@ type RedeemSuccessState = {
   plan: string;
   grantEndAt: string | null;
 };
+type AuthProviderMap = Record<string, ClientSafeProvider>;
 
 /** ===================== helpers ===================== */
 async function safeReadJson(res: Response) {
@@ -217,6 +218,169 @@ function formatGiftPlan(plan: string, isZh: boolean) {
   return plan;
 }
 
+function HeaderAuthMenu({
+  isZh,
+  sessionExists,
+  userInitial,
+  userLabel,
+  userEmail,
+  visibleAuthProviders,
+  onOpenAccount,
+  onOpenBilling,
+  onOpenSettings,
+  onSignOut,
+}: {
+  isZh: boolean;
+  sessionExists: boolean;
+  userInitial: string;
+  userLabel: string;
+  userEmail: string;
+  visibleAuthProviders: ClientSafeProvider[];
+  onOpenAccount: () => void;
+  onOpenBilling: () => void;
+  onOpenSettings: () => void;
+  onSignOut: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState<"signin" | "account" | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onPointerDown = (event: MouseEvent) => {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(null);
+      }
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMenuOpen(null);
+      }
+    };
+
+    document.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
+  return (
+    <div ref={menuRef} className="relative">
+      {sessionExists ? (
+        <button
+          onClick={() => setMenuOpen((current) => (current === "account" ? null : "account"))}
+          className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 shadow-[0_10px_30px_rgba(2,6,23,0.2)] backdrop-blur-xl transition hover:bg-white/[0.07]"
+        >
+          <div
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-emerald-400 text-xs font-semibold text-white shadow-md shadow-blue-500/40"
+            title={userEmail}
+          >
+            {String(userInitial).toUpperCase()}
+          </div>
+          <div className="hidden min-w-0 sm:flex items-center gap-2 text-[11px] leading-tight">
+            <span className="max-w-[132px] truncate text-slate-100">{userLabel}</span>
+            <span className="text-slate-500">▼</span>
+          </div>
+        </button>
+      ) : (
+        <button
+          onClick={() => setMenuOpen((current) => (current === "signin" ? null : "signin"))}
+          className="rounded-full bg-gradient-to-r from-blue-500 via-sky-500 to-emerald-400 px-3 py-1.5 text-xs font-medium text-white shadow-md shadow-blue-500/40 transition-all hover:brightness-110"
+        >
+          {isZh ? "閻ц缍?" : "Sign in"}
+        </button>
+      )}
+
+      {menuOpen === "signin" && !sessionExists && (
+        <div className="absolute right-0 top-[calc(100%+10px)] z-30 w-56 rounded-3xl border border-white/10 bg-[#080808]/95 p-2 shadow-[0_24px_80px_rgba(2,6,23,0.55)] backdrop-blur-xl">
+          <div className="border-b border-white/8 px-3 py-2">
+            <p className="text-sm font-semibold text-slate-50">{isZh ? "閻ц缍?" : "Sign in"}</p>
+          </div>
+          <div className="space-y-1 px-1 py-2">
+            {visibleAuthProviders.map((provider) => (
+              <button
+                key={provider.id}
+                onClick={() => {
+                  setMenuOpen(null);
+                  signIn(provider.id);
+                }}
+                className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 text-left text-sm text-slate-100 transition hover:bg-white/10"
+              >
+                <span>
+                  {provider.id === "google"
+                    ? isZh
+                      ? "缁х画浣跨敤 Google"
+                      : "Continue with Google"
+                    : provider.id === "github"
+                    ? isZh
+                      ? "缁х画浣跨敤 GitHub"
+                      : "Continue with GitHub"
+                    : provider.name}
+                </span>
+                <span className="text-slate-500">↗</span>
+              </button>
+            ))}
+            {visibleAuthProviders.length === 0 && (
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-[12px] text-slate-400">
+                {isZh ? "鏆傛湭妫€娴嬪埌鍙敤鐨勭櫥褰曟柟寮?" : "No sign-in providers are currently available."}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {menuOpen === "account" && sessionExists && (
+        <div className="absolute right-0 top-[calc(100%+10px)] z-30 w-56 rounded-3xl border border-white/10 bg-[#080808]/95 p-2 shadow-[0_24px_80px_rgba(2,6,23,0.55)] backdrop-blur-xl">
+          <div className="border-b border-white/8 px-3 py-2">
+            <p className="truncate text-sm font-semibold text-slate-50">{userLabel}</p>
+            <p className="truncate text-[11px] text-slate-500">{userEmail}</p>
+          </div>
+          <div className="space-y-1 px-1 py-2">
+            <button
+              onClick={() => {
+                setMenuOpen(null);
+                onOpenAccount();
+              }}
+              className="flex w-full items-center rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-slate-100 transition hover:bg-white/10"
+            >
+              {isZh ? "璐︽埛" : "Account"}
+            </button>
+            <button
+              onClick={() => {
+                setMenuOpen(null);
+                onOpenBilling();
+              }}
+              className="flex w-full items-center rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-slate-100 transition hover:bg-white/10"
+            >
+              Billing
+            </button>
+            <button
+              onClick={() => {
+                setMenuOpen(null);
+                onOpenSettings();
+              }}
+              className="flex w-full items-center rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-slate-100 transition hover:bg-white/10"
+            >
+              {isZh ? "璁剧疆" : "Settings"}
+            </button>
+            <button
+              onClick={() => {
+                setMenuOpen(null);
+                onSignOut();
+              }}
+              className="flex w-full items-center rounded-2xl border border-red-500/20 bg-red-500/10 px-3 py-2.5 text-sm text-red-100 transition hover:bg-red-500/15"
+            >
+              {isZh ? "闁偓閸戣櫣娅ヨぐ?" : "Sign out"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** ===================== Main ===================== */
 function ChatPageInner() {
   const { data: session } = useSession();
@@ -251,6 +415,7 @@ function ChatPageInner() {
   const [redeemLoading, setRedeemLoading] = useState(false);
   const [redeemError, setRedeemError] = useState<string | null>(null);
   const [redeemSuccess, setRedeemSuccess] = useState<RedeemSuccessState | null>(null);
+  const [authProviders, setAuthProviders] = useState<AuthProviderMap>({});
 
   const { ent, refresh: refreshEnt } = useEntitlement(sessionExists);
 
@@ -278,6 +443,31 @@ function ChatPageInner() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadProviders() {
+      try {
+        const providers = await getProviders();
+        if (!cancelled) {
+          setAuthProviders(providers ?? {});
+        }
+      } catch {
+        if (!cancelled) {
+          setAuthProviders({});
+        }
+      }
+    }
+
+    if (!sessionExists) {
+      loadProviders();
+    }
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionExists]);
 
   useEffect(() => {
     if (mode === "study") {
@@ -726,6 +916,15 @@ function ChatPageInner() {
   }
 
   const userInitial = effectiveSession?.user?.name?.[0] || effectiveSession?.user?.email?.[0] || "U";
+  const visibleAuthProviders = ["google", "github"]
+    .map((id) => authProviders[id])
+    .filter((provider): provider is ClientSafeProvider => Boolean(provider));
+  const userLabel = effectiveSession?.user?.name || effectiveSession?.user?.email || "User";
+  const userEmail = effectiveSession?.user?.email || "";
+
+  function openAccountPage() {
+    window.location.href = "/account";
+  }
 
   function setModeSafely(next: ChatMode) {
     if (!sessionExists && (next === "detector" || next === "note" || next === "study")) {
@@ -937,8 +1136,79 @@ function ChatPageInner() {
             </div>
 
             {/* Right */}
-            <div className="flex items-center gap-3">
+            <div className="mr-1 flex items-center gap-3 md:mr-2">
               <ModeDropdown value={mode} onChange={setModeSafely} lang={lang} disabled={isLoading} />
+              <HeaderAuthMenu
+                isZh={isZh}
+                sessionExists={sessionExists}
+                userInitial={String(userInitial)}
+                userLabel={userLabel}
+                userEmail={userEmail}
+                visibleAuthProviders={visibleAuthProviders}
+                onOpenAccount={openAccountPage}
+                onOpenBilling={() => {
+                  refreshEnt();
+                  setPlanOpen(true);
+                }}
+                onOpenSettings={() => setSettingsOpen(true)}
+                onSignOut={() => signOut()}
+              />
+              <div className="hidden">
+              {sessionExists ? (
+                <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 shadow-[0_10px_30px_rgba(2,6,23,0.2)] backdrop-blur-xl">
+                  <div
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-emerald-400 text-xs font-semibold text-white shadow-md shadow-blue-500/40"
+                    title={effectiveSession?.user?.email || ""}
+                  >
+                    {String(userInitial).toUpperCase()}
+                  </div>
+                  <div className="hidden min-w-0 sm:flex flex-col text-[11px] leading-tight">
+                    <span className="max-w-[132px] truncate text-slate-100">
+                      {effectiveSession?.user?.name || effectiveSession?.user?.email || "User"}
+                    </span>
+                    <button
+                      onClick={() => signOut()}
+                      className="text-left text-xs text-slate-400 transition hover:text-slate-200 hover:underline underline-offset-2"
+                    >
+                      {isZh ? "閫€鍑虹櫥褰?" : "Sign out"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  {visibleAuthProviders.map((provider) => (
+                    <button
+                      key={provider.id}
+                      onClick={() => signIn(provider.id)}
+                      className={[
+                        "rounded-full px-3 py-1.5 text-xs font-medium transition-all",
+                        provider.id === "google"
+                          ? "bg-gradient-to-r from-blue-500 via-sky-500 to-emerald-400 text-white shadow-md shadow-blue-500/40 hover:brightness-110"
+                          : "border border-white/10 bg-white/5 text-slate-100 hover:bg-white/10",
+                      ].join(" ")}
+                    >
+                      {provider.id === "google"
+                        ? isZh
+                          ? "Google 鐧诲綍"
+                          : "Google"
+                        : provider.id === "github"
+                        ? isZh
+                          ? "GitHub 鐧诲綍"
+                          : "GitHub"
+                        : provider.name}
+                    </button>
+                  ))}
+                  {visibleAuthProviders.length === 0 && (
+                    <button
+                      onClick={() => signIn()}
+                      className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-100 transition-all hover:bg-white/10"
+                    >
+                      {isZh ? "鐧诲綍" : "Sign in"}
+                    </button>
+                  )}
+                </div>
+              )}
+              </div>
             </div>
           </header>
 
