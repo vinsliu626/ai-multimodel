@@ -67,6 +67,10 @@ type Entitlement = {
 
   canSeeSuspiciousSentences: boolean;
 };
+type RedeemSuccessState = {
+  plan: string;
+  grantEndAt: string | null;
+};
 
 /** ===================== helpers ===================== */
 async function safeReadJson(res: Response) {
@@ -196,6 +200,23 @@ function stripConclusionLabel(s: string) {
     .trim();
 }
 
+function formatGiftGrantEndAt(grantEndAt: string | null, isZh: boolean) {
+  if (!grantEndAt) return isZh ? "宸叉縺娲?" : "Active now";
+  const parsed = new Date(grantEndAt);
+  if (!Number.isFinite(parsed.getTime())) return grantEndAt;
+  return new Intl.DateTimeFormat(isZh ? "zh-CN" : "en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(parsed);
+}
+
+function formatGiftPlan(plan: string, isZh: boolean) {
+  if (plan.toLowerCase() === "pro") return "Pro";
+  if (plan.toLowerCase() === "ultra") return isZh ? "Ultra 涓撲笟鐗?" : "Ultra Pro";
+  return plan;
+}
+
 /** ===================== Main ===================== */
 function ChatPageInner() {
   const { data: session } = useSession();
@@ -229,6 +250,7 @@ function ChatPageInner() {
   const [redeemOpen, setRedeemOpen] = useState(false);
   const [redeemLoading, setRedeemLoading] = useState(false);
   const [redeemError, setRedeemError] = useState<string | null>(null);
+  const [redeemSuccess, setRedeemSuccess] = useState<RedeemSuccessState | null>(null);
 
   const { ent, refresh: refreshEnt } = useEntitlement(sessionExists);
 
@@ -648,13 +670,30 @@ function ChatPageInner() {
       });
       const { data } = await safeReadJson(res);
       if (!res.ok || data?.ok === false) throw new Error(data?.error || `Redeem error: ${res.status}`);
-      setRedeemOpen(false);
+      setRedeemSuccess({
+        plan: String(data?.plan || "pro"),
+        grantEndAt: data?.grantEndAt ? String(data.grantEndAt) : null,
+      });
       await refreshEnt();
     } catch (e: any) {
       setRedeemError(e?.message || (isZh ? "兑换失败" : "Redeem failed"));
     } finally {
       setRedeemLoading(false);
     }
+  }
+
+  useEffect(() => {
+    if (!redeemOpen || !redeemSuccess) return;
+    const timer = window.setTimeout(() => {
+      setRedeemOpen(false);
+    }, 1850);
+    return () => window.clearTimeout(timer);
+  }, [redeemOpen, redeemSuccess]);
+
+  function openRedeemModal() {
+    setRedeemError(null);
+    setRedeemSuccess(null);
+    setRedeemOpen(true);
   }
 
   async function manageBilling(plan: "pro" | "ultra") {
@@ -903,6 +942,38 @@ function ChatPageInner() {
             </div>
           </header>
 
+          {redeemSuccess && (
+            <div className="px-4 pt-4 md:px-8">
+              <div className="rounded-[28px] border border-white/10 bg-gradient-to-r from-white/[0.04] via-blue-500/[0.08] to-emerald-400/[0.08] px-4 py-4 shadow-[0_18px_70px_rgba(2,6,23,0.35)] backdrop-blur-xl">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div className="flex items-start gap-3">
+                    <div className="mt-0.5 flex h-11 w-11 items-center justify-center rounded-2xl border border-emerald-300/20 bg-white/10 shadow-[0_0_24px_rgba(16,185,129,0.2)]">
+                      <span className="h-2.5 w-2.5 rounded-full bg-gradient-to-r from-blue-300 via-white to-emerald-300 shadow-[0_0_16px_rgba(96,165,250,0.7)]" />
+                    </div>
+                    <div>
+                      <p className="bg-gradient-to-r from-blue-200 via-white to-emerald-200 bg-clip-text text-lg font-semibold tracking-tight text-transparent">
+                        {isZh ? "鎭枩锛岀ぜ鍖呭凡鐢熸晥" : "Congratulations, your gift is live"}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-200">
+                        {formatGiftPlan(redeemSuccess.plan, isZh)} {isZh ? "宸茶В閿侊紝鏈夋晥鏈熻嚦" : "unlocked, active until"}{" "}
+                        <span className="font-semibold text-white">{formatGiftGrantEndAt(redeemSuccess.grantEndAt, isZh)}</span>
+                      </p>
+                      <p className="mt-1 text-[12px] text-slate-400">
+                        {isZh ? "鐜板湪鍙互浣跨敤宸茶В閿佺殑楂樼骇鍔熻兘銆?" : "Your upgraded features are ready to use now."}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setRedeemSuccess(null)}
+                    className="h-10 rounded-2xl border border-white/10 bg-white/5 px-4 text-[12px] font-semibold text-slate-100 transition hover:bg-white/10"
+                  >
+                    {isZh ? "鐭ラ亾浜?" : "Dismiss"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Body */}
           {mode === "detector" ? (
             <DetectorUI isLoadingGlobal={isLoading} isZh={isZh} locked={detectorLocked} canSeeSuspicious={!!ent?.canSeeSuspiciousSentences} />
@@ -1024,8 +1095,7 @@ function ChatPageInner() {
         ent={ent}
         onOpenRedeem={() => {
           if (!sessionExists) return signIn();
-          setRedeemError(null);
-          setRedeemOpen(true);
+          openRedeemModal();
         }}
         onManageBilling={manageBilling}
         refreshEnt={refreshEnt}
@@ -1038,6 +1108,7 @@ function ChatPageInner() {
         onRedeem={redeemCode}
         loading={redeemLoading}
         error={redeemError}
+        success={redeemSuccess}
       />
 
       <SettingsModal
@@ -1056,8 +1127,7 @@ function ChatPageInner() {
         }}
         onOpenRedeem={() => {
           if (!sessionExists) return signIn();
-          setRedeemError(null);
-          setRedeemOpen(true);
+          openRedeemModal();
         }}
         onSignOut={sessionExists ? () => signOut() : undefined}
       />

@@ -9,6 +9,7 @@ import { hashPromoCode, normalizePromoCode } from "@/lib/promo/codeHash";
 import { redeemPromoCodeTx } from "@/lib/promo/service";
 import { planToFlags } from "@/lib/billing/planFlags";
 import { mutationResultSelect } from "@/lib/billing/entitlementDb";
+import { resolveGiftCampaignPolicy } from "@/lib/billing/giftCampaigns";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,36 +40,6 @@ function isPromoTableMissingError(error: unknown): boolean {
 
   const message = error instanceof Error ? error.message : String(error);
   return message.includes("PromoCode") && message.includes("does not exist");
-}
-
-type GiftCampaignPolicy = {
-  plan: "pro";
-  grantDurationDays: number;
-  codeExpiresAt: Date;
-};
-
-const GIFT_CAMPAIGN_BY_CODE: Record<string, GiftCampaignPolicy> = {
-  HELLO_WORLD: {
-    plan: "pro",
-    grantDurationDays: 7,
-    // Code expires after this UTC timestamp.
-    codeExpiresAt: new Date("2026-03-09T00:00:00.000Z"),
-  },
-  NEWAPP: {
-    plan: "pro",
-    grantDurationDays: 7,
-    codeExpiresAt: new Date("2026-03-19T04:58:40.202Z"),
-  },
-};
-
-function resolveGiftCampaignPolicy(code: string): GiftCampaignPolicy {
-  const policy = GIFT_CAMPAIGN_BY_CODE[code];
-  if (policy) return policy;
-  return {
-    plan: "pro",
-    grantDurationDays: 7,
-    codeExpiresAt: new Date("2099-01-01T00:00:00.000Z"),
-  };
 }
 
 function resolveNow(req: Request): Date {

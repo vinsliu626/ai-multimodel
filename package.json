@@ -15,6 +15,7 @@
     "test:stripe": "node ./node_modules/vitest/vitest.mjs run --configLoader native --pool threads tests/api/stripe-checkout.test.ts tests/api/stripe-webhook.test.ts",
     "postinstall": "prisma generate",
     "gift:create": "ts-node scripts/create-gift-code.ts",
+    "gift:cleanup:expired": "ts-node scripts/cleanup-expired-gift-codes.ts",
     "promo:create": "ts-node scripts/create-promo-code.ts",
     "promo:cleanup": "ts-node scripts/promo-cleanup.ts",
     "promo:dev-access": "ts-node scripts/promo-set-dev-access.ts"
