@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { transcribeAudioToText } from "@/lib/asr/transcribe";
 import { callGroqTranscribe } from "@/lib/ai/groq";
-import { generateStructuredNotes } from "@/lib/aiNote/generate";
+import { generateStructuredNotesSafely } from "@/lib/aiNote/staged";
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
 import { assertNoteRequestAllowed, getNoteQuotaStatus, markNoteAttempt, NoteLimitError, recordNoteGenerateSuccess } from "@/lib/aiNote/quota";
 import { devBypassUserId } from "@/lib/auth/devBypass";
@@ -19,6 +19,8 @@ function friendlyNoteErrorMessage(code: string, fallback: string) {
       return "Please wait a moment before sending another request.";
     case "NOTE_INPUT_TOO_LARGE":
       return "This text is too long for your current plan.";
+    case "NOTE_STAGED_TOO_LARGE":
+      return "This input is too large to process safely right now.";
     case "AUTH_REQUIRED":
       return "Please sign in to use AI Notes.";
     default:
@@ -82,10 +84,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const quota = await assertNoteRequestAllowed(userId, inputText.length);
+    const quota = await assertNoteRequestAllowed(userId, inputText.length, { allowStaged: true });
     markNoteAttempt(userId);
 
-    if (inputType === "upload") {
+    if (inputType === "upload" || quota.mode === "staged") {
       const estimatedSeconds = Math.max(1, Math.round(inputText.trim().split(/\s+/).filter(Boolean).length / 2.5));
       try {
         await assertQuotaOrThrow({ userId, action: "note", amount: estimatedSeconds });
@@ -100,13 +102,17 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const boundedText = inputText.slice(0, quota.limits.maxInputChars);
-    const note = await generateStructuredNotes({
-      text: boundedText,
-      isZh: /[\u4e00-\u9fff]/.test(boundedText),
+    const isZh = /[\u4e00-\u9fff]/.test(inputText);
+    const maxOutputTokens =
+      quota.limits.maxItems <= 8 ? 650 : quota.limits.maxItems <= 12 ? 850 : 1_000;
+    const generated = await generateStructuredNotesSafely({
+      text: inputText,
+      isZh,
       maxItems: quota.limits.maxItems,
-      maxOutputTokens: quota.limits.maxItems <= 8 ? 700 : quota.limits.maxItems <= 15 ? 1_000 : 1_200,
+      maxOutputTokens,
+      preferStaged: quota.mode === "staged",
     });
+    const note = generated.note;
 
     await recordNoteGenerateSuccess(userId);
     const usage = await getNoteQuotaStatus(userId);
@@ -114,6 +120,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       note,
+      meta: {
+        provider: generated.meta.provider,
+        model: generated.meta.model,
+        mode: generated.meta.mode,
+        chunkCount: generated.meta.chunkCount,
+        inputType,
+        inputChars: generated.meta.inputChars,
+      },
       usage: {
         usedToday: usage.usedToday,
         remainingToday: usage.remainingToday,
@@ -121,6 +135,12 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("NOTE_STAGED_TOO_LARGE")) {
+      return NextResponse.json(
+        { ok: false, error: "NOTE_STAGED_TOO_LARGE", message: friendlyNoteErrorMessage("NOTE_STAGED_TOO_LARGE", error.message) },
+        { status: 400 }
+      );
+    }
     if (error instanceof NoteLimitError) {
       return NextResponse.json(
         { ok: false, error: error.code, message: friendlyNoteErrorMessage(error.code, error.message) },

@@ -1,0 +1,5 @@
+Project kickoff meeting transcript.
+
+We agreed to ship the beta by April 15. Sarah owns the onboarding checklist. Mike will validate the analytics events before Friday. The team decided to postpone single sign-on to phase two because the current risk is too high. Open questions include whether export should support PDF in beta and whether customer success needs admin impersonation.
+
+The engineering constraints discussed were database connection limits, background job visibility, and making sure note generation remains under budget. The product decision was to keep the current UI, avoid schema changes this sprint, and focus on reliability. Action items were repeated: Sarah drafts onboarding, Mike verifies analytics, Priya writes the release checklist, and Alex schedules a customer review.

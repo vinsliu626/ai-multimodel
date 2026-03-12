@@ -7,6 +7,7 @@ import { devBypassUserId } from "@/lib/auth/devBypass";
 
 import { callGroqTranscribe, callGroqChat } from "@/lib/ai/groq";
 import { callOpenRouterChat, shouldFallback, type ChatMessage } from "@/lib/ai/openrouter";
+import { parseEnvInt } from "@/lib/env/number";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -172,7 +173,7 @@ export async function POST(req: Request) {
     }
 
     // 2) transcript 分段
-    const partChars = Number(process.env.AI_NOTE_TRANSCRIPT_CHARS_PER_PART || 6000);
+    const partChars = parseEnvInt("AI_NOTE_TRANSCRIPT_CHARS_PER_PART", 6000);
     const parts = splitByChars(transcript, partChars);
 
     // 3) 每段压缩

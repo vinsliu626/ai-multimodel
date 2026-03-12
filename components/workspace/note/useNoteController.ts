@@ -16,6 +16,7 @@ export function useNoteController({
   isZh: boolean;
   onUsageRefresh?: () => Promise<void> | void;
 }) {
+  const finalizeAbortRef = useRef(false);
   const [tab, setTab] = useState<NoteTab>("upload");
 
   const [file, setFile] = useState<File | null>(null);
@@ -345,37 +346,65 @@ export function useNoteController({
           await uploadingRef.current;
         } catch {}
 
+        finalizeAbortRef.current = false;
         setFinalizeStage("asr");
-        setFinalizeProgress(10);
+        setFinalizeProgress(1);
 
-        const r = await fetch("/api/ai-note/finalize", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ noteId }),
-        });
+        const maxAttempts = 180;
+        let finalNote = "";
 
-        const raw = await r.text();
-        let j: any = null;
-        try {
-          j = raw ? JSON.parse(raw) : null;
-        } catch {
-          j = null;
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          if (finalizeAbortRef.current) {
+            throw new Error(isZh ? "生成已取消。" : "Generation cancelled.");
+          }
+
+          const r = await fetch("/api/ai-note/finalize", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ noteId }),
+          });
+
+          const raw = await r.text();
+          let j: any = null;
+          try {
+            j = raw ? JSON.parse(raw) : null;
+          } catch {
+            j = null;
+          }
+
+          if (!r.ok || j?.ok === false) {
+            const retryAfterMs = Number(j?.retryAfterMs) || Number(j?.extra?.retryAfterMs) || 1500;
+            const retryable = r.status === 202 || j?.error === "LOCKED";
+            if (retryable && attempt < maxAttempts - 1) {
+              await new Promise((resolve) => window.setTimeout(resolve, retryAfterMs));
+              continue;
+            }
+
+            const msg =
+              friendlyMessageFromApi(j, "") ||
+              (raw ? raw.slice(0, 300) : "") ||
+              `Finalize error: ${r.status}`;
+            setFinalizeStage("failed");
+            setFinalizeProgress(0);
+            throw new Error(msg);
+          }
+
+          setFinalizeStage(String(j?.stage || "done"));
+          setFinalizeProgress(Number.isFinite(j?.progress) ? Number(j.progress) : 100);
+
+          if (j?.stage === "done") {
+            finalNote = String(j?.note ?? j?.result ?? "");
+            break;
+          }
+
+          await new Promise((resolve) => window.setTimeout(resolve, 1500));
         }
 
-        if (!r.ok || j?.ok === false) {
-          const msg =
-            friendlyMessageFromApi(j, "") ||
-            (raw ? raw.slice(0, 300) : "") ||
-            `Finalize error: ${r.status}`;
-          setFinalizeStage("failed");
-          setFinalizeProgress(0);
-          throw new Error(msg);
+        if (!finalNote) {
+          throw new Error(isZh ? "生成超时，请稍后重试。" : "Note generation timed out before completion.");
         }
 
-        setFinalizeStage(String(j?.stage || "done"));
-        setFinalizeProgress(Number.isFinite(j?.progress) ? Number(j.progress) : 100);
-
-        setResult(String(j?.note ?? j?.result ?? ""));
+        setResult(finalNote);
         setSuccess(isZh ? "笔记已生成。" : "Notes generated.");
         onUsageRefresh?.();
         return;
@@ -390,6 +419,7 @@ export function useNoteController({
   }
 
   function switchTab(next: NoteTab) {
+    finalizeAbortRef.current = true;
     // ✅ 切换 tab 前清理录音
     if (recording) {
       try {
@@ -414,6 +444,7 @@ export function useNoteController({
   // safety cleanup on unmount
   useEffect(() => {
     return () => {
+      finalizeAbortRef.current = true;
       try {
         stopTimer();
       } catch {}

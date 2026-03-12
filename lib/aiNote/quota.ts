@@ -3,6 +3,7 @@ import { startOfTodayUTC } from "@/lib/billing/time";
 import { resolveEffectiveAccess } from "@/lib/billing/access";
 import { addUsageEvent } from "@/lib/billing/usage";
 import { getNotePlanLimits } from "@/lib/plans/productLimits";
+import { getStagedNoteMaxChars } from "@/lib/aiNote/staged";
 
 const lastNoteAttemptByUser = new Map<string, number>();
 
@@ -33,12 +34,20 @@ export async function getNoteQuotaStatus(userId: string) {
   };
 }
 
-export async function assertNoteRequestAllowed(userId: string, inputChars: number) {
+export async function assertNoteRequestAllowed(
+  userId: string,
+  inputChars: number,
+  opts?: { allowStaged?: boolean }
+) {
   const { limits, usedToday } = await getNoteQuotaStatus(userId);
   const now = Date.now();
   const last = lastNoteAttemptByUser.get(userId) ?? 0;
+  const stagedAllowed = Boolean(opts?.allowStaged);
+  const stagedMaxChars = Math.min(getStagedNoteMaxChars(), limits.maxInputChars);
+  const stagedTriggerChars = Math.min(stagedMaxChars, Math.max(6_000, Math.floor(stagedMaxChars * 0.55)));
+  const requiresStaged = stagedAllowed && inputChars > stagedTriggerChars;
 
-  if (inputChars > limits.maxInputChars) {
+  if (inputChars > stagedMaxChars) {
     throw new NoteLimitError("NOTE_INPUT_TOO_LARGE", "This text is too long for your current plan.", 400);
   }
 
@@ -51,7 +60,12 @@ export async function assertNoteRequestAllowed(userId: string, inputChars: numbe
     throw new NoteLimitError("NOTE_DAILY_LIMIT_REACHED", "You've used all AI Note generations for today.", 429);
   }
 
-  return { limits };
+  return {
+    limits,
+    mode: requiresStaged ? ("staged" as const) : ("standard" as const),
+    stagedMaxChars,
+    stagedTriggerChars,
+  };
 }
 
 export function markNoteAttempt(userId: string) {

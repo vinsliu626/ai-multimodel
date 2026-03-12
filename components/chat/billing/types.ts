@@ -22,6 +22,13 @@ export type Entitlement = {
   noteInputMaxChars?: number;
   noteMaxItems?: number;
   noteCooldownMs?: number;
+  usedStudyCountToday?: number;
+  studyGenerationsPerDay?: number;
+  studyMaxFileSizeBytes?: number;
+  studyMaxExtractedChars?: number;
+  studyMaxQuizQuestions?: number;
+  studyMaxSelectableModes?: number;
+  studyAllowedDifficulties?: ("easy" | "medium" | "hard")[];
 
   canSeeSuspiciousSentences: boolean;
 };

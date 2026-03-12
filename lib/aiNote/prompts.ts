@@ -73,14 +73,14 @@ Output MUST be valid JSON matching:
 type SectionNotes = {
   id: string;
   heading: string;
-  bullets: string[];                 // 5-10 bullets
-  keyTerms: Array<{ term: string; definition: string }>; // 3-8
-  examples: string[];                // 0-5
-  actionItems: string[];             // 0-5 (if applicable)
+  bullets: string[];                 // 4-8 bullets
+  keyTerms: Array<{ term: string; definition: string }>; // 2-5
+  examples: string[];                // 0-3
+  actionItems: string[];             // 0-3 (if applicable)
 };
 
 Constraints:
-- bullets should be concise and useful for learning.
+- bullets should be concise, useful for learning, and short.
 - keyTerms must be grounded in the text.
 - If the text has no examples/action items, return empty arrays.
 
@@ -119,11 +119,11 @@ Output MUST be valid JSON matching:
 
 type FinalNote = {
   title: string;
-  tldr: string[]; // 5-10 bullets
+  tldr: string[]; // 4-8 bullets
   outline: Array<{ heading: string; bullets: string[] }>;
   keyTerms: Array<{ term: string; definition: string }>;
-  reviewChecklist: string[]; // 8-15
-  quiz: Array<{ q: string; a: string }>; // 6-12
+  reviewChecklist: string[]; // 6-10
+  quiz: Array<{ q: string; a: string }>; // 4-6
   markdown: string; // A nicely formatted Markdown document containing all of the above
 };
 
@@ -134,7 +134,7 @@ Formatting requirements for markdown:
 - Then "## Key Terms"
 - Then "## Review Checklist"
 - Then "## Self-Quiz"
-- Keep it clean and copy-friendly.
+- Keep it clean, bullet-heavy, concise, and copy-friendly. Avoid long paragraphs.
 
 DATA:
 title: ${args.title}

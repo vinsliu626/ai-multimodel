@@ -16,6 +16,7 @@ import { transcribeAudioToText } from "@/lib/asr/transcribe";
 import { callGroqTranscribe } from "@/lib/ai/groq";
 import { runAiNotePipeline } from "@/lib/aiNote/pipeline";
 import { assertNoteRequestAllowed, markNoteAttempt, NoteLimitError, recordNoteGenerateSuccess } from "@/lib/aiNote/quota";
+import { parseEnvInt } from "@/lib/env/number";
 
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
 import { addUsageEvent } from "@/lib/billing/usage";
@@ -141,6 +142,20 @@ function isRetryableStatus(code?: number) {
   return code === 429 || code === 502 || code === 503 || code === 504;
 }
 
+function isRetryableAsrMessage(msg: string) {
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes("fetch failed") ||
+    lower.includes("econnreset") ||
+    lower.includes("etimedout") ||
+    lower.includes("econnaborted") ||
+    lower.includes("socket hang up") ||
+    lower.includes("timeout") ||
+    lower.includes("temporarily unavailable") ||
+    lower.includes("network error")
+  );
+}
+
 function parseHttpStatus(msg: string): number | null {
   const m = msg.match(/HTTP error:\s*(\d{3})\b/i);
   if (m) return Number.parseInt(m[1], 10);
@@ -158,14 +173,40 @@ async function withRetry<T>(fn: () => Promise<T>, label: string, maxTry = 4) {
       lastErr = e;
       const msg = String(e?.message || e);
       const status = parseHttpStatus(msg);
-      const retryable = isRetryableStatus(status ?? undefined);
+      const retryable = isRetryableStatus(status ?? undefined) || isRetryableAsrMessage(msg) || String(e?.code || "").toUpperCase().includes("TIMEOUT");
       if (!retryable || attempt === maxTry) break;
-      const backoff = Math.min(30000, 500 * Math.pow(2, attempt - 1));
+      const backoff = Math.min(30000, 500 * Math.pow(2, attempt - 1) + Math.round(Math.random() * 250));
       console.warn(`[ai-note/finalize] retry ${label} attempt=${attempt} backoff=${backoff}ms status=${status ?? "unknown"}`);
       await new Promise((r) => setTimeout(r, backoff));
     }
   }
   throw lastErr;
+}
+
+async function setJobError(noteId: string, stage: string, progress: number, message: string) {
+  await prisma.aiNoteJob.update({
+    where: { noteId },
+    data: { stage, progress, error: message },
+  }).catch(() => {});
+}
+
+function buildSegmentFailureMessage(input: {
+  noteId: string;
+  segmentIndex: number;
+  segmentsTotal: number;
+  filename: string;
+  cause: string;
+}) {
+  return JSON.stringify({
+    code: "ASR_SEGMENT_FAILED",
+    noteId: input.noteId,
+    segmentIndex: input.segmentIndex,
+    segmentNumber: input.segmentIndex + 1,
+    segmentsTotal: input.segmentsTotal,
+    filename: input.filename,
+    cause: input.cause,
+    retryable: true,
+  });
 }
 
 async function transcribeWithFallback(
@@ -281,7 +322,7 @@ function makeLockId() {
 
 async function acquireJobLock(noteId: string) {
   const now = new Date();
-  const ttlMs = Math.max(10_000, Number.parseInt(process.env.AI_NOTE_LOCK_TTL_MS || "60000", 10) || 60_000);
+  const ttlMs = Math.max(10_000, parseEnvInt("AI_NOTE_LOCK_TTL_MS", 60_000));
   const expires = new Date(now.getTime() + ttlMs);
   const lockId = makeLockId();
 
@@ -302,7 +343,7 @@ async function acquireJobLock(noteId: string) {
 
 async function refreshJobLock(noteId: string, lockId: string) {
   const now = new Date();
-  const ttlMs = Math.max(10_000, Number.parseInt(process.env.AI_NOTE_LOCK_TTL_MS || "60000", 10) || 60_000);
+  const ttlMs = Math.max(10_000, parseEnvInt("AI_NOTE_LOCK_TTL_MS", 60_000));
   const expires = new Date(now.getTime() + ttlMs);
 
   await prisma.aiNoteJob.updateMany({
@@ -347,7 +388,7 @@ export async function POST(req: Request) {
         stage: "prep",
         progress: 0,
         error: null,
-        segmentTimeSec: 90,
+        segmentTimeSec: Math.max(30, parseEnvInt("AI_NOTE_SEGMENT_TIME_SEC", 300)),
         segmentsTotal: 0,
         asrNextIndex: 0,
         llmNextPart: 0,
@@ -429,9 +470,14 @@ export async function POST(req: Request) {
         const ffmpegBin = getFfmpegBin();
         await ensureExecutable(ffmpegBin);
 
-        const ASR_BATCH = Math.max(1, parseInt(process.env.AI_NOTE_ASR_BATCH || "2", 10) || 2);
-        const asrTimeoutMs = Math.max(30_000, parseInt(process.env.AI_NOTE_ASR_TIMEOUT_MS || "180000", 10) || 180_000);
-        const segTime = Math.max(30, job.segmentTimeSec || 90);
+        const ASR_BATCH = Math.max(
+          1,
+          parseEnvInt("AI_NOTE_ASR_BATCH", parseEnvInt("AI_NOTE_ASR_CONCURRENCY", 2))
+        );
+        const asrTimeoutMs = Math.max(30_000, parseEnvInt("AI_NOTE_ASR_TIMEOUT_MS", 180_000));
+        // Keep individual ASR requests bounded; larger slices were causing upstream resets/timeouts.
+        const requestedSegTime = Math.max(30, job.segmentTimeSec || parseEnvInt("AI_NOTE_SEGMENT_TIME_SEC", 300));
+        const segTime = Math.min(requestedSegTime, 180);
 
         const chunks = await prisma.aiNoteChunk.findMany({
           where: { noteId },
@@ -493,9 +539,21 @@ export async function POST(req: Request) {
           const p = path.join(workDir, fname);
           const buf = await fs.readFile(p);
 
-          const text = await transcribeWithFallback(buf, fname, asrTimeoutMs).catch((e) => {
-            throw Object.assign(new Error(String((e as any)?.message || e)), { _code: "ASR_FAILED" });
-          });
+          let text = "";
+          try {
+            text = await transcribeWithFallback(buf, fname, asrTimeoutMs);
+          } catch (e: any) {
+            const cause = String(e?.message || e);
+            const errorMessage = buildSegmentFailureMessage({
+              noteId,
+              segmentIndex: i,
+              segmentsTotal: total,
+              filename: fname,
+              cause,
+            });
+            await setJobError(noteId, "asr", job.progress || 1, errorMessage);
+            throw Object.assign(new Error(errorMessage), { _code: "ASR_FAILED" });
+          }
 
           const cleaned = String(text || "").trim();
 
@@ -538,7 +596,7 @@ export async function POST(req: Request) {
         const transcriptAll = rows.map((r) => r.text || "").filter(Boolean).join("\n").trim();
         if (!transcriptAll) return bad("ASR_FAILED", 422, "Transcript is empty.");
         try {
-          await assertNoteRequestAllowed(userId, transcriptAll.length);
+          await assertNoteRequestAllowed(userId, transcriptAll.length, { allowStaged: true });
           markNoteAttempt(userId);
         } catch (error) {
           if (error instanceof NoteLimitError) {
@@ -600,13 +658,13 @@ export async function POST(req: Request) {
           throw e;
         }
 
-        const llmTimeoutMs = Math.max(60_000, parseInt(process.env.AI_NOTE_LLM_TIMEOUT_MS || "180000", 10) || 180_000);
-        const LLM_BATCH = Math.max(1, parseInt(process.env.AI_NOTE_LLM_BATCH || "1", 10) || 1);
+        const llmTimeoutMs = Math.max(60_000, parseEnvInt("AI_NOTE_LLM_TIMEOUT_MS", 180_000));
+        const LLM_BATCH = Math.max(1, parseEnvInt("AI_NOTE_LLM_BATCH", 1));
 
         // ✅ 你后面已经改成 6500/400 了就保持一致：也可以 env 化
-        const maxChars = Math.max(2000, parseInt(process.env.AI_NOTE_LLM_MAX_CHARS || "6500", 10) || 6500);
-        const overlap = Math.max(0, parseInt(process.env.AI_NOTE_LLM_OVERLAP || "400", 10) || 400);
-        const pauseMs = Math.max(0, parseInt(process.env.AI_NOTE_LLM_PAUSE_MS || "15000", 10) || 15000);
+        const maxChars = Math.max(2000, parseEnvInt("AI_NOTE_LLM_MAX_CHARS", 6500));
+        const overlap = Math.max(0, parseEnvInt("AI_NOTE_LLM_OVERLAP", 400));
+        const pauseMs = Math.max(0, parseEnvInt("AI_NOTE_LLM_PAUSE_MS", 15000));
 
         const chunks = chunkText(transcriptAll, maxChars, overlap);
         const totalParts = chunks.length;
@@ -735,7 +793,18 @@ ${text}`
     console.error("[ai-note/finalize] error:", msg);
 
     if (e?._code === "FFMPEG_FAILED") return bad("FFMPEG_FAILED", 500, msg);
-    if (e?._code === "ASR_FAILED") return bad("ASR_FAILED", 502, msg);
+    if (e?._code === "ASR_FAILED") {
+      let extra: Record<string, any> | undefined;
+      let message = msg;
+      try {
+        const parsed = JSON.parse(msg);
+        if (parsed && typeof parsed === "object") {
+          extra = parsed;
+          message = `ASR failed on segment ${Number(parsed.segmentNumber || 0)}/${Number(parsed.segmentsTotal || 0)}.`;
+        }
+      } catch {}
+      return bad("ASR_FAILED", 502, message, extra);
+    }
 
     if (e?._code === "LLM_FAILED") {
       const m = msg.match(/try again in\s+([0-9.]+)s/i);

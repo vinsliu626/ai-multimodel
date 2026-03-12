@@ -56,7 +56,7 @@ export const PRODUCT_PLAN_LIMITS: Record<PlanId, ProductPlanLimits> = {
     },
     note: {
       generatesPerDay: 3,
-      maxInputChars: 5_000,
+      maxInputChars: 12_000,
       maxItems: 8,
       cooldownMs: 60_000,
     },
@@ -86,8 +86,8 @@ export const PRODUCT_PLAN_LIMITS: Record<PlanId, ProductPlanLimits> = {
     },
     note: {
       generatesPerDay: 12,
-      maxInputChars: 15_000,
-      maxItems: 15,
+      maxInputChars: 30_000,
+      maxItems: 12,
       cooldownMs: 20_000,
     },
     study: {
@@ -116,8 +116,8 @@ export const PRODUCT_PLAN_LIMITS: Record<PlanId, ProductPlanLimits> = {
     },
     note: {
       generatesPerDay: 30,
-      maxInputChars: 30_000,
-      maxItems: 25,
+      maxInputChars: 60_000,
+      maxItems: 18,
       cooldownMs: 10_000,
     },
     study: {

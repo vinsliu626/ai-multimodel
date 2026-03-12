@@ -1,6 +1,7 @@
 // lib/ai/groq.ts
 import { withTimeout } from "@/lib/ai/timeout";
 import type { ChatMessage } from "@/lib/ai/openrouter";
+import { parseEnvInt } from "@/lib/env/number";
 
 /**
  * ✅ Fix for TS error:
@@ -29,7 +30,7 @@ export async function callGroqChat(opts: {
   maxTokens?: number;
   temperature?: number;
 }) {
-  const timeoutMs = opts.timeoutMs ?? Number(process.env.AI_NOTE_LLM_TIMEOUT_MS || 60000);
+  const timeoutMs = opts.timeoutMs ?? parseEnvInt("AI_NOTE_LLM_TIMEOUT_MS", 60_000);
   const { controller, cancel } = withTimeout(timeoutMs);
 
   try {
@@ -39,7 +40,7 @@ export async function callGroqChat(opts: {
       body: JSON.stringify({
         model: opts.modelId,
         messages: opts.messages,
-        max_tokens: opts.maxTokens ?? Number(process.env.AI_NOTE_LLM_MAX_TOKENS || 900),
+        max_tokens: opts.maxTokens ?? parseEnvInt("AI_NOTE_LLM_MAX_TOKENS", 900),
         temperature: opts.temperature ?? 0.6,
       }),
       signal: controller.signal,
@@ -99,7 +100,7 @@ export async function callGroqTranscribe(opts: {
   language?: string; // optional
 }) {
   const model = opts.model || process.env.AI_NOTE_ASR_MODEL || "whisper-large-v3";
-  const timeoutMs = opts.timeoutMs ?? Number(process.env.AI_NOTE_ASR_TIMEOUT_MS || 90000);
+  const timeoutMs = opts.timeoutMs ?? parseEnvInt("AI_NOTE_ASR_TIMEOUT_MS", 90_000);
 
   const { controller, cancel } = withTimeout(timeoutMs);
 

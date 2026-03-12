@@ -35,29 +35,29 @@ const SectionNotesSchema = z.object({
   id: z.string().min(1),
   heading: z.string().min(1),
 
-  bullets: z.array(z.string().min(1)).min(2).max(12),
+  bullets: z.array(z.string().min(1)).min(2).max(8),
 
   keyTerms: z
     .array(z.object({ term: z.string().min(1), definition: z.string().min(1) }))
     .min(0)
-    .max(10)
+    .max(5)
     .default([]),
 
-  examples: z.array(z.string().min(1)).max(8).default([]),
-  actionItems: z.array(z.string().min(1)).max(8).default([]),
+  examples: z.array(z.string().min(1)).max(3).default([]),
+  actionItems: z.array(z.string().min(1)).max(3).default([]),
 });
 
 const FinalNoteSchema = z.object({
   title: z.string().min(1).default("Notes"),
 
-  tldr: z.array(z.string().min(1)).min(0).max(50).default([]),
+  tldr: z.array(z.string().min(1)).min(0).max(8).default([]),
 
   outline: z
     .array(
       z.object({
-        heading: z.string().min(1),
-        bullets: z.array(z.string().min(1)).min(0).max(60).default([]),
-      })
+            heading: z.string().min(1),
+            bullets: z.array(z.string().min(1)).min(0).max(10).default([]),
+          })
     )
     .min(0)
     .default([]),
@@ -65,11 +65,11 @@ const FinalNoteSchema = z.object({
   keyTerms: z
     .array(z.object({ term: z.string().min(1), definition: z.string().min(1) }))
     .min(0)
-    .max(50)
+    .max(10)
     .default([]),
 
-  reviewChecklist: z.array(z.string().min(1)).min(0).max(50).default([]),
-  quiz: z.array(z.object({ q: z.string().min(1), a: z.string().min(1) })).min(0).max(50).default([]),
+  reviewChecklist: z.array(z.string().min(1)).min(0).max(10).default([]),
+  quiz: z.array(z.object({ q: z.string().min(1), a: z.string().min(1) })).min(0).max(6).default([]),
 
   markdown: z.string().min(0).default(""),
 });
@@ -269,13 +269,13 @@ function ensureSectionNotes(note: any): SectionNotes {
   const heading = String(note?.heading || "Section");
 
   const bullets = Array.isArray(note?.bullets) ? note.bullets.filter(Boolean) : [];
-  const safeBullets = bullets.length >= 2 ? bullets.slice(0, 12) : ["(No content)", "(No content)"];
+  const safeBullets = bullets.length >= 2 ? bullets.slice(0, 8) : ["(No content)", "(No content)"];
 
   const keyTermsRaw = Array.isArray(note?.keyTerms) ? note.keyTerms : [];
   const fixedKeyTerms = ensureMinKeyTerms({ heading, bullets: safeBullets, keyTerms: keyTermsRaw }, 3);
 
-  const examples = Array.isArray(note?.examples) ? note.examples.filter(Boolean).slice(0, 8) : [];
-  const actionItems = Array.isArray(note?.actionItems) ? note.actionItems.filter(Boolean).slice(0, 8) : [];
+  const examples = Array.isArray(note?.examples) ? note.examples.filter(Boolean).slice(0, 3) : [];
+  const actionItems = Array.isArray(note?.actionItems) ? note.actionItems.filter(Boolean).slice(0, 3) : [];
 
   const obj: SectionNotes = {
     id,
@@ -311,7 +311,7 @@ function ensureFinalNote(note: any): FinalNote {
       ? outlineRaw
           .map((x: any) => ({
             heading: String(x?.heading || "Section").trim() || "Section",
-            bullets: Array.isArray(x?.bullets) ? x.bullets.filter(Boolean).slice(0, 12) : [],
+            bullets: Array.isArray(x?.bullets) ? x.bullets.filter(Boolean).slice(0, 10) : [],
           }))
           .filter((x: any) => x.bullets.length > 0)
       : [
@@ -322,8 +322,8 @@ function ensureFinalNote(note: any): FinalNote {
         ];
 
   const keyTerms = Array.isArray(note?.keyTerms) ? note.keyTerms : [];
-  const reviewChecklist = Array.isArray(note?.reviewChecklist) ? note.reviewChecklist.slice(0, 12) : [];
-  const quiz = Array.isArray(note?.quiz) ? note.quiz.slice(0, 10) : [];
+  const reviewChecklist = Array.isArray(note?.reviewChecklist) ? note.reviewChecklist.slice(0, 10) : [];
+  const quiz = Array.isArray(note?.quiz) ? note.quiz.slice(0, 6) : [];
 
   let markdown = String(note?.markdown || "").trim();
 
