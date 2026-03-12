@@ -5,6 +5,7 @@ import { authOptions } from "@/lib/auth";
 import { stripe } from "@/lib/stripe";
 import { prisma } from "@/lib/prisma";
 import { ensureRuntimeEntitlement, mutationResultSelect } from "@/lib/billing/entitlementDb";
+import { getUserIdOrDev } from "@/lib/auth/devUser";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,7 +42,7 @@ async function ensureCustomerId(userId: string) {
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
-    const userId = (session as any)?.user?.id as string | undefined;
+    const userId = ((session as any)?.user?.id as string | undefined) ?? (await getUserIdOrDev());
     if (!userId) {
       return NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 });
     }

@@ -66,13 +66,33 @@ export function entitlementCreateData(userId: string): Prisma.UserEntitlementCre
   return { userId, plan: "basic" };
 }
 
-function isLegacyUserEntitlementColumnError(error: unknown) {
+export function isLegacyUserEntitlementColumnError(error: unknown) {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2022") {
     const column = String((error.meta as { column?: unknown } | undefined)?.column ?? "");
-    return column.includes("UserEntitlement.");
+    if (column.includes("UserEntitlement.")) return true;
+    return [
+      "developerBypass",
+      "developerBypassSetAt",
+      "developerBypassNote",
+      "promoPlan",
+      "promoAccessStartAt",
+      "promoAccessEndAt",
+      "promoAccessActive",
+    ].some((name) => column.includes(name));
   }
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("UserEntitlement") && message.includes("does not exist");
+  return (
+    (message.includes("UserEntitlement") && message.includes("does not exist")) ||
+    [
+      "developerBypass",
+      "developerBypassSetAt",
+      "developerBypassNote",
+      "promoPlan",
+      "promoAccessStartAt",
+      "promoAccessEndAt",
+      "promoAccessActive",
+    ].some((name) => message.includes(name) && message.includes("does not exist"))
+  );
 }
 
 function toDateOrNull(value: unknown) {

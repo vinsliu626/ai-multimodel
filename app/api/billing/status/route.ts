@@ -9,8 +9,13 @@ import { getUsage } from "@/lib/billing/usage";
 import { isTransientPrismaConnectionError, withPrismaConnectionRetry } from "@/lib/prismaRetry";
 import { resolveEffectiveAccessFromEntitlement } from "@/lib/billing/access";
 import { getStudyPlanLimits } from "@/lib/study/limits";
-import { ensureRuntimeEntitlement, runtimeEntitlementSelect } from "@/lib/billing/entitlementDb";
+import {
+  ensureRuntimeEntitlement,
+  isLegacyUserEntitlementColumnError,
+  runtimeEntitlementSelect,
+} from "@/lib/billing/entitlementDb";
 import { getChatPlanLimits, getNotePlanLimits } from "@/lib/plans/productLimits";
+import { getUserIdOrDev } from "@/lib/auth/devUser";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -69,12 +74,32 @@ function fallbackBillingStatus(userId: string) {
   });
 }
 
+async function updateEntitlementSnapshot(
+  userId: string,
+  data: Record<string, unknown>,
+  fallback: typeof runtimeEntitlementSelect extends never ? never : any
+) {
+  try {
+    return await prisma.userEntitlement.update({
+      where: { userId },
+      data,
+      select: runtimeEntitlementSelect,
+    });
+  } catch (error) {
+    if (!isLegacyUserEntitlementColumnError(error)) throw error;
+    return {
+      ...fallback,
+      ...data,
+    };
+  }
+}
+
 export async function GET() {
   try {
     return await withPrismaConnectionRetry(
       async () => {
         const session = (await getServerSession(authOptions)) as SessionWithUserId;
-        const userId = session?.user?.id;
+        const userId = session?.user?.id ?? (await getUserIdOrDev());
         if (!userId) return NextResponse.json({ ok: false, error: "AUTH_REQUIRED" }, { status: 401 });
 
         try {
@@ -91,47 +116,47 @@ export async function GET() {
                 : ent.currentPeriodEnd ?? null;
               const cancelAtPeriodEnd = Boolean(sub?.cancel_at_period_end ?? ent.cancelAtPeriodEnd ?? false);
 
-              ent = await prisma.userEntitlement.update({
-                where: { userId },
-                data: {
+              ent = await updateEntitlementSnapshot(
+                userId,
+                {
                   stripeStatus: stripeStatus ?? null,
                   currentPeriodEnd: currentPeriodEnd ?? undefined,
                   cancelAtPeriodEnd,
                 },
-                select: runtimeEntitlementSelect,
-              });
+                ent
+              );
 
               if (!ent.unlimited && normalizePlan(ent.plan) !== "basic" && ent.stripeStatus !== "active") {
                 const basicFlags = planToFlags("basic");
-                ent = await prisma.userEntitlement.update({
-                  where: { userId },
-                  data: {
+                ent = await updateEntitlementSnapshot(
+                  userId,
+                  {
                     ...basicFlags,
                     stripeStatus: ent.stripeStatus ?? "inactive",
                   },
-                  select: runtimeEntitlementSelect,
-                });
+                  ent
+                );
               }
             } catch {
               if (!ent.unlimited) {
                 const basicFlags = planToFlags("basic");
-                ent = await prisma.userEntitlement.update({
-                  where: { userId },
-                  data: {
+                ent = await updateEntitlementSnapshot(
+                  userId,
+                  {
                     ...basicFlags,
                     stripeSubId: null,
                     stripeStatus: "missing",
                     currentPeriodEnd: null,
                     cancelAtPeriodEnd: false,
                   },
-                  select: runtimeEntitlementSelect,
-                });
+                  ent
+                );
               } else {
-                ent = await prisma.userEntitlement.update({
-                  where: { userId },
-                  data: { stripeStatus: "missing", stripeSubId: null },
-                  select: runtimeEntitlementSelect,
-                });
+                ent = await updateEntitlementSnapshot(
+                  userId,
+                  { stripeStatus: "missing", stripeSubId: null },
+                  ent
+                );
               }
             }
           }
@@ -148,16 +173,16 @@ export async function GET() {
               ent.canSeeSuspiciousSentences !== flags.canSeeSuspiciousSentences;
 
             if (needSync) {
-              ent = await prisma.userEntitlement.update({
-                where: { userId },
-                data: {
+              ent = await updateEntitlementSnapshot(
+                userId,
+                {
                   detectorWordsPerWeek: flags.detectorWordsPerWeek ?? null,
                   noteSecondsPerWeek: flags.noteSecondsPerWeek ?? null,
                   chatPerDay: flags.chatPerDay ?? null,
                   canSeeSuspiciousSentences: flags.canSeeSuspiciousSentences,
                 },
-                select: runtimeEntitlementSelect,
-              });
+                ent
+              );
             }
           }
 
@@ -231,7 +256,7 @@ export async function GET() {
     );
   } catch (error) {
     const session = (await getServerSession(authOptions)) as SessionWithUserId;
-    const userId = session?.user?.id;
+    const userId = session?.user?.id ?? (await getUserIdOrDev());
     if (userId) {
       console.error("[billing.status] outer fallback to basic plan", {
         userId,

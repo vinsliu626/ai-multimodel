@@ -86,6 +86,7 @@ export async function POST(req: Request) {
         const s = event.data.object as any;
 
         const userId = (s?.metadata?.userId as string | undefined) || undefined;
+        const plan = normalizePlan((s?.metadata?.plan as string | undefined) ?? "basic");
         const customerId = (s?.customer as string | null) ?? null;
         const subscriptionId = (s?.subscription as string | null) ?? null;
 
@@ -93,6 +94,7 @@ export async function POST(req: Request) {
           await prisma.userEntitlement.upsert({
             where: { userId },
             update: {
+              plan,
               stripeCustomerId: customerId,
               stripeSubId: subscriptionId,
               // ?active
@@ -100,6 +102,7 @@ export async function POST(req: Request) {
             },
             create: {
               userId,
+              plan,
               stripeCustomerId: customerId,
               stripeSubId: subscriptionId,
               stripeStatus: "pending",
@@ -155,6 +158,7 @@ export async function POST(req: Request) {
         await prisma.userEntitlement.update({
           where: { userId: ent.userId },
           data: {
+            plan,
             ...flags,
             stripeStatus: stripeStatus ?? "active",
             stripeSubId: subscriptionId,
@@ -193,6 +197,7 @@ export async function POST(req: Request) {
         await prisma.userEntitlement.update({
           where: { userId: ent.userId },
           data: {
+            plan: "basic",
             ...flags,
             stripeStatus: "past_due",
             //  stripeSubId/stripeCustomerId 
@@ -234,6 +239,7 @@ export async function POST(req: Request) {
           await prisma.userEntitlement.update({
             where: { userId: ent.userId },
             data: {
+              plan,
               ...flags,
               stripeSubId: subscriptionId ?? null,
               stripeStatus: status ?? null,
@@ -248,6 +254,7 @@ export async function POST(req: Request) {
           await prisma.userEntitlement.update({
             where: { userId: ent.userId },
             data: {
+              plan: "basic",
               ...flags,
               stripeSubId: subscriptionId ?? null,
               stripeStatus: status ?? null,
