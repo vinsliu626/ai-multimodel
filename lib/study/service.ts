@@ -2,9 +2,9 @@ import { createHash } from "crypto";
 import { z } from "zod";
 import { addUsageEvent } from "@/lib/billing/usage";
 import { withTimeout } from "@/lib/ai/timeout";
+import { normalizeAiText } from "@/lib/ui/aiTextFormat";
 import { getStudyPlanLimits } from "./limits";
 import type {
-  StudyDifficulty,
   StudyFlashcard,
   StudyGenerationResult,
   StudyMode,
@@ -21,7 +21,7 @@ const studyRequestSchema = z.object({
   title: z.string().trim().max(160).optional(),
   selectedModes: z.array(z.enum(studyModes)).min(1).max(3),
   quizTypes: z.array(z.enum(quizTypes)).min(1).max(3).optional(),
-  quizCount: z.number().int().min(1).max(20).optional(),
+  quizCount: z.number().int().min(1).max(30).optional(),
   flashcardCount: z.number().int().min(1).max(50).optional(),
   noteCount: z.number().int().min(1).max(30).optional(),
   difficulty: z.enum(["easy", "medium", "hard"]).optional(),
@@ -45,8 +45,8 @@ type CachedStudyResult = {
 const studyResultCache = new Map<string, CachedStudyResult>();
 const STUDY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const MODEL_TIMEOUT_MS = 22_000;
-const MODEL_MAX_TOKENS = 1_400;
-const REPAIR_MAX_TOKENS = 850;
+const REPAIR_MAX_TOKENS = 1_100;
+const STUDY_PROMPT_VERSION = "2026-03-13-quiz-quality-v2";
 
 type RawModelPayload = {
   notes?: unknown;
@@ -67,7 +67,43 @@ export function validateStudyRequest(input: unknown) {
 }
 
 export function sanitizeStudyText(text: string) {
-  return text.replace(/\u0000/g, "").replace(/\s+/g, " ").trim();
+  return text
+    .replace(/\u0000/g, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function splitStudyParagraphs(text: string) {
+  return text
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+const QUESTION_SIGNAL_RE =
+  /\b(question|questions|exercise|exercises|practice|quiz|review|prompt|short answer|multiple choice|true false|fill in the blank|matching|match the following|sample test|study guide)\b/i;
+
+function isQuestionFocusedParagraph(paragraph: string) {
+  return QUESTION_SIGNAL_RE.test(paragraph) || /\?/.test(paragraph) || /^\s*(q(?:uestion)?\s*\d+|\d+[\).:])\s+/i.test(paragraph);
+}
+
+function paragraphScore(paragraph: string) {
+  const lengthScore = paragraph.length >= 120 && paragraph.length <= 1_100 ? 2 : paragraph.length > 60 ? 1 : 0;
+  const questionScore = isQuestionFocusedParagraph(paragraph) ? 5 : 0;
+  const keywordScore = Math.min(4, Math.floor((paragraph.match(/[A-Za-z][A-Za-z0-9-]{4,}/g) ?? []).length / 10));
+  return questionScore + lengthScore + keywordScore;
+}
+
+function trimAtSentenceBoundary(text: string, maxChars: number) {
+  if (text.length <= maxChars) return text.trim();
+  const slice = text.slice(0, maxChars);
+  const sentenceBoundary = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("? "), slice.lastIndexOf("! "), slice.lastIndexOf("\n"));
+  const cut = sentenceBoundary >= Math.floor(maxChars * 0.65) ? sentenceBoundary + 1 : maxChars;
+  return slice.slice(0, cut).trim();
 }
 
 export function truncateStudyText(text: string, maxChars: number) {
@@ -75,10 +111,46 @@ export function truncateStudyText(text: string, maxChars: number) {
     return { text, truncated: false };
   }
 
-  const slice = text.slice(0, maxChars);
-  const sentenceBoundary = Math.max(slice.lastIndexOf(". "), slice.lastIndexOf("? "), slice.lastIndexOf("! "), slice.lastIndexOf("\n"));
-  const cut = sentenceBoundary >= Math.floor(maxChars * 0.65) ? sentenceBoundary + 1 : maxChars;
-  return { text: slice.slice(0, cut).trim(), truncated: true };
+  const paragraphs = splitStudyParagraphs(text);
+  if (paragraphs.length <= 1) {
+    return { text: trimAtSentenceBoundary(text, maxChars), truncated: true };
+  }
+
+  const selected: string[] = [];
+  const used = new Set<number>();
+  let totalChars = 0;
+
+  const pushParagraph = (index: number) => {
+    if (used.has(index)) return;
+    const paragraph = paragraphs[index];
+    if (!paragraph) return;
+    const separator = selected.length > 0 ? 2 : 0;
+    if (totalChars + separator + paragraph.length > maxChars) return;
+    used.add(index);
+    selected.push(paragraph);
+    totalChars += separator + paragraph.length;
+  };
+
+  const headBudget = Math.floor(maxChars * 0.45);
+  for (let i = 0; i < paragraphs.length && totalChars < headBudget; i += 1) {
+    pushParagraph(i);
+  }
+
+  const ranked = paragraphs
+    .map((paragraph, index) => ({ index, score: paragraphScore(paragraph) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index);
+
+  for (const item of ranked) {
+    if (totalChars >= Math.floor(maxChars * 0.88)) break;
+    pushParagraph(item.index);
+  }
+
+  for (let i = Math.max(0, paragraphs.length - 3); i < paragraphs.length; i += 1) {
+    pushParagraph(i);
+  }
+
+  const merged = selected.join("\n\n").trim();
+  return { text: merged ? trimAtSentenceBoundary(merged, maxChars) : trimAtSentenceBoundary(text, maxChars), truncated: true };
 }
 
 function clamp(n: number, min: number, max: number) {
@@ -92,6 +164,10 @@ function estimateDensity(text: string) {
   return clamp(unique / words.length, 0.2, 0.95);
 }
 
+function countQuestionAnchors(text: string) {
+  return splitStudyParagraphs(text).filter(isQuestionFocusedParagraph).length;
+}
+
 function computeTargets(input: {
   text: string;
   selectedModes: StudyMode[];
@@ -103,6 +179,7 @@ function computeTargets(input: {
 }): TargetCounts {
   const charCount = input.text.length;
   const density = estimateDensity(input.text);
+  const questionAnchors = countQuestionAnchors(input.text);
   const modeCount = input.selectedModes.length;
   const moduleMultiplier = modeCount === 1 ? 1 : modeCount === 2 ? 0.7 : 0.5;
   const minPerModule = modeCount === 1 ? 3 : 2;
@@ -111,32 +188,29 @@ function computeTargets(input: {
   let baseNotesMax = 6;
   let baseFlashMin = 4;
   let baseFlashMax = 6;
-  let baseQuizMin = 3;
-  let baseQuizMax = 5;
+  let baseQuizMin = input.plan === "basic" ? 10 : input.plan === "pro" ? 16 : 22;
+  let baseQuizMax = input.plan === "basic" ? 10 : input.plan === "pro" ? 20 : 30;
 
   if (charCount >= 4_000 && charCount <= 12_000) {
     baseNotesMin = 6;
     baseNotesMax = 8;
     baseFlashMin = 6;
     baseFlashMax = 10;
-    baseQuizMin = 5;
-    baseQuizMax = 8;
   } else if (charCount > 12_000) {
     baseNotesMin = 6;
     baseNotesMax = Math.min(10, input.limits.maxNotes);
     baseFlashMin = 6;
     baseFlashMax = Math.min(12, input.limits.maxFlashcards);
 
-    if (input.plan === "basic") {
-      baseQuizMin = 5;
-      baseQuizMax = 6;
-    } else if (input.plan === "pro") {
-      baseQuizMin = 8;
-      baseQuizMax = 12;
-    } else {
-      baseQuizMin = 10;
-      baseQuizMax = density >= 0.58 ? 20 : 14;
+    if (input.plan === "pro") {
+      baseQuizMin = questionAnchors >= 8 ? 20 : 18;
+    } else if (input.plan === "ultra") {
+      baseQuizMin = questionAnchors >= 10 || density >= 0.58 ? 30 : 26;
     }
+  }
+
+  if (questionAnchors >= 6) {
+    baseQuizMin = Math.max(baseQuizMin, input.plan === "basic" ? 10 : input.plan === "pro" ? 20 : 30);
   }
 
   baseQuizMax = Math.min(baseQuizMax, input.limits.maxQuizQuestions);
@@ -172,8 +246,8 @@ function computeTargets(input: {
     input.limits.maxFlashcards
   );
   const quiz = clamp(
-    Math.min(input.requestedQuizCount ?? quizTarget, input.limits.maxQuizQuestions),
-    minPerModule,
+    Math.max(input.requestedQuizCount ?? quizTarget, baseQuizMin),
+    Math.max(minPerModule, Math.min(baseQuizMin, input.limits.maxQuizQuestions)),
     input.limits.maxQuizQuestions
   );
 
@@ -220,7 +294,6 @@ function buildCacheKey(
   plan: string,
   payload: StudyRequestInput & {
     normalizedText: string;
-    boundedDifficulty: StudyDifficulty;
     selectedModes: StudyMode[];
     selectedQuizTypes: StudyQuizType[];
     targets: TargetCounts;
@@ -231,11 +304,11 @@ function buildCacheKey(
       JSON.stringify({
         userId,
         plan,
+        version: STUDY_PROMPT_VERSION,
         text: payload.normalizedText,
         selectedModes: payload.selectedModes,
         selectedQuizTypes: payload.selectedQuizTypes,
         targets: payload.targets,
-        difficulty: payload.boundedDifficulty,
         title: payload.title ?? "",
         fileName: payload.fileName ?? "",
       })
@@ -261,7 +334,7 @@ function writeStudyCache(key: string, value: StudyGenerationResult) {
 }
 
 function cleanNote(note: unknown) {
-  return typeof note === "string" ? note.replace(/\s+/g, " ").trim() : "";
+  return typeof note === "string" ? normalizeAiText(note.replace(/\s+/g, " ").trim()) : "";
 }
 
 function cleanFlashcard(item: unknown): StudyFlashcard | null {
@@ -336,7 +409,7 @@ function cleanQuizItem(item: unknown): StudyQuizItem | null {
 async function callStudyModelRaw(
   config: ProviderConfig,
   messages: Array<{ role: "system" | "user"; content: string }>,
-  maxTokens = MODEL_MAX_TOKENS
+  maxTokens: number
 ) {
   const { controller, cancel } = withTimeout(MODEL_TIMEOUT_MS);
   try {
@@ -476,7 +549,6 @@ function buildRepairPrompt(input: {
   selectedModes: StudyMode[];
   allowedQuizTypes: StudyQuizType[];
   targets: TargetCounts;
-  difficulty: StudyDifficulty;
 }) {
   const sectionRules = [
     input.selectedModes.includes("notes") ? `- notes: string[] (up to ${input.targets.notes})` : "- notes: omit",
@@ -493,7 +565,7 @@ function buildRepairPrompt(input: {
     "Return ONE raw JSON object. No markdown. No explanation.",
     "Allowed keys: notes, flashcards, quiz.",
     sectionRules,
-    `Difficulty context: ${input.difficulty}.`,
+    "Quiz quality: standard study/exam review. No trivial filler.",
     "Malformed output:",
     input.malformedOutput,
   ].join("\n");
@@ -505,7 +577,6 @@ function buildStudyPrompt(input: {
   selectedModes: StudyMode[];
   selectedQuizTypes: StudyQuizType[];
   targets: TargetCounts;
-  difficulty: StudyDifficulty;
 }) {
   const header = input.title ? `Document title: ${input.title}\n` : "";
 
@@ -517,25 +588,35 @@ function buildStudyPrompt(input: {
       ? `flashcards: produce up to ${input.targets.flashcards} items with {front, back}.`
       : "Do not return flashcards.",
     input.selectedModes.includes("quiz")
-      ? `quiz: produce up to ${input.targets.quiz} items using ONLY these types: ${input.selectedQuizTypes.join(", ")}. Keep answers short.`
+      ? `quiz: produce up to ${input.targets.quiz} items using ONLY these types: ${input.selectedQuizTypes.join(", ")}. Keep answers short and document-specific.`
       : "Do not return quiz.",
   ].join("\n");
 
   return [
     "Use only the document text. Do not add outside facts.",
     "Return ONE raw JSON object only. No markdown fences. No extra text.",
+    "Do not use markdown bullets, markdown headings, or *** markers inside note strings.",
+    "When returning notes strings, use emoji markers such as ⭐ Important:, 📘 Concept:, ⚡ Tip:, 🧪 Example:, and ⚠️ Warning:.",
     "If a mode is not requested, omit that key entirely.",
+    "Quiz quality target: standard study/exam review. Not trivial, not overly hard.",
+    "If the document includes explicit questions, exercises, review prompts, or worked examples, prioritize those as quiz anchors first.",
+    "Favor concept checks, applied understanding, definitions, relationships, comparisons, cause/effect, and likely test-style prompts.",
+    "Do not turn headings into shallow questions. Do not invent filler just to reach the target count.",
     "Quiz schema:",
     '{"type":"multiple_choice","question":string,"options":string[],"answer":string,"explanation"?:string}',
     '{"type":"fill_blank","question":string,"answer":string,"explanation"?:string}',
     '{"type":"matching","prompt":string,"pairs":[{"left":string,"right":string}],"explanation"?:string}',
-    `Difficulty: ${input.difficulty}.`,
     modeInstructions,
     "Avoid duplicate or repetitive items across sections.",
     "",
     `${header}Document text:`,
     input.text,
   ].join("\n");
+}
+
+function computeModelMaxTokens(targets: TargetCounts) {
+  const estimated = 1_200 + targets.notes * 70 + targets.flashcards * 55 + targets.quiz * 85;
+  return clamp(estimated, 1_500, 3_400);
 }
 
 export async function generateStudyContent(params: {
@@ -553,8 +634,6 @@ export async function generateStudyContent(params: {
 
   const normalizedText = sanitizeStudyText(parsed.extractedText);
   const { text: boundedText, truncated } = truncateStudyText(normalizedText, limits.maxExtractedChars);
-  const requestedDifficulty = parsed.difficulty ?? "easy";
-  const boundedDifficulty = limits.allowedDifficulties.includes(requestedDifficulty) ? requestedDifficulty : limits.allowedDifficulties[0];
 
   const requestedQuizTypes = uniqueQuizTypes(parsed.quizTypes);
   if (selectedModes.includes("quiz") && requestedQuizTypes.length === 0) {
@@ -583,7 +662,6 @@ export async function generateStudyContent(params: {
   const cacheKey = buildCacheKey(params.userId, params.plan, {
     ...parsed,
     normalizedText: boundedText,
-    boundedDifficulty,
     selectedModes,
     selectedQuizTypes,
     targets,
@@ -620,7 +698,6 @@ export async function generateStudyContent(params: {
         selectedModes,
         selectedQuizTypes,
         targets,
-        difficulty: boundedDifficulty,
       }),
     },
   ];
@@ -629,7 +706,7 @@ export async function generateStudyContent(params: {
   for (const provider of providers) {
     let rawOutputLength = 0;
     try {
-      const response = await callStudyModelRaw(provider, messages, MODEL_MAX_TOKENS);
+      const response = await callStudyModelRaw(provider, messages, computeModelMaxTokens(targets));
       rawOutputLength = response.content.length;
 
       let parseStage: ParseStage = "first_try";
@@ -657,7 +734,6 @@ export async function generateStudyContent(params: {
               selectedModes,
               allowedQuizTypes: selectedQuizTypes,
               targets,
-              difficulty: boundedDifficulty,
             }),
           },
         ];
@@ -698,7 +774,6 @@ export async function generateStudyContent(params: {
         meta: {
           selectedModes,
           selectedQuizTypes: selectedModes.includes("quiz") ? selectedQuizTypes : undefined,
-          difficulty: selectedModes.includes("quiz") ? boundedDifficulty : undefined,
           generatedCounts: {
             ...(selectedModes.includes("notes") ? { notes: notes?.length ?? 0 } : {}),
             ...(selectedModes.includes("flashcards") ? { flashcards: flashcards?.length ?? 0 } : {}),

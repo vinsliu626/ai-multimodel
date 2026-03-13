@@ -13,6 +13,7 @@ import { ChatHistoryRow } from "@/components/chat/sidebar/ChatHistoryRow";
 import { DetectorUI } from "@/components/workspace/detector/DetectorUI";
 import { NoteUI } from "@/components/workspace/note/NoteUI";
 import { StudyUI } from "@/components/workspace/study/StudyUI";
+import { AiFormattedText } from "@/components/shared/AiFormattedText";
 
 // workflow UI
 import { Bubble } from "@/components/chat/ui/workflow/Bubble";
@@ -859,7 +860,7 @@ function ChatPageInner() {
         cache: "no-store",
       });
       const { data } = await safeReadJson(res);
-      if (!res.ok || data?.ok === false) throw new Error(data?.error || `Redeem error: ${res.status}`);
+      if (!res.ok || data?.ok === false) throw new Error(data?.message || data?.error || `Redeem error: ${res.status}`);
       setRedeemSuccess({
         plan: String(data?.plan || "pro"),
         grantEndAt: data?.grantEndAt ? String(data.grantEndAt) : null,
@@ -1286,7 +1287,7 @@ function ChatPageInner() {
                             : "bg-[#0f0f0f] text-slate-200 border border-white/5 rounded-bl-sm shadow-sm",
                         ].join(" ")}
                       >
-                        {m.content}
+                        {m.stage === "assistant" ? <AiFormattedText text={m.content} className="text-[14px] leading-relaxed" /> : m.content}
                       </div>
                     </div>
                   ))

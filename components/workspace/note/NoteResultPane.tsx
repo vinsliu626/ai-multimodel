@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { AiFormattedText } from "@/components/shared/AiFormattedText";
 
 export function NoteResultPane({
   isZh,
@@ -46,8 +47,12 @@ export function NoteResultPane({
         </div>
       </div>
 
-      <div className="mt-3 whitespace-pre-wrap text-[13px] leading-6 text-slate-100 min-h-[120px]">
-        {result ? <>{result}</> : <span className="text-slate-500">{isZh ? "生成后会在这里显示结构化笔记。" : "Your structured notes will appear here."}</span>}
+      <div className="mt-3 min-h-[120px] text-[13px] leading-6 text-slate-100">
+        {result ? (
+          <AiFormattedText text={result} />
+        ) : (
+          <span className="text-slate-500">{isZh ? "生成后会在这里显示结构化笔记。" : "Your structured notes will appear here."}</span>
+        )}
       </div>
     </div>
   );

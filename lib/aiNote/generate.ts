@@ -1,5 +1,6 @@
 import { callGroqChat } from "@/lib/ai/groq";
 import { callOpenRouterChat, shouldFallback, type ChatMessage } from "@/lib/ai/openrouter";
+import { normalizeAiText } from "@/lib/ui/aiTextFormat";
 
 const OPENROUTER_CANDIDATES = [
   "google/gemma-3-12b-it:free",
@@ -8,46 +9,34 @@ const OPENROUTER_CANDIDATES = [
   "openrouter/free",
 ];
 
-function noteSystemPrompt(isZh: boolean, maxItems: number) {
-  return isZh
-    ? [
-        "你是高级学习笔记助手。",
-        "输出干净的 Markdown，直接给最终结果，不要解释过程。",
-        `总条目数控制在 ${maxItems} 以内。`,
-        "必须包含以下标题：",
-        "## TL;DR",
-        "## Key Points",
-        "## Action Items",
-        "## Review Checklist",
-        "规则：优先提炼关键点；每条尽量短；不要写长段落；不要编造事实；不确定写 (unclear)。",
-      ].join("\n")
-    : [
-        "You are a premium study-note assistant.",
-        "Return clean Markdown only. No preamble, no meta commentary.",
-        `Keep the total bullet/item count within ${maxItems}.`,
-        "Required headings:",
-        "## TL;DR",
-        "## Key Points",
-        "## Action Items",
-        "## Review Checklist",
-        "Rules: prioritize key points over summary prose; keep each bullet short; avoid long paragraphs; do not invent facts; mark uncertainty as (unclear).",
-      ].join("\n");
+function noteSystemPrompt(maxItems: number) {
+  return [
+    "You are a premium study-note assistant.",
+    "Return clean structured plain text only. No preamble or meta commentary.",
+    "Do not use markdown bullets, markdown headings, or *** markers.",
+    `Keep the total number of structured items within ${maxItems}.`,
+    "Use emoji markers for structure:",
+    "⭐ Important: ...",
+    "📘 Concept: ...",
+    "⚡ Tip: ...",
+    "🧪 Example: ...",
+    "⚠️ Warning: ...",
+    "Keep answers readable, concise, and grounded in the source text.",
+  ].join("\n");
 }
 
-function noteUserPrompt(text: string, isZh: boolean) {
-  return isZh
-    ? `请根据下面内容生成结构化学习笔记：\n\n${text}`
-    : `Generate structured study notes from the text below:\n\n${text}`;
+function noteUserPrompt(text: string) {
+  return `Generate structured study notes from the text below.\n\n${text}`;
 }
 
-function clipMarkdownItems(markdown: string, maxItems: number) {
-  const lines = markdown.split(/\r?\n/);
+function clipStructuredItems(output: string, maxItems: number) {
+  const lines = normalizeAiText(output).split(/\r?\n/);
   let itemCount = 0;
 
   return lines
     .filter((line) => {
       const trimmed = line.trim();
-      const isItem = /^[-*]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed);
+      const isItem = /^[⭐📘⚡🧪⚠️]/u.test(trimmed);
       if (!isItem) return true;
       itemCount += 1;
       return itemCount <= maxItems;
@@ -67,8 +56,8 @@ export async function generateStructuredNotes(input: {
 
   const openrouterKey = process.env.OPENROUTER_API_KEY || undefined;
   const messages: ChatMessage[] = [
-    { role: "system", content: noteSystemPrompt(input.isZh, input.maxItems) },
-    { role: "user", content: noteUserPrompt(input.text, input.isZh) },
+    { role: "system", content: noteSystemPrompt(input.maxItems) },
+    { role: "user", content: noteUserPrompt(input.text) },
   ];
 
   if (openrouterKey) {
@@ -82,7 +71,7 @@ export async function generateStructuredNotes(input: {
           temperature: 0.2,
         });
         return {
-          note: clipMarkdownItems(out.content, input.maxItems),
+          note: clipStructuredItems(out.content, input.maxItems),
           provider: "openrouter" as const,
           model: out.modelUsed,
         };
@@ -101,7 +90,7 @@ export async function generateStructuredNotes(input: {
   });
 
   return {
-    note: clipMarkdownItems(out.content, input.maxItems),
+    note: clipStructuredItems(out.content, input.maxItems),
     provider: "groq" as const,
     model: out.modelUsed,
   };

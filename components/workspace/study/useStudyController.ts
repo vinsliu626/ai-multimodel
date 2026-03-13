@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { extractDocumentText } from "./extractors";
-import type { StudyDifficulty, StudyEntitlement, StudyMode, StudyQuizType, StudyResult, StudySessionListItem } from "./study-types";
+import type { StudyEntitlement, StudyMode, StudyQuizType, StudyResult, StudySessionListItem } from "./study-types";
 
 function modeLabel(mode: StudyMode) {
   if (mode === "notes") return "Notes";
@@ -55,8 +55,6 @@ export function useStudyController({
   const [usageRemainingOverride, setUsageRemainingOverride] = useState<number | null>(null);
   const [extractedText, setExtractedText] = useState("");
   const [detectedTitle, setDetectedTitle] = useState("");
-  const [difficulty, setDifficulty] = useState<StudyDifficulty>("easy");
-  const [quizCount, setQuizCount] = useState(6);
   const [quizTypes, setQuizTypes] = useState<StudyQuizType[]>(["multiple_choice", "fill_blank"]);
   const [selectedModes, setSelectedModes] = useState<StudyMode[]>(["notes", "quiz"]);
   const [status, setStatus] = useState<string>("");
@@ -297,8 +295,6 @@ export function useStudyController({
     setStatus("Generating study materials...");
 
     try {
-      const boundedDifficulty = limits.allowedDifficulties.includes(difficulty) ? difficulty : limits.allowedDifficulties[0];
-      const boundedQuizCount = Math.min(Math.max(1, quizCount), limits.maxQuizQuestions);
       const boundedQuizTypes = Array.from(new Set(quizTypes));
 
       if (selectedModes.includes("quiz") && boundedQuizTypes.length === 0) {
@@ -318,9 +314,7 @@ export function useStudyController({
           fileSizeBytes: file.size,
           mimeType: file.type,
           selectedModes,
-          quizCount: selectedModes.includes("quiz") ? boundedQuizCount : undefined,
           quizTypes: selectedModes.includes("quiz") ? boundedQuizTypes : undefined,
-          difficulty: selectedModes.includes("quiz") ? boundedDifficulty : undefined,
         }),
       });
 
@@ -363,8 +357,6 @@ export function useStudyController({
     result,
     extractedText,
     detectedTitle,
-    difficulty,
-    quizCount,
     quizTypes,
     selectedModes,
     status,
@@ -379,8 +371,6 @@ export function useStudyController({
     quizTypeLabel,
     setDragActive,
     setDetectedTitle,
-    setDifficulty,
-    setQuizCount,
     handleFileSelection,
     generate,
     toggleMode,

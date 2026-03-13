@@ -3,6 +3,7 @@
 import React from "react";
 import type { WorkflowMessage } from "./types";
 import { STAGE_META } from "./meta";
+import { AiFormattedText } from "@/components/shared/AiFormattedText";
 
 export function Bubble({
   msg,
@@ -71,7 +72,7 @@ export function Bubble({
           ) : null}
 
           {/* main content */}
-          <div className="whitespace-pre-wrap leading-relaxed text-sm">{msg.content}</div>
+          <AiFormattedText text={msg.content} className="text-sm leading-relaxed" />
 
           {/* ✅ children expanded */}
           {meta.isFinal && hasChildren && !collapsed ? (
@@ -85,7 +86,7 @@ export function Bubble({
                       <div className="text-xs text-slate-200 font-semibold">{c.title ?? cMeta.titleFallback}</div>
                       {c.subtitle ? <div className="text-xs text-slate-400">· {c.subtitle}</div> : null}
                     </div>
-                    <div className="whitespace-pre-wrap leading-relaxed text-sm text-slate-100">{c.content}</div>
+                    <AiFormattedText text={c.content} className="text-sm leading-relaxed text-slate-100" />
                   </div>
                 );
               })}

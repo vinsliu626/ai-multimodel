@@ -3,6 +3,7 @@ import { outlinePrompt, sectionNotesPrompt, finalMergePrompt } from "./prompts";
 
 import { callGroqChat } from "@/lib/ai/providers/groq";
 import { callHfRouterChat } from "@/lib/ai/providers/hfRouter";
+import { normalizeAiText } from "@/lib/ui/aiTextFormat";
 
 const FAST_MODEL = "llama-3.1-8b-instant";
 
@@ -541,12 +542,16 @@ export async function runAiNotePipeline(rawText: string): Promise<string> {
       groqKey,
       FAST_MODEL,
       [
-        { role: "system", content: "You write concise notes in Markdown." },
-        { role: "user", content: `Make a short note from the text. Output Markdown only.\n\nText:\n${text}` },
+        {
+          role: "system",
+          content:
+            "You write concise study notes in clean structured plain text. Do not use markdown bullets, markdown headings, or *** markers. Use emoji markers like ⭐ Important:, 📘 Concept:, ⚡ Tip:, 🧪 Example:, and ⚠️ Warning:.",
+        },
+        { role: "user", content: `Make a short note from the text. Output structured plain text only.\n\nText:\n${text}` },
       ],
       { temperature: 0 }
     );
-    return String(raw || "").trim();
+    return normalizeAiText(String(raw || "").trim());
   }
 
   // ---------------- Step 1: Outline (Groq) ----------------
@@ -596,5 +601,5 @@ export async function runAiNotePipeline(rawText: string): Promise<string> {
   };
 
   const finalNote = await callFinalMergeRobust({ hfToken, groqKey, mergedInput });
-  return finalNote.markdown;
+  return normalizeAiText(finalNote.markdown);
 }

@@ -1,18 +1,10 @@
-import type { OutlineResult, SectionNotes, FinalNote } from "./types";
-
-/**
- * 你的“像 StudyX”的关键：
- * - Step1 只做结构拆分（JSON）
- * - Step2 按 section 生成笔记（JSON）
- * - Step3 合并成产品化 markdown（最终输出）
- */
+import type { SectionNotes } from "./types";
 
 export function outlinePrompt(rawText: string) {
   return [
     {
       role: "system" as const,
-      content:
-        "You are a careful note-structuring assistant. Output STRICT JSON only. No markdown, no commentary.",
+      content: "You are a careful note-structuring assistant. Output STRICT JSON only. No markdown, no commentary.",
     },
     {
       role: "user" as const,
@@ -23,8 +15,8 @@ Task:
 3) Each section must include:
    - heading
    - 1-sentence summary
-   - 3-6 keyPoints (short bullets)
-   - sourceText: the exact excerpt from the original text that belongs to this section (keep it reasonably sized; split if too long)
+   - 3-6 keyPoints
+   - sourceText: the exact excerpt from the original text that belongs to this section
 
 Rules:
 - Output MUST be valid JSON matching this TypeScript shape:
@@ -42,7 +34,7 @@ type OutlineResult = {
 };
 
 - Use 4 to 12 sections depending on length.
-- Keep sourceText per section not crazy long (prefer ~800-1500 chars).
+- Keep sourceText per section reasonably sized.
 - If input is mixed language, language="auto".
 
 INPUT TEXT:
@@ -60,8 +52,7 @@ export function sectionNotesPrompt(section: {
   return [
     {
       role: "system" as const,
-      content:
-        "You are a study-note writer. Output STRICT JSON only, no markdown. Be accurate; do not invent details.",
+      content: "You are a study-note writer. Output STRICT JSON only, no markdown. Be accurate; do not invent details.",
     },
     {
       role: "user" as const,
@@ -73,10 +64,10 @@ Output MUST be valid JSON matching:
 type SectionNotes = {
   id: string;
   heading: string;
-  bullets: string[];                 // 4-8 bullets
-  keyTerms: Array<{ term: string; definition: string }>; // 2-5
-  examples: string[];                // 0-3
-  actionItems: string[];             // 0-3 (if applicable)
+  bullets: string[];
+  keyTerms: Array<{ term: string; definition: string }>;
+  examples: string[];
+  actionItems: string[];
 };
 
 Constraints:
@@ -107,34 +98,36 @@ export function finalMergePrompt(args: {
   return [
     {
       role: "system" as const,
-      content:
-        "You are a premium study-notes formatter. Output BOTH: (1) strict JSON, (2) a markdown field inside it. No extra text outside JSON.",
+      content: "You are a premium study-notes formatter. Output BOTH: (1) strict JSON, (2) a markdown field inside it. No extra text outside JSON.",
     },
     {
       role: "user" as const,
       content: `
-Merge all section notes into a polished, product-like study note.
+Merge all section notes into a polished study note.
 
 Output MUST be valid JSON matching:
 
 type FinalNote = {
   title: string;
-  tldr: string[]; // 4-8 bullets
+  tldr: string[];
   outline: Array<{ heading: string; bullets: string[] }>;
   keyTerms: Array<{ term: string; definition: string }>;
-  reviewChecklist: string[]; // 6-10
-  quiz: Array<{ q: string; a: string }>; // 4-6
-  markdown: string; // A nicely formatted Markdown document containing all of the above
+  reviewChecklist: string[];
+  quiz: Array<{ q: string; a: string }>;
+  markdown: string;
 };
 
 Formatting requirements for markdown:
-- Start with "# {title}"
-- Then "## TL;DR"
-- Then "## Outline & Notes" with sections
-- Then "## Key Terms"
-- Then "## Review Checklist"
-- Then "## Self-Quiz"
-- Keep it clean, bullet-heavy, concise, and copy-friendly. Avoid long paragraphs.
+- The markdown field must actually be clean structured plain text.
+- Do not use markdown bullets, ### headings, or *** markers.
+- Use emoji markers for structure:
+  ⭐ Important: ...
+  📘 Concept: ...
+  ⚡ Tip: ...
+  🧪 Example: ...
+  ⚠️ Warning: ...
+- Keep each item short and readable.
+- Prefer short sections separated by blank lines instead of raw markdown lists.
 
 DATA:
 title: ${args.title}

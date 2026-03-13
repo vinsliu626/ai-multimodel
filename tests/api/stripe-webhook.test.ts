@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { planToFlags } from "@/lib/billing/planFlags";
 
 const mocks = vi.hoisted(() => {
   const prisma = {
@@ -156,12 +157,7 @@ describe("POST /api/stripe/webhook", () => {
       expect.objectContaining({
         where: { userId: "user_2" },
         data: expect.objectContaining({
-          plan: "basic",
-          canSeeSuspiciousSentences: false,
-          detectorWordsPerWeek: 5000,
-          noteSecondsPerWeek: 7200,
-          chatPerDay: 10,
-          unlimited: false,
+          ...planToFlags("basic"),
           stripeStatus: "past_due",
         }),
       })

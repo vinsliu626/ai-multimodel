@@ -272,6 +272,16 @@ function estimateSecondsByTranscript(transcript: string) {
   return Math.max(1, Math.round(w / 2.5));
 }
 
+function firstMissingContiguousIndex(indexes: number[]) {
+  const sorted = Array.from(new Set(indexes)).sort((a, b) => a - b);
+  let expected = 0;
+  for (const index of sorted) {
+    if (index !== expected) break;
+    expected += 1;
+  }
+  return expected;
+}
+
 // ✅ 安全分块：避免死循环
 function chunkText(text: string, maxChars = 12000, overlap = 800) {
   const chunks: string[] = [];
@@ -382,16 +392,16 @@ export async function POST(req: Request) {
     const job = await prisma.aiNoteJob.upsert({
       where: { noteId },
       update: {},
-      create: {
-        noteId,
-        userId,
-        stage: "prep",
-        progress: 0,
-        error: null,
-        segmentTimeSec: Math.max(30, parseEnvInt("AI_NOTE_SEGMENT_TIME_SEC", 300)),
-        segmentsTotal: 0,
-        asrNextIndex: 0,
-        llmNextPart: 0,
+        create: {
+          noteId,
+          userId,
+          stage: "prep",
+          progress: 0,
+          error: null,
+          segmentTimeSec: Math.max(30, parseEnvInt("AI_NOTE_SEGMENT_TIME_SEC", 180)),
+          segmentsTotal: 0,
+          asrNextIndex: 0,
+          llmNextPart: 0,
         llmPartsTotal: 0,
         noteMarkdown: null,
         secondsBilled: null,
@@ -472,7 +482,7 @@ export async function POST(req: Request) {
 
         const ASR_BATCH = Math.max(
           1,
-          parseEnvInt("AI_NOTE_ASR_BATCH", parseEnvInt("AI_NOTE_ASR_CONCURRENCY", 2))
+          parseEnvInt("AI_NOTE_ASR_BATCH", parseEnvInt("AI_NOTE_ASR_CONCURRENCY", 1))
         );
         const asrTimeoutMs = Math.max(30_000, parseEnvInt("AI_NOTE_ASR_TIMEOUT_MS", 180_000));
         // Keep individual ASR requests bounded; larger slices were causing upstream resets/timeouts.
@@ -521,8 +531,25 @@ export async function POST(req: Request) {
 
         await prisma.aiNoteJob.update({ where: { noteId }, data: { segmentsTotal: total } });
 
-        const startIdx = job.asrNextIndex || 0;
+        const existingTranscriptRows = await prisma.aiNoteTranscript.findMany({
+          where: { noteId },
+          select: { chunkIndex: true, text: true },
+          orderBy: { chunkIndex: "asc" },
+        });
+        const completedTranscriptIndexes = existingTranscriptRows
+          .filter((row) => String(row.text || "").trim().length > 0)
+          .map((row) => row.chunkIndex);
+        const resumeFromTranscript = Math.min(total, firstMissingContiguousIndex(completedTranscriptIndexes));
+        const startIdx = resumeFromTranscript;
         const endIdx = Math.min(total, startIdx + ASR_BATCH);
+
+        if (startIdx !== (job.asrNextIndex || 0)) {
+          const syncedProgress = total > 0 ? Math.min(60, Math.max(1, Math.round((startIdx / total) * 60))) : 1;
+          await prisma.aiNoteJob.update({
+            where: { noteId },
+            data: { asrNextIndex: startIdx, progress: syncedProgress, error: null },
+          });
+        }
 
         if (startIdx >= total) {
           await prisma.aiNoteJob.update({ where: { noteId }, data: { stage: "llm", progress: 60, error: null } });
@@ -578,6 +605,7 @@ export async function POST(req: Request) {
           progress: prog,
           noteId,
           segmentsTotal: total,
+          completedSegments: newNext,
           asrNextIndex: newNext,
           elapsedMs: Date.now() - t0,
         });
@@ -673,8 +701,25 @@ export async function POST(req: Request) {
           await prisma.aiNoteJob.update({ where: { noteId }, data: { llmPartsTotal: totalParts } });
         }
 
-        const startPart = job.llmNextPart || 0;
+        const existingSummaryParts = await prisma.aiNoteSummaryPart.findMany({
+          where: { noteId },
+          select: { partIndex: true, text: true },
+          orderBy: { partIndex: "asc" },
+        });
+        const completedPartIndexes = existingSummaryParts
+          .filter((row) => String(row.text || "").trim().length > 0)
+          .map((row) => row.partIndex);
+        const resumeFromPart = Math.min(totalParts, firstMissingContiguousIndex(completedPartIndexes));
+        const startPart = resumeFromPart;
         const endPart = Math.min(totalParts, startPart + LLM_BATCH);
+
+        if (startPart !== (job.llmNextPart || 0)) {
+          const syncedProgress = totalParts > 0 ? 60 + Math.min(39, Math.round((startPart / totalParts) * 39)) : 80;
+          await prisma.aiNoteJob.update({
+            where: { noteId },
+            data: { llmNextPart: startPart, progress: syncedProgress, error: null },
+          });
+        }
 
         if (startPart >= totalParts) {
           const parts = await prisma.aiNoteSummaryPart.findMany({
@@ -767,6 +812,7 @@ ${text}`
           progress: prog,
           noteId,
           llmPartsTotal: totalParts,
+          completedParts: newNext,
           llmNextPart: newNext,
           elapsedMs: Date.now() - t0,
         });
@@ -800,7 +846,7 @@ ${text}`
         const parsed = JSON.parse(msg);
         if (parsed && typeof parsed === "object") {
           extra = parsed;
-          message = `ASR failed on segment ${Number(parsed.segmentNumber || 0)}/${Number(parsed.segmentsTotal || 0)}.`;
+          message = `ASR failed on segment ${Number(parsed.segmentNumber || 0)}/${Number(parsed.segmentsTotal || 0)}. Retry to resume from the next unfinished segment.`;
         }
       } catch {}
       return bad("ASR_FAILED", 502, message, extra);

@@ -5,12 +5,21 @@ const mocks = vi.hoisted(() => {
   const getServerSession = vi.fn();
   const tx = {
     $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(),
     promoCode: {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
     promoRedemption: {
       count: vi.fn(),
+      create: vi.fn(),
+    },
+    giftCode: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
+    giftCodeRedemption: {
+      findFirst: vi.fn(),
       create: vi.fn(),
     },
     userEntitlement: {
@@ -43,9 +52,20 @@ describe("POST /api/billing/redeem promo", () => {
     process.env.PROMO_CODE_SECRET = "unit-test-secret-2026-very-long";
     mocks.getServerSession.mockResolvedValue({ user: { id: "user_a" } });
     mocks.tx.$executeRaw.mockResolvedValue(1);
+    mocks.tx.$queryRaw.mockResolvedValue([
+      { column_name: "promoPlan" },
+      { column_name: "promoAccessStartAt" },
+      { column_name: "promoAccessEndAt" },
+      { column_name: "promoAccessActive" },
+      { column_name: "developerBypass" },
+    ]);
     mocks.tx.promoRedemption.count.mockResolvedValue(0);
     mocks.tx.promoRedemption.create.mockResolvedValue({ id: "redeem_1" });
     mocks.tx.promoCode.update.mockResolvedValue({});
+    mocks.tx.giftCode.findUnique.mockResolvedValue(null);
+    mocks.tx.giftCode.update.mockResolvedValue({});
+    mocks.tx.giftCodeRedemption.findFirst.mockResolvedValue(null);
+    mocks.tx.giftCodeRedemption.create.mockResolvedValue({ id: "gift_redeem_1" });
     mocks.tx.userEntitlement.upsert.mockResolvedValue({
       userId: "user_a",
       promoPlan: null,
@@ -156,10 +176,10 @@ describe("POST /api/billing/redeem promo", () => {
     const res = await POST(req);
     const json = await res.json();
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
     expect(json.ok).toBe(false);
     expect(json.error).toBe("PROMO_CONFIG_MISSING_SECRET");
-    expect(json.message).toBe("Server promo config is missing. Set PROMO_CODE_SECRET.");
+    expect(json.message).toBe("Redeem codes are temporarily unavailable right now. Please try again later.");
     expect(typeof json.requestId).toBe("string");
   });
 
@@ -176,10 +196,37 @@ describe("POST /api/billing/redeem promo", () => {
     const res = await POST(req);
     const json = await res.json();
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
     expect(json.ok).toBe(false);
     expect(json.error).toBe("PROMO_CONFIG_INVALID_SECRET");
-    expect(json.message).toBe("Server promo config is invalid. Replace PROMO_CODE_SECRET with a non-placeholder secret.");
+    expect(json.message).toBe("Redeem codes are temporarily unavailable right now. Please try again later.");
     expect(typeof json.requestId).toBe("string");
+  });
+
+  it("still redeems a gift code when promo secret is missing", async () => {
+    process.env.PROMO_CODE_SECRET = "";
+    mocks.tx.giftCode.findUnique.mockResolvedValue({
+      code: "NEWAPP",
+      isActive: true,
+      maxUses: 10,
+      usedCount: 1,
+    });
+
+    const { POST } = await import("@/app/api/billing/redeem/route");
+    const req = new Request("http://localhost/api/billing/redeem", {
+      method: "POST",
+      body: JSON.stringify({ code: "newapp" }),
+      headers: { "content-type": "application/json" },
+    });
+
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.source).toBe("gift");
+    expect(json.plan).toBe("pro");
+    expect(mocks.tx.giftCodeRedemption.create).toHaveBeenCalled();
+    expect(mocks.tx.userEntitlement.upsert).toHaveBeenCalled();
   });
 });

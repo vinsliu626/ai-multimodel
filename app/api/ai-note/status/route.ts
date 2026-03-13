@@ -42,5 +42,23 @@ export async function POST(req: Request) {
   if (!job) return NextResponse.json({ ok: false, error: "JOB_NOT_FOUND" }, { status: 404 });
   if (job.userId !== userId) return NextResponse.json({ ok: false, error: "FORBIDDEN" }, { status: 403 });
 
-  return NextResponse.json({ ok: true, job });
+  let parsedError: Record<string, unknown> | null = null;
+  if (job.error) {
+    try {
+      const value = JSON.parse(job.error);
+      if (value && typeof value === "object") parsedError = value as Record<string, unknown>;
+    } catch {}
+  }
+
+  return NextResponse.json({
+    ok: true,
+    job,
+    progressDetail: {
+      completedSegments: job.asrNextIndex,
+      totalSegments: job.segmentsTotal,
+      completedSummaryParts: job.llmNextPart,
+      totalSummaryParts: job.llmPartsTotal,
+      parsedError,
+    },
+  });
 }

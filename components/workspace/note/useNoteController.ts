@@ -385,7 +385,9 @@ export function useNoteController({
               (raw ? raw.slice(0, 300) : "") ||
               `Finalize error: ${r.status}`;
             setFinalizeStage("failed");
-            setFinalizeProgress(0);
+            if (Number.isFinite(j?.progress)) {
+              setFinalizeProgress(Number(j.progress));
+            }
             throw new Error(msg);
           }
 

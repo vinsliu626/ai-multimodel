@@ -158,7 +158,6 @@ export async function POST(req: Request) {
         await prisma.userEntitlement.update({
           where: { userId: ent.userId },
           data: {
-            plan,
             ...flags,
             stripeStatus: stripeStatus ?? "active",
             stripeSubId: subscriptionId,
@@ -197,7 +196,6 @@ export async function POST(req: Request) {
         await prisma.userEntitlement.update({
           where: { userId: ent.userId },
           data: {
-            plan: "basic",
             ...flags,
             stripeStatus: "past_due",
             //  stripeSubId/stripeCustomerId 
@@ -239,7 +237,6 @@ export async function POST(req: Request) {
           await prisma.userEntitlement.update({
             where: { userId: ent.userId },
             data: {
-              plan,
               ...flags,
               stripeSubId: subscriptionId ?? null,
               stripeStatus: status ?? null,
@@ -254,7 +251,6 @@ export async function POST(req: Request) {
           await prisma.userEntitlement.update({
             where: { userId: ent.userId },
             data: {
-              plan: "basic",
               ...flags,
               stripeSubId: subscriptionId ?? null,
               stripeStatus: status ?? null,

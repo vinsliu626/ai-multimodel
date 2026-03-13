@@ -53,6 +53,28 @@ function resolveNow(req: Request): Date {
   return new Date();
 }
 
+type PromoConfigErrorCode = "PROMO_CONFIG_MISSING_SECRET" | "PROMO_CONFIG_INVALID_SECRET";
+
+function tryHashPromoCode(code: string): { ok: true; codeHash: string } | { ok: false; reason: PromoConfigErrorCode } {
+  try {
+    return { ok: true, codeHash: hashPromoCode(code) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === "PROMO_CONFIG_MISSING_SECRET" || message === "PROMO_CONFIG_INVALID_SECRET") {
+      return { ok: false, reason: message };
+    }
+    throw error;
+  }
+}
+
+function promoConfigErrorResponse(code: PromoConfigErrorCode, requestId: string) {
+  const message =
+    code === "PROMO_CONFIG_MISSING_SECRET"
+      ? "Redeem codes are temporarily unavailable right now. Please try again later."
+      : "Redeem codes are temporarily unavailable right now. Please try again later.";
+  return NextResponse.json({ ok: false, error: code, message, requestId }, { status: 503 });
+}
+
 async function supportsPromoEntitlementColumns(tx: Prisma.TransactionClient) {
   const rows = await tx.$queryRaw<Array<{ column_name: string }>>`
     SELECT column_name
@@ -230,25 +252,48 @@ export async function POST(req: Request) {
   if (!normalizedCode) return NextResponse.json({ ok: false, error: "MISSING_CODE", requestId }, { status: 400 });
 
   try {
-    const codeHash = hashPromoCode(normalizedCode);
     let result:
       | { ok: false; error: "INVALID_CODE" | "INACTIVE_CODE" | "NOT_STARTED" | "CODE_EXPIRED" | "CODE_EXHAUSTED" | "PER_USER_LIMIT_REACHED" | "INVALID_GRANT_WINDOW" }
       | { ok: true; plan: string; grantEndAt: Date | null; source: string };
+    const promoHash = tryHashPromoCode(normalizedCode);
+    let attemptedGiftFallback = false;
 
-    try {
-      result = await prisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`promo:${codeHash}`}))`;
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`promo-user:${codeHash}:${userId}`}))`;
+    if (promoHash.ok) {
+      try {
+        result = await prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`promo:${promoHash.codeHash}`}))`;
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`promo-user:${promoHash.codeHash}:${userId}`}))`;
 
-        const promo = await tx.promoCode.findUnique({ where: { codeHash } });
-        if (!promo) return { ok: false as const, error: "INVALID_CODE" as const };
+          const promo = await tx.promoCode.findUnique({ where: { codeHash: promoHash.codeHash } });
+          if (!promo) return { ok: false as const, error: "INVALID_CODE" as const };
 
-        return redeemPromoCodeTx(tx, userId, promo, now);
-      });
-    } catch (error) {
-      if (!isPromoTableMissingError(error)) throw error;
-      console.warn("[billing.redeem] promo tables missing; falling back to GiftCode", { requestId, userId });
+          return redeemPromoCodeTx(tx, userId, promo, now);
+        });
+      } catch (error) {
+        if (!isPromoTableMissingError(error)) throw error;
+        console.warn("[billing.redeem] promo tables missing; falling back to GiftCode", { requestId, userId });
+        attemptedGiftFallback = true;
+        result = await redeemWithGiftTables({ userId, normalizedCode, requestId, now });
+      }
+    } else {
+      attemptedGiftFallback = true;
       result = await redeemWithGiftTables({ userId, normalizedCode, requestId, now });
+    }
+
+    if (!attemptedGiftFallback && !result.ok && result.error === "INVALID_CODE") {
+      const giftResult = await redeemWithGiftTables({ userId, normalizedCode, requestId, now });
+      if (giftResult.ok || giftResult.error !== "INVALID_CODE") {
+        result = giftResult;
+      }
+    }
+
+    if (!promoHash.ok && !result.ok && result.error === "INVALID_CODE") {
+      console.error("[billing.redeem] promo config missing while promo lookup unavailable", {
+        requestId,
+        userId,
+        reason: promoHash.reason,
+      });
+      return promoConfigErrorResponse(promoHash.reason, requestId);
     }
 
     if (!result.ok) {
@@ -270,28 +315,8 @@ export async function POST(req: Request) {
         : "REDEEM_RUNTIME_ERROR";
     console.error("[billing.redeem] failed", { requestId, userId, reason });
 
-    if (message === "PROMO_CONFIG_MISSING_SECRET") {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "PROMO_CONFIG_MISSING_SECRET",
-          message: "Server promo config is missing. Set PROMO_CODE_SECRET.",
-          requestId,
-        },
-        { status: 500 }
-      );
-    }
-    if (message === "PROMO_CONFIG_INVALID_SECRET") {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "PROMO_CONFIG_INVALID_SECRET",
-          message: "Server promo config is invalid. Replace PROMO_CODE_SECRET with a non-placeholder secret.",
-          requestId,
-        },
-        { status: 500 }
-      );
-    }
+    if (message === "PROMO_CONFIG_MISSING_SECRET") return promoConfigErrorResponse("PROMO_CONFIG_MISSING_SECRET", requestId);
+    if (message === "PROMO_CONFIG_INVALID_SECRET") return promoConfigErrorResponse("PROMO_CONFIG_INVALID_SECRET", requestId);
     return NextResponse.json({ ok: false, error: "REDEEM_FAILED", requestId }, { status: 500 });
   }
 }

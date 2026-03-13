@@ -28,11 +28,6 @@ function formatMb(bytes: number) {
   return `${mb % 1 === 0 ? mb.toFixed(0) : mb.toFixed(1)} MB`;
 }
 
-function formatDifficultyList(values: ("easy" | "medium" | "hard")[] | undefined) {
-  if (!values?.length) return "Standard";
-  return values.map((value) => value[0]?.toUpperCase() + value.slice(1)).join(", ");
-}
-
 function formatPrice(oldPrice: string | null, newPrice: string, priceSuffix: string) {
   return { oldPrice, newPrice, priceSuffix };
 }
@@ -318,7 +313,7 @@ export function PlanModal({
 
                   <p className="mt-3 text-[12px] leading-6 text-slate-400">
                     {ent.studyMaxFileSizeBytes != null
-                      ? `Study files up to ${formatMb(ent.studyMaxFileSizeBytes)}. Difficulties: ${formatDifficultyList(ent.studyAllowedDifficulties)}.`
+                      ? `Study files up to ${formatMb(ent.studyMaxFileSizeBytes)}. Quiz generation uses a fixed standard exam-review level.`
                       : "Real-time usage shown below is pulled from your current billing status."}
                   </p>
                 </div>

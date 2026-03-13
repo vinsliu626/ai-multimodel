@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { assertQuotaOrThrow, QuotaError } from "@/lib/billing/guard";
 import { addUsageEvent } from "@/lib/billing/usage";
 import { assertChatRequestAllowed, ChatLimitError } from "@/lib/chat/quota";
+import { normalizeAiText } from "@/lib/ui/aiTextFormat";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -143,6 +144,8 @@ function systemPlanner(isZh: boolean) {
     : [
         "You are Planner.",
         "Goal: produce an actionable writing plan so Writer can draft and Reviewer can deliver the final report.",
+        "Do not use markdown bullets, ### headings, or *** markers.",
+        "Use clean structured labels and emoji markers when emphasis helps.",
         "",
         "Output format (plain text only, no JSON, no code blocks):",
         "[Plan]",
@@ -179,6 +182,8 @@ function systemWriter(isZh: boolean) {
     : [
         "You are Writer.",
         "Task: write a Draft strictly following the Planner's Plan.",
+        "Do not use markdown bullets, ### headings, or *** markers.",
+        "When emphasizing ideas, prefer emoji markers like ⭐ Important:, 📘 Concept:, ⚡ Tip:, 🧪 Example:, and ⚠️ Warning:.",
         "",
         "Output format (plain text only, no JSON, no code blocks):",
         "[Draft]",
@@ -219,6 +224,8 @@ function systemReviewer(isZh: boolean) {
     : [
         "You are Reviewer.",
         "Tasks:",
+        "Do not use markdown bullets, ### headings, or *** markers in the rewritten content.",
+        "Use emoji markers for emphasis inside review content when useful.",
         "1) Check whether the Draft follows the Plan, missing key points, logic conflicts, verbosity/empty talk;",
         "2) Substantially revise and improve the Draft;",
         "3) Produce the final deliverable Conclusion based on the revised draft.",
@@ -557,6 +564,7 @@ export async function POST(request: Request) {
                 openrouterKey,
                 openrouterCandidates: OR_WRITER_CANDIDATES,
               });
+              writer.content = normalizeAiText(writer.content);
 
               send("stage_done", writer);
 
@@ -611,6 +619,7 @@ export async function POST(request: Request) {
               openrouterKey,
               openrouterCandidates: OR_WRITER_CANDIDATES,
             });
+            writer.content = normalizeAiText(writer.content);
             send("stage_done", writer);
 
             send("stage_start", { stage: "reviewer" });
@@ -632,9 +641,16 @@ export async function POST(request: Request) {
             });
 
             const { review, revisedDraft, conclusion } = splitReviewerTriplet(reviewer.content);
-            send("stage_done", { ...reviewer, review, revisedDraft, conclusion });
+            send("stage_done", {
+              ...reviewer,
+              review: normalizeAiText(review),
+              revisedDraft: normalizeAiText(revisedDraft),
+              conclusion: normalizeAiText(conclusion),
+            });
 
-            const finalReply = [revisedDraft, conclusion].filter(Boolean).join("\n\n") || reviewer.content;
+            const finalReply =
+              [normalizeAiText(revisedDraft), normalizeAiText(conclusion)].filter(Boolean).join("\n\n") ||
+              normalizeAiText(reviewer.content);
 
             // ✅ 保存 assistant（存最终交付内容）
             if (shouldSaveChat && chatSessionId) {
@@ -689,6 +705,7 @@ export async function POST(request: Request) {
         openrouterKey,
         openrouterCandidates: OR_WRITER_CANDIDATES,
       });
+      writer.content = normalizeAiText(writer.content);
 
       // ✅ 保存 assistant
       if (shouldSaveChat && chatSessionId) {
@@ -737,6 +754,7 @@ export async function POST(request: Request) {
       openrouterKey,
       openrouterCandidates: OR_WRITER_CANDIDATES,
     });
+    writer.content = normalizeAiText(writer.content);
 
     const reviewerMsgs = buildStageMessages(
       messages,
@@ -757,7 +775,9 @@ export async function POST(request: Request) {
 
     const { review, revisedDraft, conclusion } = splitReviewerTriplet(reviewer.content);
 
-    const finalReply = [revisedDraft, conclusion].filter(Boolean).join("\n\n") || reviewer.content;
+    const finalReply =
+      [normalizeAiText(revisedDraft), normalizeAiText(conclusion)].filter(Boolean).join("\n\n") ||
+      normalizeAiText(reviewer.content);
 
     // ✅ 保存 assistant（存最终交付内容）
     if (shouldSaveChat && chatSessionId) {
@@ -795,6 +815,8 @@ function systemAssistant(isZh: boolean) {
         "Answer the user's message as a normal conversational reply.",
         "Unless the user explicitly asks for it, do not use workflow/review formatting.",
         "Do not output labels like Review, Revised Draft, Conclusion, or Key Improvements.",
+        "Do not use markdown bullets, ### headings, or *** markers.",
+        "Prefer clean structured plain text with emoji markers when structure helps: ⭐ Important:, 📘 Concept:, ⚡ Tip:, 🧪 Example:, ⚠️ Warning:.",
         "Be clear, practical, and concise.",
       ].join("\n");
 }

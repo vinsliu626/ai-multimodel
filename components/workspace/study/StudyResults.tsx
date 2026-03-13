@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { StudyQuizItem, StudyResult } from "./study-types";
+import { AiFormattedText } from "@/components/shared/AiFormattedText";
 
 type ResultTab = "notes" | "flashcards" | "quiz";
 type QuizStage = "ready" | "taking" | "submitted" | "review";
@@ -163,7 +164,9 @@ export function StudyResults({ result }: { result: StudyResult }) {
           {(result.notes ?? []).map((note, index) => (
             <div key={`${index}-${note.slice(0, 24)}`} className="rounded-2xl border border-white/8 bg-slate-950/60 px-4 py-3 text-sm text-slate-200">
               <span className="mr-2 text-slate-500">{String(index + 1).padStart(2, "0")}</span>
-              {note}
+              <div className="mt-2">
+                <AiFormattedText text={note} className="text-sm" />
+              </div>
             </div>
           ))}
         </div>
@@ -250,8 +253,8 @@ function QuizPanel({ result }: { result: StudyResult }) {
               <p className="mt-1 text-slate-100 font-medium">{quizTypes.map((t) => t.replace("_", " ")).join(", ")}</p>
             </div>
             <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-slate-300">
-              <p className="text-slate-500">Difficulty</p>
-              <p className="mt-1 text-slate-100 font-medium">{result.meta.difficulty ?? "mixed"}</p>
+              <p className="text-slate-500">Study Level</p>
+              <p className="mt-1 text-slate-100 font-medium">Standard exam review</p>
             </div>
             <div className="rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2 text-xs text-slate-300">
               <p className="text-slate-500">Estimated Time</p>

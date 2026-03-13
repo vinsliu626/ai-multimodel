@@ -14,6 +14,7 @@ import { SettingsModal } from "@/components/workspace/ui/SettingsModal";
 
 import { DetectorUI } from "@/components/workspace/detector/DetectorUI";
 import { NoteUI } from "@/components/workspace/note/NoteUI";
+import { AiFormattedText } from "@/components/shared/AiFormattedText";
 
 /** ===================== Types ===================== */
 type Role = "user" | "assistant";
@@ -333,7 +334,7 @@ export function WorkspaceShell() {
         body: JSON.stringify({ code }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.ok === false) throw new Error(data?.error || `Redeem error: ${res.status}`);
+      if (!res.ok || data?.ok === false) throw new Error(data?.message || data?.error || `Redeem error: ${res.status}`);
       setRedeemOpen(false);
       await refreshEnt();
     } catch (e: any) {
@@ -627,7 +628,7 @@ export function WorkspaceShell() {
                           : "bg-slate-900/80 text-slate-100 border-white/10"
                       }`}
                     >
-                      {msg.content}
+                      {msg.role === "assistant" ? <AiFormattedText text={msg.content} className="text-sm leading-relaxed" /> : msg.content}
                     </div>
                   </div>
                 ))}

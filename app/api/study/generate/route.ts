@@ -22,7 +22,7 @@ const requestSchema = z.object({
   title: z.string().trim().max(160).optional(),
   selectedModes: z.array(z.enum(studyModes)).min(1).max(3),
   quizTypes: z.array(z.enum(quizTypes)).min(1).max(3).optional(),
-  quizCount: z.number().int().min(1).max(20).optional(),
+  quizCount: z.number().int().min(1).max(30).optional(),
   difficulty: z.enum(["easy", "medium", "hard"]).optional(),
   fileName: z.string().trim().max(260).optional(),
   fileSizeBytes: z.number().int().min(0).max(8 * 1024 * 1024).optional(),
@@ -131,17 +131,6 @@ export async function POST(req: NextRequest) {
           ok: false,
           error: "QUIZ_COUNT_TOO_HIGH",
           message: `Your plan allows up to ${status.limits.maxQuizQuestions} quiz questions per request.`,
-        },
-        { status: 400 }
-      );
-    }
-
-    if (body.difficulty && !status.limits.allowedDifficulties.includes(body.difficulty)) {
-      return NextResponse.json(
-        {
-          ok: false,
-          error: "DIFFICULTY_NOT_ALLOWED",
-          message: `Your plan supports: ${status.limits.allowedDifficulties.join(", ")}.`,
         },
         { status: 400 }
       );

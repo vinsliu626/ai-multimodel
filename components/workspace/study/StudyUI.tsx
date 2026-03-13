@@ -18,18 +18,7 @@ export function StudyUI({
   onUsageRefresh: () => Promise<void> | void;
 }) {
   const ctl = useStudyController({ isZh, locked, entitlement, onUsageRefresh });
-  const { difficulty, limits, quizCount, setDifficulty, setQuizCount } = ctl;
   const historyRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    if (!limits) return;
-    if (!limits.allowedDifficulties.includes(difficulty)) {
-      setDifficulty(limits.allowedDifficulties[0]);
-    }
-    if (quizCount > limits.maxQuizQuestions) {
-      setQuizCount(limits.maxQuizQuestions);
-    }
-  }, [difficulty, limits, quizCount, setDifficulty, setQuizCount]);
 
   useEffect(() => {
     const onOpenHistory = () => {
@@ -266,41 +255,11 @@ export function StudyUI({
                         <p className="mt-2 text-xs text-slate-400">Choose at least one quiz type.</p>
                       </div>
 
-                      <div>
-                        <label className="mb-2 block text-xs uppercase tracking-[0.24em] text-slate-500">Difficulty</label>
-                        <div className="flex flex-wrap gap-2">
-                          {ctl.limits?.allowedDifficulties.map((option) => (
-                            <button
-                              key={option}
-                              type="button"
-                              onClick={() => ctl.setDifficulty(option)}
-                              className={`rounded-full px-3 py-2 text-sm transition ${
-                                ctl.difficulty === option
-                                  ? "bg-white text-black"
-                                  : "border border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
-                              }`}
-                            >
-                              {option}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="mb-2 block text-xs uppercase tracking-[0.24em] text-slate-500">Quiz Questions</label>
-                        <input
-                          type="range"
-                          min={1}
-                          max={ctl.limits?.maxQuizQuestions ?? 6}
-                          value={ctl.quizCount}
-                          onChange={(event) => ctl.setQuizCount(Number(event.target.value))}
-                          className="w-full accent-white"
-                        />
-                        <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
-                          <span>1</span>
-                          <span>{ctl.quizCount}</span>
-                          <span>{ctl.limits?.maxQuizQuestions ?? 6}</span>
-                        </div>
+                      <div className="rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3 text-xs text-slate-300">
+                        <p className="font-medium text-slate-100">Quiz quality is fixed to standard study / exam review.</p>
+                        <p className="mt-1 text-slate-400">
+                          Target question count: up to {ctl.limits?.maxQuizQuestions ?? 10}, based on how much real quiz-worthy material exists in the document.
+                        </p>
                       </div>
                     </>
                   )}
