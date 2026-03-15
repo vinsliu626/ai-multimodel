@@ -162,9 +162,10 @@ function Card({
   const isBasic = plan === "basic";
   const isPro = plan === "pro";
   const isUltra = plan === "ultra";
+  const borderLayerClass = isBasic ? "mm-basic-border" : isUltra ? "mm-ultra-border" : "mm-pro-border";
 
   const cardShell = [
-    "relative isolate overflow-hidden rounded-3xl border p-4 md:p-5 [contain:paint]",
+    "relative isolate overflow-hidden rounded-[23px] border p-4 md:p-5 [contain:paint]",
     active
       ? "border-blue-400/60 bg-slate-950/80 shadow-[0_0_0_1px_rgba(59,130,246,0.3),0_26px_70px_rgba(2,6,23,0.45)]"
       : "border-white/10 bg-slate-950/72 shadow-[0_20px_60px_rgba(2,6,23,0.35)]",
@@ -179,81 +180,85 @@ function Card({
     : "bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-400 text-white shadow-md shadow-blue-500/30 hover:brightness-110";
 
   return (
-    <div className={cardShell}>
-      {isPro ? (
-        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit] [transform:translateZ(0)]">
-          <div className="absolute inset-0 mm-pro-bg opacity-80" />
-          <div className="absolute inset-x-6 top-0 h-24 bg-gradient-to-b from-white/10 via-purple-400/8 to-transparent blur-2xl" />
-          <div className="absolute -left-16 bottom-10 h-36 w-36 rounded-full bg-blue-500/12 blur-3xl" />
-          <DiscountRibbon accentClass="bg-gradient-to-r from-fuchsia-500 via-violet-500 to-amber-400" sublabel="SAVE NOW" />
-        </div>
-      ) : null}
+    <div className="relative overflow-hidden rounded-3xl [contain:paint]">
+      <div className={["pointer-events-none absolute inset-0 rounded-[inherit]", borderLayerClass].join(" ")} />
 
-      {isUltra ? (
-        <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit] [transform:translateZ(0)]">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_18%,rgba(255,255,255,0.11),transparent_18%),radial-gradient(circle_at_78%_20%,rgba(96,165,250,0.22),transparent_20%),radial-gradient(circle_at_50%_120%,rgba(168,85,247,0.18),transparent_38%),linear-gradient(180deg,rgba(2,6,23,0.92),rgba(3,7,18,0.98))]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_15%,rgba(255,255,255,0.15)_0_1px,transparent_1.4px),radial-gradient(circle_at_70%_22%,rgba(255,255,255,0.22)_0_1px,transparent_1.6px),radial-gradient(circle_at_82%_58%,rgba(255,255,255,0.18)_0_1px,transparent_1.4px),radial-gradient(circle_at_36%_62%,rgba(255,255,255,0.16)_0_1px,transparent_1.5px),radial-gradient(circle_at_58%_38%,rgba(255,255,255,0.12)_0_1px,transparent_1.4px)] opacity-80" />
-          <div className="absolute -top-12 right-2 h-40 w-40 rounded-full bg-cyan-400/12 blur-3xl" />
-          <div className="absolute bottom-0 left-0 h-44 w-44 rounded-full bg-violet-500/14 blur-3xl" />
-          <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-cyan-400/10 via-violet-500/6 to-transparent" />
-          <DiscountRibbon accentClass="bg-gradient-to-r from-cyan-400 via-blue-500 to-violet-500" sublabel="LIMITED OFFER" />
-        </div>
-      ) : null}
+      <div className={["relative z-0 m-px", cardShell].join(" ")}>
+        {isPro ? (
+          <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]">
+            <div className="absolute inset-0 mm-pro-bg opacity-80" />
+            <div className="absolute inset-x-6 top-0 h-24 bg-gradient-to-b from-white/10 via-purple-400/8 to-transparent blur-2xl" />
+            <div className="absolute -left-16 bottom-10 h-36 w-36 rounded-full bg-blue-500/12 blur-3xl" />
+            <DiscountRibbon accentClass="bg-gradient-to-r from-fuchsia-500 via-violet-500 to-amber-400" sublabel="SAVE NOW" />
+          </div>
+        ) : null}
 
-      <div className="relative z-10">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <p className="text-sm font-semibold text-slate-50">{title}</p>
-              {badge ? (
-                <span className="rounded-full border border-white/10 bg-white/8 px-2 py-0.5 text-[10px] text-slate-200">
-                  {badge}
-                </span>
-              ) : null}
-              {active ? (
-                <span className="rounded-full border border-blue-400/20 bg-blue-400/15 px-2 py-0.5 text-[10px] text-blue-100">
-                  Current
-                </span>
-              ) : null}
-            </div>
+        {isUltra ? (
+          <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_18%,rgba(255,255,255,0.11),transparent_18%),radial-gradient(circle_at_78%_20%,rgba(96,165,250,0.22),transparent_20%),radial-gradient(circle_at_50%_120%,rgba(168,85,247,0.18),transparent_38%),linear-gradient(180deg,rgba(2,6,23,0.92),rgba(3,7,18,0.98))]" />
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_15%,rgba(255,255,255,0.15)_0_1px,transparent_1.4px),radial-gradient(circle_at_70%_22%,rgba(255,255,255,0.22)_0_1px,transparent_1.6px),radial-gradient(circle_at_82%_58%,rgba(255,255,255,0.18)_0_1px,transparent_1.4px),radial-gradient(circle_at_36%_62%,rgba(255,255,255,0.16)_0_1px,transparent_1.5px),radial-gradient(circle_at_58%_38%,rgba(255,255,255,0.12)_0_1px,transparent_1.4px)] opacity-80" />
+            <div className="absolute -top-12 right-2 h-40 w-40 rounded-full bg-cyan-400/12 blur-3xl" />
+            <div className="absolute bottom-0 left-0 h-44 w-44 rounded-full bg-violet-500/14 blur-3xl" />
+            <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-cyan-400/10 via-violet-500/6 to-transparent" />
+            <DiscountRibbon accentClass="bg-gradient-to-r from-cyan-400 via-blue-500 to-violet-500" sublabel="LIMITED OFFER" />
+          </div>
+        ) : null}
 
-            <div className="mt-3">
-              {oldPrice ? <p className="text-xs text-slate-500 line-through">{oldPrice}</p> : <div className="h-[18px]" />}
-              <div className="flex items-end gap-2">
-                <span
-                  className={[
-                    "text-3xl font-semibold tracking-tight",
-                    isUltra ? "bg-gradient-to-r from-white via-cyan-100 to-violet-200 bg-clip-text text-transparent" : "text-slate-50",
-                  ].join(" ")}
-                >
-                  {price}
-                </span>
-                <span className="pb-1 text-xs text-slate-400">{priceSuffix}</span>
+        <div className="relative z-10">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold text-slate-50">{title}</p>
+                {badge ? (
+                  <span className="rounded-full border border-white/10 bg-white/8 px-2 py-0.5 text-[10px] text-slate-200">
+                    {badge}
+                  </span>
+                ) : null}
+                {active ? (
+                  <span className="rounded-full border border-blue-400/20 bg-blue-400/15 px-2 py-0.5 text-[10px] text-blue-100">
+                    Current
+                  </span>
+                ) : null}
+              </div>
+
+              <div className="mt-3">
+                {oldPrice ? <p className="text-xs text-slate-500 line-through">{oldPrice}</p> : <div className="h-[18px]" />}
+                <div className="flex items-end gap-2">
+                  <span
+                    className={[
+                      "text-3xl font-semibold tracking-tight",
+                      isUltra ? "bg-gradient-to-r from-white via-cyan-100 to-violet-200 bg-clip-text text-transparent" : "text-slate-50",
+                    ].join(" ")}
+                  >
+                    {price}
+                  </span>
+                  <span className="pb-1 text-xs text-slate-400">{priceSuffix}</span>
+                </div>
               </div>
             </div>
           </div>
+
+          <div className="mt-4 h-px bg-gradient-to-r from-white/10 via-white/5 to-transparent" />
+
+          <div className="mt-4 space-y-2.5">
+            {features.map((feature) => (
+              <div
+                key={feature.label}
+                className="flex items-start justify-between gap-3 rounded-2xl border border-white/7 bg-black/20 px-3 py-2.5"
+              >
+                <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400">{feature.label}</span>
+                <span className="max-w-[58%] text-right text-[12px] font-medium leading-5 text-slate-100">{feature.value}</span>
+              </div>
+            ))}
+          </div>
+
+          <button
+            onClick={onClick}
+            className={["mt-4 h-10 w-full rounded-2xl text-sm font-semibold transition", ctaClass].join(" ")}
+          >
+            {cta}
+          </button>
         </div>
-
-        <div className="mt-4 h-px bg-gradient-to-r from-white/10 via-white/5 to-transparent" />
-
-        <div className="mt-4 space-y-2.5">
-          {features.map((feature) => (
-            <div
-              key={feature.label}
-              className="flex items-start justify-between gap-3 rounded-2xl border border-white/7 bg-black/20 px-3 py-2.5"
-            >
-              <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400">{feature.label}</span>
-              <span className="max-w-[58%] text-right text-[12px] font-medium leading-5 text-slate-100">{feature.value}</span>
-            </div>
-          ))}
-        </div>
-
-        <button
-          onClick={onClick}
-          className={["mt-4 h-10 w-full rounded-2xl text-sm font-semibold transition", ctaClass].join(" ")}
-        >
-          {cta}
-        </button>
       </div>
     </div>
   );
@@ -363,59 +368,53 @@ export function PlanModal({
           ) : null}
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="rounded-3xl p-[1px] mm-basic-border">
-              <Card
-                title="Basic (Free)"
-                plan="basic"
-                price="Free"
-                priceSuffix=""
-                badge="Starter"
-                active={cur === "basic"}
-                features={buildPlanFeatures("basic")}
-                cta={cur === "basic" ? "Current" : "Switch to Basic"}
-                onClick={async () => {
-                  if (!sessionExists) return signIn();
-                  await refreshEnt();
-                  onClose();
-                }}
-              />
-            </div>
+            <Card
+              title="Basic (Free)"
+              plan="basic"
+              price="Free"
+              priceSuffix=""
+              badge="Starter"
+              active={cur === "basic"}
+              features={buildPlanFeatures("basic")}
+              cta={cur === "basic" ? "Current" : "Switch to Basic"}
+              onClick={async () => {
+                if (!sessionExists) return signIn();
+                await refreshEnt();
+                onClose();
+              }}
+            />
 
-            <div className="rounded-3xl p-[1px] mm-pro-border">
-              <Card
-                title="Pro"
-                plan="pro"
-                oldPrice={proPrice.oldPrice}
-                price={proPrice.newPrice}
-                priceSuffix={proPrice.priceSuffix}
-                badge="Popular"
-                active={cur === "pro"}
-                features={buildPlanFeatures("pro")}
-                cta={cur === "pro" ? "Manage" : sessionExists ? "Upgrade to Pro" : "Sign in to upgrade"}
-                onClick={() => {
-                  if (!sessionExists) return signIn();
-                  onManageBilling("pro");
-                }}
-              />
-            </div>
+            <Card
+              title="Pro"
+              plan="pro"
+              oldPrice={proPrice.oldPrice}
+              price={proPrice.newPrice}
+              priceSuffix={proPrice.priceSuffix}
+              badge="Popular"
+              active={cur === "pro"}
+              features={buildPlanFeatures("pro")}
+              cta={cur === "pro" ? "Manage" : sessionExists ? "Upgrade to Pro" : "Sign in to upgrade"}
+              onClick={() => {
+                if (!sessionExists) return signIn();
+                onManageBilling("pro");
+              }}
+            />
 
-            <div className="rounded-3xl p-[1px] mm-ultra-border">
-              <Card
-                title="Ultra Pro"
-                plan="ultra"
-                oldPrice={ultraPrice.oldPrice}
-                price={ultraPrice.newPrice}
-                priceSuffix={ultraPrice.priceSuffix}
-                badge="Ultimate"
-                active={cur === "ultra"}
-                features={buildPlanFeatures("ultra")}
-                cta={cur === "ultra" ? "Manage" : sessionExists ? "Upgrade to Ultra" : "Sign in to upgrade"}
-                onClick={() => {
-                  if (!sessionExists) return signIn();
-                  onManageBilling("ultra");
-                }}
-              />
-            </div>
+            <Card
+              title="Ultra Pro"
+              plan="ultra"
+              oldPrice={ultraPrice.oldPrice}
+              price={ultraPrice.newPrice}
+              priceSuffix={ultraPrice.priceSuffix}
+              badge="Ultimate"
+              active={cur === "ultra"}
+              features={buildPlanFeatures("ultra")}
+              cta={cur === "ultra" ? "Manage" : sessionExists ? "Upgrade to Ultra" : "Sign in to upgrade"}
+              onClick={() => {
+                if (!sessionExists) return signIn();
+                onManageBilling("ultra");
+              }}
+            />
           </div>
 
           <div className="mt-4 text-[11px] text-slate-500">
