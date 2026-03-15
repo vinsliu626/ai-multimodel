@@ -1,19 +1,21 @@
-"use client";
+﻿"use client";
 
 import React, { Suspense, useEffect, useRef, useState } from "react";
 import { useSession, signIn, signOut, getProviders, type ClientSafeProvider } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
 
-// 组件（你现有）
+// 缁勪欢锛堜綘鐜版湁锛?
 import { PlanPillStyles, PlanPillButton } from "@/components/chat/billing/PlanPill";
 import { PlanModal } from "@/components/chat/billing/PlanModal";
 import { RedeemModal } from "@/components/chat/billing/RedeemModal";
 import { SettingsModal } from "@/components/chat/settings/SettingsModal";
 import { ChatHistoryRow } from "@/components/chat/sidebar/ChatHistoryRow";
 import { DetectorUI } from "@/components/workspace/detector/DetectorUI";
+import { HumanizerUI } from "@/components/workspace/humanizer/HumanizerUI";
 import { NoteUI } from "@/components/workspace/note/NoteUI";
 import { StudyUI } from "@/components/workspace/study/StudyUI";
 import { AiFormattedText } from "@/components/shared/AiFormattedText";
+import { CopyButton } from "@/components/ui/copy-button";
 
 // workflow UI
 import { Bubble } from "@/components/chat/ui/workflow/Bubble";
@@ -46,6 +48,7 @@ type Entitlement = {
 
   usedDetectorWordsThisWeek: number;
   usedNoteSecondsThisWeek: number;
+  usedHumanizerWordsThisWeek: number;
   usedChatCountToday: number;
   usedNoteGeneratesToday?: number;
   usedChatInputCharsWindow?: number;
@@ -59,6 +62,10 @@ type Entitlement = {
   noteInputMaxChars?: number;
   noteMaxItems?: number;
   noteCooldownMs?: number;
+  humanizerWordsPerWeek: number;
+  humanizerMaxInputWords: number;
+  humanizerMinInputWords: number;
+  humanizerCooldownMs?: number;
   studyGenerationsPerDay: number;
   studyMaxFileSizeBytes: number;
   studyMaxExtractedChars: number;
@@ -102,13 +109,30 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit & { 
 
 function normalizeFetchError(err: any, isZh: boolean) {
   if (err?.name === "AbortError") {
-    return isZh ? "请求超时：后端可能卡住或正在重启。" : "Request timed out: backend may be stuck or restarting.";
+    return isZh
+      ? "请求超时：后端可能卡住了，或者正在重启。"
+      : "Request timed out: backend may be stuck or restarting.";
   }
   const msg = String(err?.message || err || "");
   if (msg.toLowerCase().includes("failed to fetch")) {
-    return isZh ? "网络请求失败：后端连接断开/崩溃/重启。" : "Network request failed: backend disconnected/crashed/restarting.";
+    return isZh
+      ? "网络请求失败：后端连接断开、崩溃，或者正在重启。"
+      : "Network request failed: backend disconnected/crashed/restarting.";
   }
   return (isZh ? "请求失败：" : "Request failed: ") + msg;
+}
+
+function workflowFailureMessage(error: any, isZh: boolean) {
+  const code = String(error?.code || error?.error || "");
+  const message = String(error?.message || "");
+
+  if (code === "UPSTREAM_TIMEOUT" || code === "OPENROUTER_TIMEOUT" || code === "GROQ_TIMEOUT" || /timeout/i.test(message)) {
+    return isZh ? "Workflow 超时，请重试。" : "Workflow timed out. Please try again.";
+  }
+  if (code === "ALL_WORKFLOW_MODELS_FAILED") {
+    return isZh ? "Workflow 所有模型都失败了，请稍后再试。" : "All workflow models failed. Please try again later.";
+  }
+  return isZh ? "Workflow 生成失败，请重试。" : "Workflow generation failed. Please try again.";
 }
 
 function buildHttpErrorMessage(opts: { res: Response; data: any; text: string; isZh: boolean }) {
@@ -121,15 +145,15 @@ function buildHttpErrorMessage(opts: { res: Response; data: any; text: string; i
   const hint =
     res.status === 401
       ? isZh
-        ? "（可能未登录 / session cookie 没带上）"
+        ? "锛堝彲鑳芥湭鐧诲綍 / session cookie 娌″甫涓婏級"
         : "(likely not signed in / missing session cookie)"
       : res.status === 404
       ? isZh
-        ? "（会话不存在，或不属于当前账号）"
+        ? "锛堜細璇濅笉瀛樺湪锛屾垨涓嶅睘浜庡綋鍓嶈处鍙凤級"
         : "(session not found or not owned by current user)"
       : res.status === 400
       ? isZh
-        ? "（请求参数不对，比如 sessionId 为空）"
+        ? "（请求参数不正确，比如 sessionId 为空）"
         : "(bad request, e.g. missing sessionId)"
       : "";
 
@@ -194,16 +218,8 @@ function parseSSEChunks(buffer: string) {
   return { packets, remain };
 }
 
-function stripConclusionLabel(s: string) {
-  const t = (s ?? "").trim();
-  return t
-    .replace(/^conclusion\s*[:：]\s*/i, "")
-    .replace(/^结论\s*[:：]\s*/i, "")
-    .trim();
-}
-
 function formatGiftGrantEndAt(grantEndAt: string | null, isZh: boolean) {
-  if (!grantEndAt) return isZh ? "宸叉縺娲?" : "Active now";
+  if (!grantEndAt) return isZh ? "瀹稿弶绺哄ú?" : "Active now";
   const parsed = new Date(grantEndAt);
   if (!Number.isFinite(parsed.getTime())) return grantEndAt;
   return new Intl.DateTimeFormat(isZh ? "zh-CN" : "en-US", {
@@ -215,7 +231,7 @@ function formatGiftGrantEndAt(grantEndAt: string | null, isZh: boolean) {
 
 function formatGiftPlan(plan: string, isZh: boolean) {
   if (plan.toLowerCase() === "pro") return "Pro";
-  if (plan.toLowerCase() === "ultra") return isZh ? "Ultra 涓撲笟鐗?" : "Ultra Pro";
+  if (plan.toLowerCase() === "ultra") return isZh ? "Ultra 娑撴挷绗熼悧?" : "Ultra Pro";
   return plan;
 }
 
@@ -290,14 +306,14 @@ function HeaderAuthMenu({
           onClick={() => setMenuOpen((current) => (current === "signin" ? null : "signin"))}
           className="rounded-full bg-gradient-to-r from-blue-500 via-sky-500 to-emerald-400 px-3 py-1.5 text-xs font-medium text-white shadow-md shadow-blue-500/40 transition-all hover:brightness-110"
         >
-          {isZh ? "閻ц缍?" : "Sign in"}
+          {isZh ? "闁谎嗩嚙缂?" : "Sign in"}
         </button>
       )}
 
       {menuOpen === "signin" && !sessionExists && (
         <div className="absolute right-0 top-[calc(100%+10px)] z-30 w-56 rounded-3xl border border-white/10 bg-[#080808]/95 p-2 shadow-[0_24px_80px_rgba(2,6,23,0.55)] backdrop-blur-xl">
           <div className="border-b border-white/8 px-3 py-2">
-            <p className="text-sm font-semibold text-slate-50">{isZh ? "閻ц缍?" : "Sign in"}</p>
+            <p className="text-sm font-semibold text-slate-50">{isZh ? "闁谎嗩嚙缂?" : "Sign in"}</p>
           </div>
           <div className="space-y-1 px-1 py-2">
             {visibleAuthProviders.map((provider) => (
@@ -312,11 +328,11 @@ function HeaderAuthMenu({
                 <span>
                   {provider.id === "google"
                     ? isZh
-                      ? "缁х画浣跨敤 Google"
+                      ? "缂佈呯敾娴ｈ法鏁?Google"
                       : "Continue with Google"
                     : provider.id === "github"
                     ? isZh
-                      ? "缁х画浣跨敤 GitHub"
+                      ? "缂佈呯敾娴ｈ法鏁?GitHub"
                       : "Continue with GitHub"
                     : provider.name}
                 </span>
@@ -325,7 +341,7 @@ function HeaderAuthMenu({
             ))}
             {visibleAuthProviders.length === 0 && (
               <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-[12px] text-slate-400">
-                {isZh ? "鏆傛湭妫€娴嬪埌鍙敤鐨勭櫥褰曟柟寮?" : "No sign-in providers are currently available."}
+                {isZh ? "閺嗗倹婀Λ鈧ù瀣煂閸欘垳鏁ら惃鍕瑜版洘鏌熷?" : "No sign-in providers are currently available."}
               </div>
             )}
           </div>
@@ -346,7 +362,7 @@ function HeaderAuthMenu({
               }}
               className="flex w-full items-center rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-slate-100 transition hover:bg-white/10"
             >
-              {isZh ? "璐︽埛" : "Account"}
+              {isZh ? "账户" : "Account"}
             </button>
             <button
               onClick={() => {
@@ -364,7 +380,7 @@ function HeaderAuthMenu({
               }}
               className="flex w-full items-center rounded-2xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-slate-100 transition hover:bg-white/10"
             >
-              {isZh ? "璁剧疆" : "Settings"}
+              {isZh ? "设置" : "Settings"}
             </button>
             <button
               onClick={() => {
@@ -373,7 +389,7 @@ function HeaderAuthMenu({
               }}
               className="flex w-full items-center rounded-2xl border border-red-500/20 bg-red-500/10 px-3 py-2.5 text-sm text-red-100 transition hover:bg-red-500/15"
             >
-              {isZh ? "闁偓閸戣櫣娅ヨぐ?" : "Sign out"}
+              {isZh ? "闂侇偀鍋撻柛鎴ｆ濞呫儴銇?" : "Sign out"}
             </button>
           </div>
         </div>
@@ -396,6 +412,7 @@ function ChatPageInner() {
   const [messages, setMessages] = useState<WorkflowMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
   // settings
   const [lang, setLang] = useState<Lang>("en");
@@ -422,6 +439,7 @@ function ChatPageInner() {
 
   // login gating
   const detectorLocked = !sessionExists;
+  const humanizerLocked = !sessionExists;
   const noteLocked = !sessionExists;
   const studyLocked = !sessionExists;
 
@@ -499,6 +517,12 @@ function ChatPageInner() {
     }
   }, [messages, isLoading]);
 
+  useEffect(() => {
+    if (!copiedMessageId) return;
+    const timer = window.setTimeout(() => setCopiedMessageId(null), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copiedMessageId]);
+
   // ===== Sessions =====
   async function loadSessions() {
     if (!sessionExists) {
@@ -532,7 +556,7 @@ function ChatPageInner() {
     if (isLoading) return;
 
     if (!sessionId || typeof sessionId !== "string") {
-      setMessages([{ id: uid(), stage: "assistant", title: "AI", subtitle: "Error", content: isZh ? "无效的会话 ID" : "Invalid session id" }]);
+      setMessages([{ id: uid(), stage: "assistant", title: "AI", subtitle: "Error", content: isZh ? "鏃犳晥鐨勪細璇?ID" : "Invalid session id" }]);
       return;
     }
 
@@ -589,11 +613,11 @@ function ChatPageInner() {
   async function runWorkflowSSE(historyForApi: { role: "user" | "assistant"; content: string }[]) {
     const controller = new AbortController();
     abortRef.current = controller;
-
-    let plannerText = "";
-    let writerText = "";
-    let reviewText = "";
-    let conclusionText = "";
+    let plannerId = "";
+    let writerId = "";
+    let reviewerId = "";
+    let plannerDone = false;
+    let writerDone = false;
 
     try {
       const res = await fetch("/api/chat", {
@@ -619,15 +643,15 @@ function ChatPageInner() {
         throw new Error(msg);
       }
 
-      const plannerId = uid();
-      const writerId = uid();
-      const reviewerId = uid();
+      plannerId = uid();
+      writerId = uid();
+      reviewerId = uid();
 
       setMessages((prev) => [
         ...prev,
-        { id: plannerId, stage: "planner", title: "Planner", subtitle: isZh ? "规划" : "Plan", content: "" },
-        { id: writerId, stage: "writer", title: "Writer", subtitle: isZh ? "生成" : "Draft", content: "" },
-        { id: reviewerId, stage: "reviewer", title: "Reviewer", subtitle: isZh ? "审阅" : "Review", content: "" },
+        { id: plannerId, stage: "planner", title: "Planner", subtitle: isZh ? "瑙勫垝" : "Plan", content: "" },
+        { id: writerId, stage: "writer", title: "Writer", subtitle: isZh ? "鍒濊崏" : "Draft", content: "" },
+        { id: reviewerId, stage: "reviewer", title: isZh ? "审阅 + 结论" : "Reviewer + Conclusion", subtitle: isZh ? "修订后的最终稿" : "Improved Final Draft", content: "" },
       ]);
 
       const reader = res.body.getReader();
@@ -644,8 +668,10 @@ function ChatPageInner() {
 
         for (const p of packets) {
           if (p.event === "error") {
-            const msg = p.data?.message || p.data?.error || "Unknown SSE error";
-            throw new Error(msg);
+            const err: any = new Error(p.data?.message || p.data?.error || "Unknown SSE error");
+            err.code = p.data?.error;
+            err.extra = p.data?.extra;
+            throw err;
           }
 
           if (p.event === "stage_done") {
@@ -653,45 +679,41 @@ function ChatPageInner() {
             const content = String(p.data?.content || "");
 
             if (stage === "planner") {
-              plannerText = content;
+              plannerDone = true;
               setMessages((prev) => prev.map((m) => (m.id === plannerId ? { ...m, content } : m)));
             }
 
             if (stage === "writer") {
-              writerText = content;
-              setMessages((prev) => prev.map((m) => (m.id === writerId ? { ...m, content } : m)));
+              writerDone = true;
+              setMessages((prev) => prev.map((m) => (m.id === writerId ? { ...m, content: content || (isZh ? "（无输出）" : "(No output)") } : m)));
             }
 
-            if (stage === "reviewer") {
-              const review = String(p.data?.review || "");
-              const conclusion = String(p.data?.conclusion || content || "");
+            if (stage === "reviewer" || stage === "final") {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === reviewerId
+                    ? {
+                        ...m,
+                        stage: "reviewer",
+                        title: isZh ? "审阅 + 结论" : "Reviewer + Conclusion",
+                        subtitle: isZh ? "修订后的最终稿" : "Improved Final Draft",
+                        content: content || (isZh ? "（无输出）" : "(No output)"),
+                      }
+                    : m
+                )
+              );
+            }
+          }
 
-              reviewText = review.trim();
-              conclusionText = stripConclusionLabel(conclusion);
-
-              const children: WorkflowMessage[] = [
-                { id: uid(), stage: "planner", title: "Planner", subtitle: isZh ? "规划" : "Plan", content: plannerText || "" },
-                { id: uid(), stage: "writer", title: "Writer", subtitle: isZh ? "生成" : "Draft", content: writerText || "" },
-              ];
-
-              if (reviewText) {
-                children.push({ id: uid(), stage: "reviewer", title: "Reviewer", subtitle: "Review", content: reviewText });
-              }
-
-              const finalMsg: WorkflowMessage = {
-                id: uid(),
-                stage: "final",
-                title: isZh ? "结论" : "Conclusion",
-                subtitle: isZh ? "最终输出" : "Final",
-                content: conclusionText || (isZh ? "（无结论输出）" : "(No conclusion)"),
-                children,
-                collapsed: true,
-              };
-
-              setMessages((prev) => {
-                const next = prev.filter((m) => ![plannerId, writerId, reviewerId].includes(m.id));
-                return next.concat(finalMsg);
-              });
+          if (p.event === "stage_delta") {
+            const stage = String(p.data?.stage || "");
+            if (stage === "writer") {
+              const content = String(p.data?.content || "");
+              setMessages((prev) => prev.map((m) => (m.id === writerId ? { ...m, content } : m)));
+            }
+            if (stage === "reviewer" || stage === "final") {
+              const content = String(p.data?.content || "");
+              setMessages((prev) => prev.map((m) => (m.id === reviewerId ? { ...m, stage: "reviewer", content } : m)));
             }
           }
 
@@ -705,6 +727,38 @@ function ChatPageInner() {
           }
         }
       }
+    } catch (error: any) {
+      const content = workflowFailureMessage(error, isZh);
+      const failedSubtitle = isZh ? "失败" : "Failed";
+
+      if (!plannerId || !writerId || !reviewerId) {
+        setMessages((prev) =>
+          prev.concat({
+            id: uid(),
+            stage: "reviewer",
+            title: isZh ? "审阅 + 结论" : "Reviewer + Conclusion",
+            subtitle: failedSubtitle,
+            content,
+          })
+        );
+        return;
+      }
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (!plannerDone && m.id === plannerId) {
+            return { ...m, subtitle: failedSubtitle, content };
+          }
+          if (plannerDone && !writerDone && m.id === writerId) {
+            const nextContent = m.content?.trim() ? `${m.content}\n\n${content}` : content;
+            return { ...m, subtitle: failedSubtitle, content: nextContent };
+          }
+          if (plannerDone && writerDone && m.id === reviewerId) {
+            return { ...m, stage: "reviewer", subtitle: failedSubtitle, content };
+          }
+          return m;
+        })
+      );
     } finally {
       abortRef.current = null;
     }
@@ -831,6 +885,7 @@ function ChatPageInner() {
         prev.map((m) => (m.id === placeholderId ? { ...m, stage: "assistant", title: "Assistant", subtitle: undefined, content: fullReply } : m))
       );
     } catch (err: any) {
+      if (mode === "workflow") return;
       const msg = normalizeFetchError(err, isZh);
       setMessages((prev) => prev.concat({ id: uid(), stage: "assistant", title: "AI", subtitle: "Error", content: msg }));
     } finally {
@@ -867,7 +922,7 @@ function ChatPageInner() {
       });
       await refreshEnt();
     } catch (e: any) {
-      setRedeemError(e?.message || (isZh ? "兑换失败" : "Redeem failed"));
+      setRedeemError(e?.message || (isZh ? "鍏戞崲澶辫触" : "Redeem failed"));
     } finally {
       setRedeemLoading(false);
     }
@@ -928,14 +983,14 @@ function ChatPageInner() {
   }
 
   function setModeSafely(next: ChatMode) {
-    if (!sessionExists && (next === "detector" || next === "note" || next === "study")) {
+    if (!sessionExists && (next === "detector" || next === "note" || next === "study" || next === "humanizer")) {
       setPlanOpen(true);
       return;
     }
     setMode(next);
   }
 
-  // 始终强制黑色/未来感主题基调
+  // 濮嬬粓寮哄埗榛戣壊/鏈潵鎰熶富棰樺熀璋?
   return (
     <main className="h-screen w-screen overflow-hidden text-slate-200 bg-[#030303] font-sans selection:bg-blue-500/30 selection:text-blue-100 relative">
       <PlanPillStyles />
@@ -943,7 +998,7 @@ function ChatPageInner() {
       <div className="absolute inset-0 z-0 opacity-20 pointer-events-none base-grid" />
 
       <div className="relative z-10 h-full w-full flex">
-        {/* 全局遮罩：桌面和移动端都一样，只有 sidebarOpen 时显示 */}
+        {/* 鍏ㄥ眬閬僵锛氭闈㈠拰绉诲姩绔兘涓€鏍凤紝鍙湁 sidebarOpen 鏃舵樉绀?*/}
         {sidebarOpen && (
           <div
             className="fixed inset-0 z-40 bg-black/60 transition-opacity"
@@ -951,7 +1006,7 @@ function ChatPageInner() {
           />
         )}
 
-        {/* Sidebar：默认隐藏，点击菜单按钮才展开 */}
+        {/* Sidebar锛氶粯璁ら殣钘忥紝鐐瑰嚮鑿滃崟鎸夐挳鎵嶅睍寮€ */}
         <aside
           className={[
             "fixed z-50 left-0 top-0 h-full w-[280px]",
@@ -987,7 +1042,7 @@ function ChatPageInner() {
                 className="h-7 w-7 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-slate-400 hover:bg-white/10 transition-colors"
                 title={isZh ? "关闭侧边栏" : "Close sidebar"}
               >
-                ✕
+                ×
               </button>
             </div>
           </div>
@@ -1047,7 +1102,7 @@ function ChatPageInner() {
                 onClick={() => setSettingsOpen(true)}
                 className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200 transition-colors"
               >
-                <span className="text-sm">⚙️</span> {isZh ? "系统设置" : "Settings"}
+                <span className="text-sm">鈿欙笍</span> {isZh ? "绯荤粺璁剧疆" : "Settings"}
               </button>
 
               {sessionExists ? (
@@ -1063,7 +1118,7 @@ function ChatPageInner() {
                   onClick={() => signIn()}
                   className="px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 transition-colors text-xs font-medium"
                 >
-                  {isZh ? "接入认证" : "Authenticate"}
+                  {isZh ? "鎺ュ叆璁よ瘉" : "Authenticate"}
                 </button>
               )}
             </div>
@@ -1098,14 +1153,14 @@ function ChatPageInner() {
                       : "Team Matrix"
                     : mode === "normal"
                     ? isZh
-                      ? "标准终端"
+                      ? "鏍囧噯缁堢"
                       : "Standard Terminal"
                     : mode === "detector"
                     ? isZh
-                      ? "AI 侦测"
+                      ? "AI 渚︽祴"
                       : "AI Detector"
                     : isZh
-                    ? "智能笔记"
+                    ? "鏅鸿兘绗旇"
                     : "Smart Note"}
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 </h1>
@@ -1171,7 +1226,7 @@ function ChatPageInner() {
                       onClick={() => signOut()}
                       className="text-left text-xs text-slate-400 transition hover:text-slate-200 hover:underline underline-offset-2"
                     >
-                      {isZh ? "閫€鍑虹櫥褰?" : "Sign out"}
+                      {isZh ? "闁偓閸戣櫣娅ヨぐ?" : "Sign out"}
                     </button>
                   </div>
                 </div>
@@ -1190,11 +1245,11 @@ function ChatPageInner() {
                     >
                       {provider.id === "google"
                         ? isZh
-                          ? "Google 鐧诲綍"
+                          ? "Google 登录"
                           : "Google"
                         : provider.id === "github"
                         ? isZh
-                          ? "GitHub 鐧诲綍"
+                          ? "GitHub 登录"
                           : "GitHub"
                         : provider.name}
                     </button>
@@ -1204,7 +1259,7 @@ function ChatPageInner() {
                       onClick={() => signIn()}
                       className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-100 transition-all hover:bg-white/10"
                     >
-                      {isZh ? "鐧诲綍" : "Sign in"}
+                      {isZh ? "登录" : "Sign in"}
                     </button>
                   )}
                 </div>
@@ -1223,14 +1278,14 @@ function ChatPageInner() {
                     </div>
                     <div>
                       <p className="bg-gradient-to-r from-blue-200 via-white to-emerald-200 bg-clip-text text-lg font-semibold tracking-tight text-transparent">
-                        {isZh ? "鎭枩锛岀ぜ鍖呭凡鐢熸晥" : "Congratulations, your gift is live"}
+                        {isZh ? "恭喜，礼包已生效" : "Congratulations, your gift is live"}
                       </p>
                       <p className="mt-1 text-sm text-slate-200">
-                        {formatGiftPlan(redeemSuccess.plan, isZh)} {isZh ? "宸茶В閿侊紝鏈夋晥鏈熻嚦" : "unlocked, active until"}{" "}
+                        {formatGiftPlan(redeemSuccess.plan, isZh)} {isZh ? "已解锁，有效期至" : "unlocked, active until"}{" "}
                         <span className="font-semibold text-white">{formatGiftGrantEndAt(redeemSuccess.grantEndAt, isZh)}</span>
                       </p>
                       <p className="mt-1 text-[12px] text-slate-400">
-                        {isZh ? "鐜板湪鍙互浣跨敤宸茶В閿佺殑楂樼骇鍔熻兘銆?" : "Your upgraded features are ready to use now."}
+                        {isZh ? "现在可以使用已解锁的高级功能。" : "Your upgraded features are ready to use now."}
                       </p>
                     </div>
                   </div>
@@ -1238,7 +1293,7 @@ function ChatPageInner() {
                     onClick={() => setRedeemSuccess(null)}
                     className="h-10 rounded-2xl border border-white/10 bg-white/5 px-4 text-[12px] font-semibold text-slate-100 transition hover:bg-white/10"
                   >
-                    {isZh ? "鐭ラ亾浜?" : "Dismiss"}
+                    {isZh ? "知道了" : "Dismiss"}
                   </button>
                 </div>
               </div>
@@ -1248,6 +1303,8 @@ function ChatPageInner() {
           {/* Body */}
           {mode === "detector" ? (
             <DetectorUI isLoadingGlobal={isLoading} isZh={isZh} locked={detectorLocked} canSeeSuspicious={!!ent?.canSeeSuspiciousSentences} />
+          ) : mode === "humanizer" ? (
+            <HumanizerUI locked={humanizerLocked} entitlement={ent} onUsageRefresh={refreshEnt} />
           ) : mode === "note" ? (
             <NoteUI isLoadingGlobal={isLoading} isZh={isZh} locked={noteLocked} entitlement={ent} onUsageRefresh={refreshEnt} />
           ) : mode === "study" ? (
@@ -1284,9 +1341,16 @@ function ChatPageInner() {
                           "px-4 py-3 rounded-2xl text-[14px] leading-relaxed max-w-[85%] md:max-w-[75%] whitespace-pre-wrap transition-all",
                           m.stage === "user"
                             ? "bg-blue-600/15 text-blue-50 border border-blue-500/20 rounded-br-sm shadow-[0_0_15px_rgba(59,130,246,0.05)]"
+                            : copiedMessageId === m.id
+                            ? "bg-[#0f0f0f] text-slate-200 border border-emerald-400/30 rounded-bl-sm shadow-[0_0_0_1px_rgba(52,211,153,0.18)]"
                             : "bg-[#0f0f0f] text-slate-200 border border-white/5 rounded-bl-sm shadow-sm",
                         ].join(" ")}
                       >
+                        {m.stage === "assistant" ? (
+                          <div className="mb-2 flex items-center justify-end">
+                            <CopyButton text={m.content} onCopied={() => setCopiedMessageId(m.id)} className="bg-slate-950/80" />
+                          </div>
+                        ) : null}
                         {m.stage === "assistant" ? <AiFormattedText text={m.content} className="text-[14px] leading-relaxed" /> : m.content}
                       </div>
                     </div>
@@ -1340,13 +1404,13 @@ function ChatPageInner() {
                   {sessionExists && ent && !ent.unlimited && ent.plan === "basic" && (
                     <div className="px-4 flex items-center justify-between text-[10px] text-slate-500 font-mono uppercase tracking-wide">
                       <span>
-                        {isZh ? "今日调用限制:" : "Daily limit:"}{" "}
+                        {isZh ? "浠婃棩璋冪敤闄愬埗:" : "Daily limit:"}{" "}
                         <span className="text-slate-300">
                           {ent.usedChatCountToday}/{ent.chatPerDay}
                         </span>
                       </span>
                       <button onClick={() => setPlanOpen(true)} className="text-blue-400 hover:text-blue-300 hover:underline underline-offset-2">
-                        {isZh ? "升级权限" : "Upgrade Access"}
+                        {isZh ? "鍗囩骇鏉冮檺" : "Upgrade Access"}
                       </button>
                     </div>
                   )}
@@ -1450,3 +1514,5 @@ export default function ChatPage() {
     </Suspense>
   );
 }
+
+

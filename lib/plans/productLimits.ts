@@ -20,6 +20,13 @@ export type NotePlanLimits = {
   cooldownMs: number;
 };
 
+export type HumanizerPlanLimits = {
+  wordsPerWeek: number;
+  maxInputWords: number;
+  minInputWords: number;
+  cooldownMs: number;
+};
+
 export type StudyPlanLimitsConfig = {
   generationsPerDay: number;
   maxFileSizeBytes: number;
@@ -38,6 +45,7 @@ export type ProductPlanLimits = {
   canSeeSuspiciousSentences: boolean;
   chat: ChatPlanLimits;
   note: NotePlanLimits;
+  humanizer: HumanizerPlanLimits;
   study: StudyPlanLimitsConfig;
 };
 
@@ -59,6 +67,12 @@ export const PRODUCT_PLAN_LIMITS: Record<PlanId, ProductPlanLimits> = {
       maxInputChars: 12_000,
       maxItems: 8,
       cooldownMs: 60_000,
+    },
+    humanizer: {
+      wordsPerWeek: 3_500,
+      maxInputWords: 600,
+      minInputWords: 20,
+      cooldownMs: 12_000,
     },
     study: {
       generationsPerDay: 1,
@@ -90,6 +104,12 @@ export const PRODUCT_PLAN_LIMITS: Record<PlanId, ProductPlanLimits> = {
       maxItems: 12,
       cooldownMs: 20_000,
     },
+    humanizer: {
+      wordsPerWeek: 15_000,
+      maxInputWords: 1_200,
+      minInputWords: 20,
+      cooldownMs: 8_000,
+    },
     study: {
       generationsPerDay: 3,
       maxFileSizeBytes: 4 * 1024 * 1024,
@@ -120,6 +140,12 @@ export const PRODUCT_PLAN_LIMITS: Record<PlanId, ProductPlanLimits> = {
       maxItems: 18,
       cooldownMs: 10_000,
     },
+    humanizer: {
+      wordsPerWeek: 35_000,
+      maxInputWords: 2_000,
+      minInputWords: 20,
+      cooldownMs: 5_000,
+    },
     study: {
       generationsPerDay: 8,
       maxFileSizeBytes: 8 * 1024 * 1024,
@@ -144,6 +170,10 @@ export function getChatPlanLimits(plan?: string | null): ChatPlanLimits {
 
 export function getNotePlanLimits(plan?: string | null): NotePlanLimits {
   return getProductPlanLimits(plan).note;
+}
+
+export function getHumanizerPlanLimits(plan?: string | null): HumanizerPlanLimits {
+  return getProductPlanLimits(plan).humanizer;
 }
 
 export function getStudyBasePlanLimits(plan?: string | null): StudyPlanLimitsConfig {

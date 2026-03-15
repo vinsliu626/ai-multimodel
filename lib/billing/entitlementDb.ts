@@ -23,6 +23,7 @@ export const runtimeEntitlementSelect = Prisma.validator<Prisma.UserEntitlementS
   usedChatCountToday: true,
   usedDetectorWordsThisWeek: true,
   usedNoteSecondsThisWeek: true,
+  developerBypass: true,
   promoPlan: true,
   promoAccessStartAt: true,
   promoAccessEndAt: true,
@@ -51,11 +52,11 @@ export type RuntimeUserEntitlement = {
   usedChatCountToday: number;
   usedDetectorWordsThisWeek: number;
   usedNoteSecondsThisWeek: number;
+  developerBypass: boolean;
   promoPlan: string | null;
   promoAccessStartAt: Date | null;
   promoAccessEndAt: Date | null;
   promoAccessActive: boolean;
-  developerBypass?: boolean;
 };
 
 export const mutationResultSelect = Prisma.validator<Prisma.UserEntitlementSelect>()({
@@ -64,6 +65,54 @@ export const mutationResultSelect = Prisma.validator<Prisma.UserEntitlementSelec
 
 export function entitlementCreateData(userId: string): Prisma.UserEntitlementCreateInput {
   return { userId, plan: "basic" };
+}
+
+async function ensureMutationEntitlementLegacy(client: PrismaClient | Prisma.TransactionClient, userId: string) {
+  const now = new Date();
+  await client.$executeRaw`
+    INSERT INTO "UserEntitlement" (
+      "id",
+      "userId",
+      "plan",
+      "createdAt",
+      "updatedAt",
+      "canSeeSuspiciousSentences",
+      "chatPerDay",
+      "detectorWordsPerWeek",
+      "noteSecondsPerWeek",
+      "unlimited",
+      "cancelAtPeriodEnd",
+      "usedChatCountToday",
+      "usedDetectorWordsThisWeek",
+      "usedNoteSecondsThisWeek"
+    )
+    VALUES (
+      ${`legacy_${randomUUID()}`},
+      ${userId},
+      ${"basic"},
+      ${now},
+      ${now},
+      ${false},
+      ${10},
+      ${5000},
+      ${7200},
+      ${false},
+      ${false},
+      ${0},
+      ${0},
+      ${0}
+    )
+    ON CONFLICT ("userId") DO NOTHING
+  `;
+
+  const rows = await client.$queryRaw<Array<Record<string, unknown>>>`
+    SELECT "id"
+    FROM "UserEntitlement"
+    WHERE "userId" = ${userId}
+    LIMIT 1
+  `;
+
+  return { id: String(rows[0]?.id ?? `legacy_${userId}`) };
 }
 
 export function isLegacyUserEntitlementColumnError(error: unknown) {
@@ -137,11 +186,11 @@ function fromLegacyRow(row: Record<string, unknown>, userId: string): RuntimeUse
     usedChatCountToday: Number(row.usedChatCountToday ?? 0),
     usedDetectorWordsThisWeek: Number(row.usedDetectorWordsThisWeek ?? 0),
     usedNoteSecondsThisWeek: Number(row.usedNoteSecondsThisWeek ?? 0),
+    developerBypass: false,
     promoPlan: null,
     promoAccessStartAt: null,
     promoAccessEndAt: null,
     promoAccessActive: false,
-    developerBypass: false,
   };
 }
 
@@ -225,5 +274,19 @@ export async function ensureRuntimeEntitlement(client: PrismaClient | Prisma.Tra
   } catch (error) {
     if (!isLegacyUserEntitlementColumnError(error)) throw error;
     return ensureRuntimeEntitlementLegacy(client, userId);
+  }
+}
+
+export async function ensureMutationEntitlement(client: PrismaClient | Prisma.TransactionClient, userId: string) {
+  try {
+    return await client.userEntitlement.upsert({
+      where: { userId },
+      update: {},
+      create: entitlementCreateData(userId),
+      select: mutationResultSelect,
+    });
+  } catch (error) {
+    if (!isLegacyUserEntitlementColumnError(error)) throw error;
+    return ensureMutationEntitlementLegacy(client, userId);
   }
 }

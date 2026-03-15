@@ -11,6 +11,7 @@ export type Entitlement = {
 
   usedDetectorWordsThisWeek: number;
   usedNoteSecondsThisWeek: number;
+  usedHumanizerWordsThisWeek?: number;
   usedChatCountToday: number;
   usedNoteGeneratesToday?: number;
   usedChatInputCharsWindow?: number;
@@ -22,6 +23,10 @@ export type Entitlement = {
   noteInputMaxChars?: number;
   noteMaxItems?: number;
   noteCooldownMs?: number;
+  humanizerWordsPerWeek?: number;
+  humanizerMaxInputWords?: number;
+  humanizerMinInputWords?: number;
+  humanizerCooldownMs?: number;
   usedStudyCountToday?: number;
   studyGenerationsPerDay?: number;
   studyMaxFileSizeBytes?: number;

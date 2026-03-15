@@ -1,9 +1,10 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import type { WorkflowMessage } from "./types";
 import { STAGE_META } from "./meta";
 import { AiFormattedText } from "@/components/shared/AiFormattedText";
+import { CopyButton } from "@/components/ui/copy-button";
 
 export function Bubble({
   msg,
@@ -17,12 +18,18 @@ export function Bubble({
   const meta = STAGE_META[msg.stage];
   const isRight = meta.side === "right";
   const hasChildren = Array.isArray(msg.children) && msg.children.length > 0;
-  const collapsed = msg.collapsed !== false; // default true
+  const collapsed = msg.collapsed !== false;
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
 
   return (
     <div className={`w-full flex ${isRight ? "justify-end" : "justify-start"}`}>
       <div className="max-w-[820px] w-[min(820px,92%)]">
-        {/* header */}
         <div className={`mb-1 flex items-center gap-2 ${isRight ? "justify-end" : "justify-start"}`}>
           {!isRight && <span className={`h-2.5 w-2.5 rounded-full ${meta.dot}`} />}
           <div className={`text-xs ${meta.header} flex items-center gap-2`}>
@@ -37,30 +44,27 @@ export function Bubble({
           {isRight && <span className={`h-2.5 w-2.5 rounded-full ${meta.dot}`} />}
         </div>
 
-        {/* bubble */}
         <div
           className={[
-            "relative rounded-2xl px-4 py-3",
+            "relative rounded-2xl px-4 py-3 transition",
             meta.bubble,
+            copied ? "ring-1 ring-emerald-400/30" : "",
             "before:absolute before:top-3 before:h-3 before:w-3 before:rotate-45 before:rounded-sm before:border before:border-slate-700/60 before:bg-inherit",
             isRight
               ? "before:right-[-6px] before:border-l-0 before:border-b-0"
               : "before:left-[-6px] before:border-r-0 before:border-t-0",
           ].join(" ")}
         >
-          {/* Final title row */}
           {meta.isFinal ? (
             <div className="mb-2 flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-emerald-500/20 text-emerald-200">
-                  ✓
-                </span>
+                <span className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-emerald-500/20 text-emerald-200">✓</span>
                 <span className="font-semibold text-emerald-100">{msg.title ?? (isZh ? "结论" : "Conclusion")}</span>
               </div>
-
-              {/* ✅ toggle button */}
-              {hasChildren ? (
-                <button
+              <div className="flex items-center gap-2">
+                <CopyButton text={msg.content} onCopied={() => setCopied(true)} />
+                {hasChildren ? (
+                  <button
                   type="button"
                   onClick={() => onToggle?.(msg.id)}
                   className="text-[11px] px-2 py-1 rounded-full border border-white/10 bg-white/5 hover:bg-white/10 transition text-slate-200"
@@ -69,12 +73,17 @@ export function Bubble({
                 </button>
               ) : null}
             </div>
+            </div>
           ) : null}
 
-          {/* main content */}
+          {!meta.isFinal && !isRight ? (
+            <div className="mb-3 flex justify-end">
+              <CopyButton text={msg.content} onCopied={() => setCopied(true)} />
+            </div>
+          ) : null}
+
           <AiFormattedText text={msg.content} className="text-sm leading-relaxed" />
 
-          {/* ✅ children expanded */}
           {meta.isFinal && hasChildren && !collapsed ? (
             <div className="mt-4 pt-3 border-t border-white/10 space-y-3">
               {msg.children!.map((c) => {

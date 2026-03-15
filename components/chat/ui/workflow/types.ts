@@ -1,4 +1,4 @@
-export type ChatMode = "workflow" | "normal" | "detector" | "note" | "study";
+export type ChatMode = "workflow" | "normal" | "detector" | "note" | "study" | "humanizer";
 export type Lang = "zh" | "en";
 
 export type Stage = "user" | "planner" | "writer" | "reviewer" | "final" | "assistant";

@@ -14,7 +14,7 @@ import {
   isLegacyUserEntitlementColumnError,
   runtimeEntitlementSelect,
 } from "@/lib/billing/entitlementDb";
-import { getChatPlanLimits, getNotePlanLimits } from "@/lib/plans/productLimits";
+import { getChatPlanLimits, getHumanizerPlanLimits, getNotePlanLimits } from "@/lib/plans/productLimits";
 import { getUserIdOrDev } from "@/lib/auth/devUser";
 
 export const runtime = "nodejs";
@@ -34,6 +34,7 @@ function fallbackBillingStatus(userId: string) {
   const studyLimits = getStudyPlanLimits(plan);
   const chatLimits = getChatPlanLimits(plan);
   const noteLimits = getNotePlanLimits(plan);
+  const humanizerLimits = getHumanizerPlanLimits(plan);
 
   return NextResponse.json({
     ok: true,
@@ -53,6 +54,7 @@ function fallbackBillingStatus(userId: string) {
     canSeeSuspiciousSentences: flags.canSeeSuspiciousSentences,
     usedDetectorWordsThisWeek: 0,
     usedNoteSecondsThisWeek: 0,
+    usedHumanizerWordsThisWeek: 0,
     usedChatCountToday: 0,
     usedNoteGeneratesToday: 0,
     usedChatInputCharsWindow: 0,
@@ -64,6 +66,10 @@ function fallbackBillingStatus(userId: string) {
     noteInputMaxChars: noteLimits.maxInputChars,
     noteMaxItems: noteLimits.maxItems,
     noteCooldownMs: noteLimits.cooldownMs,
+    humanizerWordsPerWeek: humanizerLimits.wordsPerWeek,
+    humanizerMaxInputWords: humanizerLimits.maxInputWords,
+    humanizerMinInputWords: humanizerLimits.minInputWords,
+    humanizerCooldownMs: humanizerLimits.cooldownMs,
     studyGenerationsPerDay: studyLimits.generationsPerDay,
     studyMaxFileSizeBytes: studyLimits.maxFileSizeBytes,
     studyMaxExtractedChars: studyLimits.maxExtractedChars,
@@ -72,6 +78,18 @@ function fallbackBillingStatus(userId: string) {
     studyAllowedDifficulties: studyLimits.allowedDifficulties,
     usedStudyCountToday: 0,
   });
+}
+
+function emptyUsageSnapshot() {
+  return {
+    usedDetectorWordsThisWeek: 0,
+    usedNoteSecondsThisWeek: 0,
+    usedHumanizerWordsThisWeek: 0,
+    usedChatCountToday: 0,
+    usedNoteGeneratesToday: 0,
+    usedChatInputCharsWindow: 0,
+    usedStudyCountToday: 0,
+  };
 }
 
 async function updateEntitlementSnapshot(
@@ -186,11 +204,18 @@ export async function GET() {
             }
           }
 
-          const usage = await getUsage(userId);
+          const usage = await getUsage(userId).catch((error) => {
+            console.error("[billing.status] usage read failed; defaulting usage counters", {
+              userId,
+              message: error instanceof Error ? error.message : String(error),
+            });
+            return emptyUsageSnapshot();
+          });
           const entitled = access.entitled;
           const studyLimits = getStudyPlanLimits(plan);
           const chatLimits = getChatPlanLimits(plan);
           const noteLimits = getNotePlanLimits(plan);
+          const humanizerLimits = getHumanizerPlanLimits(plan);
           const daysLeft =
             access.source === "promo"
               ? daysLeftFromDate(access.promoExpiresAt)
@@ -225,6 +250,7 @@ export async function GET() {
             canSeeSuspiciousSentences: ent.canSeeSuspiciousSentences ?? flags.canSeeSuspiciousSentences,
             usedDetectorWordsThisWeek: usage.usedDetectorWordsThisWeek,
             usedNoteSecondsThisWeek: usage.usedNoteSecondsThisWeek,
+            usedHumanizerWordsThisWeek: usage.usedHumanizerWordsThisWeek,
             usedChatCountToday: usage.usedChatCountToday,
             usedNoteGeneratesToday: usage.usedNoteGeneratesToday,
             usedChatInputCharsWindow: usage.usedChatInputCharsWindow,
@@ -236,6 +262,10 @@ export async function GET() {
             noteInputMaxChars: noteLimits.maxInputChars,
             noteMaxItems: noteLimits.maxItems,
             noteCooldownMs: noteLimits.cooldownMs,
+            humanizerWordsPerWeek: humanizerLimits.wordsPerWeek,
+            humanizerMaxInputWords: humanizerLimits.maxInputWords,
+            humanizerMinInputWords: humanizerLimits.minInputWords,
+            humanizerCooldownMs: humanizerLimits.cooldownMs,
             studyGenerationsPerDay: studyLimits.generationsPerDay,
             studyMaxFileSizeBytes: studyLimits.maxFileSizeBytes,
             studyMaxExtractedChars: studyLimits.maxExtractedChars,

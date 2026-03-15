@@ -1,6 +1,6 @@
 import { Prisma, PromoTargetPlan, type PromoCode } from "@prisma/client";
 import { normalizePlan, type PlanId } from "@/lib/billing/planFlags";
-import { mutationResultSelect } from "@/lib/billing/entitlementDb";
+import { ensureMutationEntitlement, mutationResultSelect } from "@/lib/billing/entitlementDb";
 
 type RedeemFailureCode =
   | "INVALID_CODE"
@@ -100,12 +100,7 @@ export async function redeemPromoCodeTx(
     },
   });
 
-  await tx.userEntitlement.upsert({
-    where: { userId },
-    update: {},
-    create: { userId, plan: "basic" },
-    select: mutationResultSelect,
-  });
+  await ensureMutationEntitlement(tx, userId);
 
   try {
     await tx.userEntitlement.update({

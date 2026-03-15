@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { stripe } from "@/lib/stripe";
 import { prisma } from "@/lib/prisma";
 import { normalizePlan, planToFlags, type PlanId } from "@/lib/billing/planFlags";
-import { mutationResultSelect } from "@/lib/billing/entitlementDb";
+import { ensureMutationEntitlement, mutationResultSelect } from "@/lib/billing/entitlementDb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -91,17 +91,10 @@ export async function POST(req: Request) {
         const subscriptionId = (s?.subscription as string | null) ?? null;
 
         if (userId) {
-          await prisma.userEntitlement.upsert({
+          await ensureMutationEntitlement(prisma, userId);
+          await prisma.userEntitlement.update({
             where: { userId },
-            update: {
-              plan,
-              stripeCustomerId: customerId,
-              stripeSubId: subscriptionId,
-              // ?active
-              stripeStatus: "pending",
-            },
-            create: {
-              userId,
+            data: {
               plan,
               stripeCustomerId: customerId,
               stripeSubId: subscriptionId,

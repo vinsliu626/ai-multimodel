@@ -49,6 +49,10 @@ function buildPlanFeatures(plan: ProductPlanId): FeatureRow[] {
       value: `${formatNumber(limits.chat.messagesPerDay)}/day | ${formatNumber(limits.chat.maxInputChars)} chars/input`,
     },
     {
+      label: "AI Humanizer",
+      value: `${formatNumber(limits.humanizer.wordsPerWeek)} words/week | ${formatNumber(limits.humanizer.maxInputWords)} words/request`,
+    },
+    {
       label: "Document Study",
       value: `${formatNumber(limits.study.generationsPerDay)}/day | ${formatMb(limits.study.maxFileSizeBytes)} files`,
     },
@@ -80,6 +84,14 @@ function buildUsageRows(ent: EntitlementLike): UsageRow[] {
       label: "Chat",
       used: formatNumber(ent.usedChatCountToday),
       limit: ent.chatPerDay == null ? "Unlimited" : `${formatNumber(ent.chatPerDay)}/day`,
+    },
+    {
+      label: "AI Humanizer",
+      used: formatNumber(ent.usedHumanizerWordsThisWeek ?? 0),
+      limit:
+        ent.humanizerWordsPerWeek == null
+          ? "Unavailable"
+          : `${formatNumber(ent.humanizerWordsPerWeek)} words/week | ${formatNumber(ent.humanizerMaxInputWords ?? 0)} words/request`,
     },
     {
       label: "Document Study",
@@ -280,7 +292,7 @@ export function PlanModal({
           <div>
             <p className="text-sm font-semibold text-slate-50">Choose a plan</p>
             <p className="mt-1 text-[12px] text-slate-400">
-              Review your real limits across chat, detector, notes, and study before upgrading.
+              Review your real limits across chat, detector, notes, Humanizer, and study before upgrading.
             </p>
           </div>
           <button

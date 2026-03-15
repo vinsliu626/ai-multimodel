@@ -2,6 +2,7 @@
 
 import React from "react";
 import { AiFormattedText } from "@/components/shared/AiFormattedText";
+import { CopyButton } from "@/components/ui/copy-button";
 
 export function NoteResultPane({
   isZh,
@@ -34,25 +35,12 @@ export function NoteResultPane({
           {statusText ? (
             <span className={`text-[11px] ${error ? "text-red-300" : loading ? "text-blue-300" : "text-emerald-300"}`}>{statusText}</span>
           ) : null}
-          <button
-            type="button"
-            onClick={() => {
-              if (!result) return;
-              navigator.clipboard?.writeText(result).catch(() => {});
-            }}
-            className="text-[11px] text-slate-300 hover:text-slate-100 underline underline-offset-4"
-          >
-            {isZh ? "复制" : "Copy"}
-          </button>
+          <CopyButton text={result} />
         </div>
       </div>
 
       <div className="mt-3 min-h-[120px] text-[13px] leading-6 text-slate-100">
-        {result ? (
-          <AiFormattedText text={result} />
-        ) : (
-          <span className="text-slate-500">{isZh ? "生成后会在这里显示结构化笔记。" : "Your structured notes will appear here."}</span>
-        )}
+        {result ? <AiFormattedText text={result} /> : <span className="text-slate-500">{isZh ? "结构化笔记会显示在这里。" : "Your structured notes will appear here."}</span>}
       </div>
     </div>
   );

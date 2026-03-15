@@ -7,15 +7,17 @@ function labelFor(mode: ChatMode, lang: Lang) {
   const isZh = lang === "zh";
   switch (mode) {
     case "workflow":
-      return isZh ? "聊天 · 工作流" : "Chat · Workflow";
+      return isZh ? "Chat / Workflow" : "Chat / Workflow";
     case "normal":
-      return isZh ? "聊天 · 普通" : "Chat · Normal";
+      return isZh ? "Chat / Normal" : "Chat / Normal";
     case "detector":
-      return isZh ? "AI 检测" : "AI Detector";
+      return isZh ? "AI Detector" : "AI Detector";
     case "note":
-      return isZh ? "AI 笔记" : "AI Note";
+      return isZh ? "AI Note" : "AI Note";
     case "study":
-      return isZh ? "文档学习" : "Document Study";
+      return isZh ? "Document Study" : "Document Study";
+    case "humanizer":
+      return isZh ? "AI Humanizer" : "AI Humanizer";
     default:
       return mode;
   }
@@ -36,41 +38,46 @@ export function ModeDropdown({
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
 
-    const items: { value: ChatMode; title: string; desc: string }[] = useMemo(() => {
-    return [
-        {
+  const items: { value: ChatMode; title: string; desc: string }[] = useMemo(
+    () => [
+      {
         value: "normal",
-        title: isZh ? "聊天 · 普通" : "Chat · Normal",
-        desc: isZh ? "快速，传统对话" : "Fast, classic chat",
-        },
-        {
+        title: isZh ? "Chat / Normal" : "Chat / Normal",
+        desc: isZh ? "Fast, classic chat" : "Fast, classic chat",
+      },
+      {
         value: "workflow",
-        title: isZh ? "聊天 · 工作流" : "Chat · Workflow",
-        desc: isZh ? "Planner/Writer/Reviewer/Final 展示" : "Planner/Writer/Reviewer/Final view",
-        },
-        {
+        title: isZh ? "Chat / Workflow" : "Chat / Workflow",
+        desc: isZh ? "Planner, Writer, Reviewer + Conclusion" : "Planner, Writer, Reviewer + Conclusion",
+      },
+      {
         value: "detector",
-        title: isZh ? "AI 检测" : "AI Detector",
-        desc: isZh ? "检测文本可能的 AI 痕迹" : "Detect AI-likeness",
-        },
-        {
+        title: isZh ? "AI Detector" : "AI Detector",
+        desc: isZh ? "Detect AI-like writing patterns" : "Detect AI-like writing patterns",
+      },
+      {
         value: "note",
-        title: isZh ? "AI 笔记" : "AI Note",
-        desc: isZh ? "音频/文本生成笔记" : "Notes from audio/text",
-        },
-        {
+        title: isZh ? "AI Note" : "AI Note",
+        desc: isZh ? "Generate notes from audio or text" : "Generate notes from audio or text",
+      },
+      {
         value: "study",
-        title: isZh ? "文档学习" : "Document Study",
-        desc: isZh ? "上传文档生成笔记和测验" : "Upload docs for notes + quiz",
-        },
-    ];
-    }, [isZh]);
-
+        title: isZh ? "Document Study" : "Document Study",
+        desc: isZh ? "Upload documents for notes, flashcards, and quizzes" : "Upload documents for notes, flashcards, and quizzes",
+      },
+      {
+        value: "humanizer",
+        title: isZh ? "AI Humanizer" : "AI Humanizer",
+        desc: isZh ? "Rewrite for better flow and readability" : "Rewrite for better flow and readability",
+      },
+    ],
+    [isZh]
+  );
 
   useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
+    const onDoc = (event: MouseEvent) => {
       if (!ref.current) return;
-      if (!ref.current.contains(e.target as Node)) setOpen(false);
+      if (!ref.current.contains(event.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
@@ -87,39 +94,36 @@ export function ModeDropdown({
           "text-xs text-slate-100 flex items-center gap-2",
           disabled ? "opacity-60 cursor-not-allowed" : "",
         ].join(" ")}
-        title={isZh ? "切换模式" : "Switch mode"}
+        title={isZh ? "Switch mode" : "Switch mode"}
       >
         <span className="text-slate-200">{labelFor(value, lang)}</span>
-        <span className="text-slate-400">▾</span>
+        <span className="text-slate-400">▼</span>
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-[260px] rounded-2xl border border-white/10 bg-slate-950/95 backdrop-blur-xl shadow-2xl shadow-black/40 overflow-hidden z-50">
+        <div className="absolute right-0 mt-2 w-[280px] rounded-2xl border border-white/10 bg-slate-950/95 backdrop-blur-xl shadow-2xl shadow-black/40 overflow-hidden z-50">
           <div className="px-3 py-2 text-[11px] text-slate-400 border-b border-white/5">
-            {isZh ? "选择一个工作区" : "Choose a workspace"}
+            {isZh ? "Choose a workspace" : "Choose a workspace"}
           </div>
 
           <div className="p-1">
-            {items.map((it) => {
-              const active = it.value === value;
+            {items.map((item) => {
+              const active = item.value === value;
               return (
                 <button
-                  key={it.value}
+                  key={item.value}
                   type="button"
                   onClick={() => {
-                    onChange(it.value);
+                    onChange(item.value);
                     setOpen(false);
                   }}
-                  className={[
-                    "w-full text-left px-3 py-2 rounded-xl transition",
-                    active ? "bg-white/10" : "hover:bg-white/10",
-                  ].join(" ")}
+                  className={["w-full text-left px-3 py-2 rounded-xl transition", active ? "bg-white/10" : "hover:bg-white/10"].join(" ")}
                 >
                   <div className="flex items-center justify-between">
-                    <div className="text-sm text-slate-100 font-medium">{it.title}</div>
+                    <div className="text-sm text-slate-100 font-medium">{item.title}</div>
                     {active ? <div className="text-emerald-300 text-xs">✓</div> : null}
                   </div>
-                  <div className="text-[11px] text-slate-400 mt-0.5">{it.desc}</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">{item.desc}</div>
                 </button>
               );
             })}
