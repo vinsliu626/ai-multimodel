@@ -944,13 +944,14 @@ function ChatPageInner() {
 
   async function manageBilling(plan: "pro" | "ultra") {
     try {
-      const res = await fetchWithTimeout("/api/billing/checkout", {
+      const billingRoute = ent?.plan === plan ? "/api/billing/portal" : "/api/billing/checkout";
+      const res = await fetchWithTimeout(billingRoute, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan }),
         timeoutMs: 20000,
         credentials: "include",
         cache: "no-store",
+        ...(billingRoute === "/api/billing/checkout" ? { body: JSON.stringify({ plan }) } : {}),
       });
 
       const { text, data } = await safeReadJson(res);

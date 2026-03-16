@@ -346,10 +346,11 @@ export function WorkspaceShell() {
 
   async function manageBilling(plan: "pro" | "ultra") {
     try {
-      const res = await fetch("/api/billing/checkout", {
+      const billingRoute = ent?.plan === plan ? "/api/billing/portal" : "/api/billing/checkout";
+      const res = await fetch(billingRoute, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan }),
+        ...(billingRoute === "/api/billing/checkout" ? { body: JSON.stringify({ plan }) } : {}),
       });
 
       const text = await res.text();

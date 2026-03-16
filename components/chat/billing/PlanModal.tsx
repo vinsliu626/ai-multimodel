@@ -115,7 +115,6 @@ function DiscountRibbon({ accentClass, sublabel }: { accentClass: string; sublab
       <div
         className={[
           "border border-white/20 px-3 py-1.5 text-center shadow-[0_14px_34px_rgba(15,23,42,0.45)]",
-          "backdrop-blur-md",
           accentClass,
         ].join(" ")}
       >
@@ -123,6 +122,44 @@ function DiscountRibbon({ accentClass, sublabel }: { accentClass: string; sublab
         <div className="mt-0.5 text-[9px] font-semibold uppercase tracking-[0.18em] text-white/85">{sublabel}</div>
       </div>
     </div>
+  );
+}
+
+function CardEffectsStyle() {
+  return (
+    <style jsx>{`
+      @keyframes planAuraPulse {
+        0%,
+        100% {
+          opacity: 0.5;
+        }
+        50% {
+          opacity: 0.9;
+        }
+      }
+
+      @keyframes planAuraTwinkle {
+        0%,
+        100% {
+          opacity: 0.22;
+        }
+        50% {
+          opacity: 0.4;
+        }
+      }
+
+      .plan-aura-soft {
+        animation: planAuraPulse 3.8s ease-in-out infinite;
+      }
+
+      .plan-aura-slow {
+        animation: planAuraPulse 5.4s ease-in-out infinite;
+      }
+
+      .plan-aura-twinkle {
+        animation: planAuraTwinkle 4.6s ease-in-out infinite;
+      }
+    `}</style>
   );
 }
 
@@ -162,13 +199,28 @@ function Card({
   const isBasic = plan === "basic";
   const isPro = plan === "pro";
   const isUltra = plan === "ultra";
-  const borderLayerClass = isBasic ? "mm-basic-border" : isUltra ? "mm-ultra-border" : "mm-pro-border";
+  const staticBorderClass = isBasic
+    ? "mm-basic-border"
+    : isUltra
+    ? "bg-[linear-gradient(90deg,#ff3b3b,#ffcc00,#2dff7a,#00d9ff,#7a5cff,#ff3b3b)]"
+    : "bg-[linear-gradient(90deg,#3b82f6,#a855f7,#22c55e,#3b82f6)]";
+  const cardRootClass = [
+    "relative overflow-hidden rounded-3xl p-[1px]",
+    staticBorderClass,
+  ].join(" ");
+
+  const premiumSurfaceClass = isUltra
+    ? "bg-[radial-gradient(circle_at_20%_18%,rgba(255,255,255,0.11),transparent_18%),radial-gradient(circle_at_78%_20%,rgba(96,165,250,0.22),transparent_20%),radial-gradient(circle_at_50%_120%,rgba(168,85,247,0.18),transparent_38%),linear-gradient(180deg,rgba(2,6,23,0.92),rgba(3,7,18,0.98))]"
+    : isPro
+    ? "bg-[radial-gradient(circle_at_18%_78%,rgba(59,130,246,0.16),transparent_28%),radial-gradient(circle_at_78%_22%,rgba(168,85,247,0.14),transparent_26%),radial-gradient(circle_at_84%_76%,rgba(34,197,94,0.10),transparent_24%),linear-gradient(90deg,rgba(59,130,246,.16),rgba(168,85,247,.14),rgba(34,197,94,.12))]"
+    : "";
 
   const cardShell = [
-    "relative isolate overflow-hidden rounded-[23px] border p-4 md:p-5 [contain:paint]",
+    "relative overflow-hidden rounded-[23px] border p-4 md:p-5",
     active
       ? "border-blue-400/60 bg-slate-950/80 shadow-[0_0_0_1px_rgba(59,130,246,0.3),0_26px_70px_rgba(2,6,23,0.45)]"
       : "border-white/10 bg-slate-950/72 shadow-[0_20px_60px_rgba(2,6,23,0.35)]",
+    premiumSurfaceClass,
   ].join(" ");
 
   const ctaClass = active
@@ -180,26 +232,23 @@ function Card({
     : "bg-gradient-to-r from-blue-500 via-purple-500 to-emerald-400 text-white shadow-md shadow-blue-500/30 hover:brightness-110";
 
   return (
-    <div className="relative overflow-hidden rounded-3xl [contain:paint]">
-      <div className={["pointer-events-none absolute inset-0 rounded-[inherit]", borderLayerClass].join(" ")} />
-
-      <div className={["relative z-0 m-px", cardShell].join(" ")}>
+    <div className={cardRootClass}>
+      <CardEffectsStyle />
+      <div className={cardShell}>
         {isPro ? (
           <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]">
-            <div className="absolute inset-0 mm-pro-bg opacity-80" />
-            <div className="absolute inset-x-6 top-0 h-24 bg-gradient-to-b from-white/10 via-purple-400/8 to-transparent blur-2xl" />
-            <div className="absolute -left-16 bottom-10 h-36 w-36 rounded-full bg-blue-500/12 blur-3xl" />
+            <div className="plan-aura-slow absolute inset-x-0 top-0 h-28 bg-[radial-gradient(circle_at_50%_0%,rgba(255,255,255,0.08),transparent_58%)]" />
+            <div className="plan-aura-twinkle absolute inset-0 bg-[linear-gradient(135deg,transparent_0%,rgba(255,255,255,0.05)_38%,transparent_62%)]" />
             <DiscountRibbon accentClass="bg-gradient-to-r from-fuchsia-500 via-violet-500 to-amber-400" sublabel="SAVE NOW" />
           </div>
         ) : null}
 
         {isUltra ? (
           <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-[inherit]">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_18%,rgba(255,255,255,0.11),transparent_18%),radial-gradient(circle_at_78%_20%,rgba(96,165,250,0.22),transparent_20%),radial-gradient(circle_at_50%_120%,rgba(168,85,247,0.18),transparent_38%),linear-gradient(180deg,rgba(2,6,23,0.92),rgba(3,7,18,0.98))]" />
             <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_15%,rgba(255,255,255,0.15)_0_1px,transparent_1.4px),radial-gradient(circle_at_70%_22%,rgba(255,255,255,0.22)_0_1px,transparent_1.6px),radial-gradient(circle_at_82%_58%,rgba(255,255,255,0.18)_0_1px,transparent_1.4px),radial-gradient(circle_at_36%_62%,rgba(255,255,255,0.16)_0_1px,transparent_1.5px),radial-gradient(circle_at_58%_38%,rgba(255,255,255,0.12)_0_1px,transparent_1.4px)] opacity-80" />
-            <div className="absolute -top-12 right-2 h-40 w-40 rounded-full bg-cyan-400/12 blur-3xl" />
-            <div className="absolute bottom-0 left-0 h-44 w-44 rounded-full bg-violet-500/14 blur-3xl" />
-            <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-cyan-400/10 via-violet-500/6 to-transparent" />
+            <div className="plan-aura-soft absolute inset-0 bg-[radial-gradient(circle_at_78%_20%,rgba(34,211,238,0.12),transparent_26%),radial-gradient(circle_at_18%_72%,rgba(168,85,247,0.14),transparent_28%),radial-gradient(circle_at_52%_52%,rgba(59,130,246,0.08),transparent_24%)]" />
+            <div className="plan-aura-slow absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-cyan-400/10 via-violet-500/6 to-transparent" />
+            <div className="plan-aura-twinkle absolute inset-0 bg-[linear-gradient(155deg,transparent_0%,rgba(255,255,255,0.04)_46%,transparent_66%)]" />
             <DiscountRibbon accentClass="bg-gradient-to-r from-cyan-400 via-blue-500 to-violet-500" sublabel="LIMITED OFFER" />
           </div>
         ) : null}
