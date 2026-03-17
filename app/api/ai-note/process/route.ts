@@ -199,14 +199,22 @@ export async function POST(req: Request) {
       return bad("LLM_FAILED", 502, "LLM failed", { code: info.code, message: info.message, extra: info.extra });
     }
 
-    await prisma.aiNoteSession.update({
-      where: { id: noteId },
-      data: {
-        transcript,
-        notes: finalNote,
-        bytes: totalBytes,
-        mime,
-      } as { transcript: string; notes: string; bytes: number; mime: string },
+    await prisma.aiNoteJob.upsert({
+      where: { noteId },
+      update: {
+        stage: "done",
+        progress: 100,
+        error: null,
+        noteMarkdown: finalNote,
+      },
+      create: {
+        noteId,
+        userId,
+        stage: "done",
+        progress: 100,
+        error: null,
+        noteMarkdown: finalNote,
+      },
     });
 
     return NextResponse.json({
