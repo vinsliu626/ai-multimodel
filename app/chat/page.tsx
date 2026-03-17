@@ -1121,7 +1121,7 @@ function ChatPageInner() {
                 onClick={() => setSettingsOpen(true)}
                 className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-200 transition-colors"
               >
-                <span className="text-sm">鈿欙笍</span> {isZh ? "绯荤粺璁剧疆" : "Settings"}
+                {isZh ? "设置" : "Settings"}
               </button>
 
               {sessionExists ? (
@@ -1137,7 +1137,7 @@ function ChatPageInner() {
                   onClick={() => signIn()}
                   className="px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-400 hover:bg-blue-500/20 transition-colors text-xs font-medium"
                 >
-                  {isZh ? "鎺ュ叆璁よ瘉" : "Authenticate"}
+                  {isZh ? "登录" : "Sign in"}
                 </button>
               )}
             </div>
