@@ -53,7 +53,7 @@ function buildPlanFeatures(plan: ProductPlanId): FeatureRow[] {
       value: `${formatNumber(limits.humanizer.wordsPerWeek)} words/week | ${formatNumber(limits.humanizer.maxInputWords)} words/request`,
     },
     {
-      label: "Document Study",
+      label: "AI Study",
       value: `${formatNumber(limits.study.generationsPerDay)}/day | ${formatMb(limits.study.maxFileSizeBytes)} files`,
     },
     {
@@ -94,7 +94,7 @@ function buildUsageRows(ent: EntitlementLike): UsageRow[] {
           : `${formatNumber(ent.humanizerWordsPerWeek)} words/week | ${formatNumber(ent.humanizerMaxInputWords ?? 0)} words/request`,
     },
     {
-      label: "Document Study",
+      label: "AI Study",
       used: formatNumber(ent.usedStudyCountToday ?? 0),
       limit: ent.studyGenerationsPerDay == null ? "Unlimited" : `${formatNumber(ent.studyGenerationsPerDay)}/day`,
     },

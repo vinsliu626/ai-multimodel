@@ -50,7 +50,7 @@ function uniqueQuizTypes(types: StudyQuizType[] | undefined) {
 
 function userMessageForQuotaError(err: QuotaError) {
   if (err.code === "STUDY_QUOTA_EXCEEDED") {
-    return "You've used all Document Study generations for today. Upgrade your plan or come back tomorrow for more generations.";
+    return "You've used all AI Study generations for today. Upgrade your plan or come back tomorrow for more generations.";
   }
   if (err.code === "STUDY_COOLDOWN_ACTIVE") {
     return "Please wait a short moment before generating another document study set.";
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const title = (body.title?.trim() || body.fileName?.replace(/\.[^.]+$/, "") || "Document Study").slice(0, 160);
+    const title = (body.title?.trim() || body.fileName?.replace(/\.[^.]+$/, "") || "AI Study").slice(0, 160);
     const studySession = await createStudySession({
       userId,
       title,

@@ -1,4 +1,3 @@
-// components/note/NoteTextPane.tsx
 "use client";
 
 import React from "react";
@@ -21,20 +20,21 @@ export function NoteTextPane({
   onResetAll: () => void;
 }) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <textarea
         value={text}
-        onChange={(e) => {
+        onChange={(event) => {
           onResetAll();
-          onChangeText(e.target.value);
+          onChangeText(event.target.value);
         }}
-        placeholder={isZh ? "粘贴课堂/会议文字稿..." : "Paste transcript/notes here..."}
-        className="w-full h-40 rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-3 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/60"
+        placeholder={isZh ? "Paste transcript, lecture notes, or meeting text..." : "Paste transcript, lecture notes, or meeting text..."}
+        className="h-56 w-full rounded-2xl border border-white/10 bg-slate-950/40 px-4 py-4 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500/40"
         disabled={loading || isLoadingGlobal || locked}
       />
-      <p className="text-[11px] text-slate-400">
-        {isZh ? "建议：越完整越好（可包含时间点、说话人、章节标题）。" : "Tip: fuller transcript yields better notes."}
-      </p>
+      <div className="flex items-center justify-between gap-3 text-[11px] text-slate-400">
+        <span>{text.trim().length.toLocaleString()} chars</span>
+        <span>{isZh ? "Longer, cleaner input usually produces better notes." : "Longer, cleaner input usually produces better notes."}</span>
+      </div>
     </div>
   );
 }

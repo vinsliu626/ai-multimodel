@@ -15,7 +15,7 @@ function labelFor(mode: ChatMode, lang: Lang) {
     case "note":
       return isZh ? "AI Note" : "AI Note";
     case "study":
-      return isZh ? "Document Study" : "Document Study";
+      return isZh ? "AI Study" : "AI Study";
     case "humanizer":
       return isZh ? "AI Humanizer" : "AI Humanizer";
     default:
@@ -62,7 +62,7 @@ export function ModeDropdown({
       },
       {
         value: "study",
-        title: isZh ? "Document Study" : "Document Study",
+        title: isZh ? "AI Study" : "AI Study",
         desc: isZh ? "Upload documents for notes, flashcards, and quizzes" : "Upload documents for notes, flashcards, and quizzes",
       },
       {

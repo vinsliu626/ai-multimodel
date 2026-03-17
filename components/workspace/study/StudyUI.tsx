@@ -33,7 +33,7 @@ export function StudyUI({
       <div className="relative h-full w-full rounded-3xl border border-white/10 bg-gradient-to-b from-slate-950/40 via-slate-900/30 to-slate-950/40 shadow-[0_20px_70px_rgba(0,0,0,0.35)] backdrop-blur-xl overflow-hidden flex flex-col">
         <div className="px-6 py-5 border-b border-white/10">
           <div className="flex items-start justify-between gap-3">
-            <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-50">Document Study Assistant</h2>
+            <h2 className="text-2xl md:text-3xl font-extrabold tracking-tight text-slate-50">AI Study Assistant</h2>
             <button
               type="button"
               onClick={() => historyRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
@@ -52,7 +52,7 @@ export function StudyUI({
           )}
           {!locked && entitlement && ctl.remainingToday <= 0 && (
             <div className="mt-3 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-[12px] text-amber-200">
-              You&apos;ve used all Document Study generations for today. Upgrade your plan or come back tomorrow for more generations.
+              You&apos;ve used all AI Study generations for today. Upgrade your plan or come back tomorrow for more generations.
             </div>
           )}
         </div>

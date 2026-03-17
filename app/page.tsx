@@ -365,7 +365,8 @@ export default function Home() {
                 <>
                   NexusDesk redesigns human-AI interaction. We use a matrix of{" "}
                   <strong className="text-slate-200 font-medium">planners, writers, and reviewers</strong> to decompose complex
-                  study tasks. Stop crafting perfect prompts, just issue commands.
+                  study and writing tasks across AI Note, AI Detector, AI Humanizer, AI Study, and Workflow. Stop crafting
+                  perfect prompts, just issue commands.
                 </>
               )}
             </p>
@@ -388,6 +389,17 @@ export default function Home() {
               >
                 {isZh ? "浏览架构特性" : "Explore Architecture"}
               </a>
+            </div>
+
+            <div className="mt-8 flex flex-wrap gap-2 justify-center lg:justify-start">
+              {["AI Note", "AI Detector", "AI Humanizer", "AI Study", "Workflow"].map((item) => (
+                <div
+                  key={item}
+                  className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[11px] uppercase tracking-[0.18em] text-slate-300"
+                >
+                  {item}
+                </div>
+              ))}
             </div>
           </div>
 
@@ -423,11 +435,11 @@ export default function Home() {
             <p className="mt-3 text-slate-400 text-sm max-w-xl font-light">
               {isZh
                 ? "抛弃单薄的对话框，用工程化的思维管理输出。每个模块都经过专门微调以应对特定场景。"
-                : "Ditch the flat chatbox. Manage output with engineering mindset. Modules fine-tuned for specific scenarios."}
+                : "Ditch the flat chatbox. Manage output with engineering mindset across note generation, detection, rewriting, study prep, and multi-agent workflows."}
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6">
             <div className="group relative rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 hover:bg-white/[0.02] transition-colors overflow-hidden">
               <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
                 <svg className="w-24 h-24" fill="currentColor" viewBox="0 0 24 24">
@@ -454,6 +466,34 @@ export default function Home() {
                 {isZh ? "逐句扫描文本指纹，标注高风险的机器生成痕迹，并提供拟人化改写建议。" : "Line-by-line text fingerprint scanning. Highlights high-risk machine footprints and suggests humanized revisions."}
               </p>
               <div className="text-xs font-mono text-purple-400"># RISK_ANALYSIS</div>
+            </div>
+
+            <div className="group relative rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 hover:bg-white/[0.02] transition-colors overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center mb-6 shadow-[0_0_15px_rgba(34,211,238,0.08)]">
+                <span className="text-xl">✍</span>
+              </div>
+              <h3 className="text-lg font-semibold text-white mb-3 tracking-wide">AI Humanizer</h3>
+              <p className="text-sm text-slate-400 leading-relaxed font-light mb-6">
+                {isZh
+                  ? "鍦ㄤ繚鐣欏師鎰忕殑鍓嶆彁涓嬶紝璁╄姘斻€佽妭濂忓拰鍙ュ紡鏇磋嚜鐒躲€佹洿鍍忕湡瀹炰汉绫诲啓浣溿€?"
+                  : "Refine wording, rhythm, and phrasing so text feels more natural without changing the original meaning."}
+              </p>
+              <div className="text-xs font-mono text-cyan-400"># TONE_REFINEMENT</div>
+            </div>
+
+            <div className="group relative rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 hover:bg-white/[0.02] transition-colors overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-b from-amber-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-6 shadow-[0_0_15px_rgba(245,158,11,0.08)]">
+                <span className="text-xl">▣</span>
+              </div>
+              <h3 className="text-lg font-semibold text-white mb-3 tracking-wide">AI Study</h3>
+              <p className="text-sm text-slate-400 leading-relaxed font-light mb-6">
+                {isZh
+                  ? "浠庢枃妗ｆ姽鍙栧唴瀹癸紝鐢熸垚 notes銆乫lashcards 鍜?quiz锛屾妸鏉愭枡鐩存帴鍙樻垚鍙涔犵殑瀛︿範鍗曞厓銆?"
+                  : "Extract from documents and turn source material into notes, flashcards, and quiz sets for actual study sessions."}
+              </p>
+              <div className="text-xs font-mono text-amber-400"># STUDY_PIPELINE</div>
             </div>
 
             <div className="group relative rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 hover:bg-white/[0.02] transition-colors overflow-hidden">

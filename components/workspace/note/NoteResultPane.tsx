@@ -10,17 +10,19 @@ export function NoteResultPane({
   loading,
   error,
   success,
+  progressStage,
+  progressPercent,
 }: {
   isZh: boolean;
   result: string;
   loading?: boolean;
   error?: string | null;
   success?: string | null;
+  progressStage?: string;
+  progressPercent?: number;
 }) {
   const statusText = loading
-    ? isZh
-      ? "正在生成笔记..."
-      : "Generating notes..."
+    ? `Generating... ${Math.round(progressPercent ?? 0)}%`
     : error
     ? error
     : success
@@ -28,19 +30,24 @@ export function NoteResultPane({
     : null;
 
   return (
-    <div className="mt-6 rounded-3xl border border-white/10 bg-white/5 p-5">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold text-slate-50">{isZh ? "生成的笔记" : "Generated notes"}</p>
+    <div className="rounded-[1.75rem] border border-white/10 bg-white/[0.04] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+      <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Generated Notes</p>
+          <p className="mt-2 text-lg font-semibold text-slate-50">{result ? (isZh ? "Final note output" : "Final note output") : "Awaiting result"}</p>
+          <p className="mt-1 text-sm text-slate-400">{progressStage ? `Stage: ${progressStage}` : " "}</p>
+        </div>
+
         <div className="flex items-center gap-3">
           {statusText ? (
-            <span className={`text-[11px] ${error ? "text-red-300" : loading ? "text-blue-300" : "text-emerald-300"}`}>{statusText}</span>
+            <span className={`text-[11px] ${error ? "text-red-300" : loading ? "text-cyan-300" : "text-emerald-300"}`}>{statusText}</span>
           ) : null}
           <CopyButton text={result} />
         </div>
       </div>
 
-      <div className="mt-3 min-h-[120px] text-[13px] leading-6 text-slate-100">
-        {result ? <AiFormattedText text={result} /> : <span className="text-slate-500">{isZh ? "结构化笔记会显示在这里。" : "Your structured notes will appear here."}</span>}
+      <div className="mt-5 min-h-[240px] text-[13px] leading-6 text-slate-100">
+        {result ? <AiFormattedText text={result} /> : <span className="text-slate-500">{isZh ? "结构化笔记会显示在这里。" : "Structured notes will appear here."}</span>}
       </div>
     </div>
   );

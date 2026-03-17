@@ -47,7 +47,7 @@ export async function assertStudyQuotaOrThrow(userId: string) {
     }
     throw new QuotaError(
       "STUDY_QUOTA_EXCEEDED",
-      "You've used all Document Study generations for today. Upgrade your plan or come back tomorrow for more generations.",
+      "You've used all AI Study generations for today. Upgrade your plan or come back tomorrow for more generations.",
       429
     );
   }

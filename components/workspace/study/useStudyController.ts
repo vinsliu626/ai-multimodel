@@ -25,7 +25,7 @@ function inferModeLimit(entitlement: StudyEntitlement | null) {
 
 function userFriendlyStudyError(errorCode: string | undefined, fallback: string) {
   if (errorCode === "STUDY_QUOTA_EXCEEDED") {
-    return "You've used all Document Study generations for today. Upgrade your plan or come back tomorrow for more generations.";
+    return "You've used all AI Study generations for today. Upgrade your plan or come back tomorrow for more generations.";
   }
   if (errorCode === "STUDY_COOLDOWN_ACTIVE") {
     return "Please wait a short moment before generating another document study set.";

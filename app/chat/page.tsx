@@ -15,6 +15,7 @@ import { HumanizerUI } from "@/components/workspace/humanizer/HumanizerUI";
 import { NoteUI } from "@/components/workspace/note/NoteUI";
 import { StudyUI } from "@/components/workspace/study/StudyUI";
 import { AiFormattedText } from "@/components/shared/AiFormattedText";
+import { NexusOrb } from "@/components/shared/NexusOrb";
 import { CopyButton } from "@/components/ui/copy-button";
 
 // workflow UI
@@ -235,6 +236,25 @@ function formatGiftPlan(plan: string, isZh: boolean) {
   return plan;
 }
 
+function modeTitle(mode: ChatMode) {
+  switch (mode) {
+    case "normal":
+      return "Chat";
+    case "workflow":
+      return "Workflow";
+    case "detector":
+      return "AI Detector";
+    case "note":
+      return "AI Note";
+    case "study":
+      return "AI Study";
+    case "humanizer":
+      return "AI Humanizer";
+    default:
+      return "Chat";
+  }
+}
+
 function HeaderAuthMenu({
   isZh,
   sessionExists,
@@ -288,18 +308,16 @@ function HeaderAuthMenu({
       {sessionExists ? (
         <button
           onClick={() => setMenuOpen((current) => (current === "account" ? null : "account"))}
-          className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 shadow-[0_10px_30px_rgba(2,6,23,0.2)] backdrop-blur-xl transition hover:bg-white/[0.07]"
+          className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-2 py-1.5 shadow-[0_10px_30px_rgba(2,6,23,0.2)] backdrop-blur-xl transition hover:bg-white/[0.07]"
         >
-          <div
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-emerald-400 text-xs font-semibold text-white shadow-md shadow-blue-500/40"
-            title={userEmail}
-          >
+          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-sky-400/90 via-blue-500/85 to-emerald-400/70 text-xs font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_6px_20px_rgba(2,6,23,0.22)]">
             {String(userInitial).toUpperCase()}
           </div>
-          <div className="hidden min-w-0 sm:flex items-center gap-2 text-[11px] leading-tight">
-            <span className="max-w-[132px] truncate text-slate-100">{userLabel}</span>
-            <span className="text-slate-500">▼</span>
+          <div className="hidden min-w-0 sm:flex flex-col text-left leading-tight">
+            <span className="max-w-[124px] truncate text-[12px] font-medium text-slate-100">{userLabel}</span>
+            <span className="max-w-[124px] truncate text-[10px] text-slate-500">{userEmail}</span>
           </div>
+          <span className="text-slate-500">▼</span>
         </button>
       ) : (
         <button
@@ -351,7 +369,7 @@ function HeaderAuthMenu({
       {menuOpen === "account" && sessionExists && (
         <div className="absolute right-0 top-[calc(100%+10px)] z-30 w-56 rounded-3xl border border-white/10 bg-[#080808]/95 p-2 shadow-[0_24px_80px_rgba(2,6,23,0.55)] backdrop-blur-xl">
           <div className="border-b border-white/8 px-3 py-2">
-            <p className="truncate text-sm font-semibold text-slate-50">{userLabel}</p>
+            <p className="truncate text-sm font-semibold text-slate-50">NexusDesk</p>
             <p className="truncate text-[11px] text-slate-500">{userEmail}</p>
           </div>
           <div className="space-y-1 px-1 py-2">
@@ -972,10 +990,10 @@ function ChatPageInner() {
     }
   }
 
-  const userInitial = effectiveSession?.user?.name?.[0] || effectiveSession?.user?.email?.[0] || "U";
   const visibleAuthProviders = ["google", "github"]
     .map((id) => authProviders[id])
     .filter((provider): provider is ClientSafeProvider => Boolean(provider));
+  const userInitial = effectiveSession?.user?.name?.[0] || effectiveSession?.user?.email?.[0] || "U";
   const userLabel = effectiveSession?.user?.name || effectiveSession?.user?.email || "User";
   const userEmail = effectiveSession?.user?.email || "";
 
@@ -1109,10 +1127,10 @@ function ChatPageInner() {
               {sessionExists ? (
                 <button
                   onClick={() => signOut()}
-                  className="h-8 w-8 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 transition-colors flex items-center justify-center text-xs font-mono text-slate-300"
+                  className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/5 transition-colors hover:bg-white/10"
                   title={effectiveSession?.user?.email || ""}
                 >
-                  {String(userInitial).toUpperCase()}
+                  <span className="text-[11px] font-semibold text-slate-200">{String(userInitial).toUpperCase()}</span>
                 </button>
               ) : (
                 <button
@@ -1146,34 +1164,12 @@ function ChatPageInner() {
                 ☰
               </button>
 
-              <div className="flex flex-col">
-                <h1 className="font-semibold text-sm text-slate-100 tracking-wide flex items-center gap-2">
-                  {mode === "workflow"
-                    ? isZh
-                      ? "多角色矩阵"
-                      : "Team Matrix"
-                    : mode === "normal"
-                    ? isZh
-                      ? "鏍囧噯缁堢"
-                      : "Standard Terminal"
-                    : mode === "detector"
-                    ? isZh
-                      ? "AI 渚︽祴"
-                      : "AI Detector"
-                    : isZh
-                    ? "鏅鸿兘绗旇"
-                    : "Smart Note"}
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                </h1>
-                <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">
-                  {mode === "workflow"
-                    ? "P-W-R Flow Active"
-                    : mode === "normal"
-                    ? "Direct Connection"
-                    : mode === "detector"
-                    ? "Analysis Mode"
-                    : "Parsing Mode"}
-                </p>
+              <div className="ml-1 flex items-center gap-3">
+                <NexusOrb sizeClass="h-7 w-7" />
+                <div className="flex flex-col">
+                  <h1 className="font-semibold text-sm text-slate-100 tracking-wide">NexusDesk</h1>
+                  <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">{modeTitle(mode)}</p>
+                </div>
               </div>
             </div>
 
@@ -1214,7 +1210,7 @@ function ChatPageInner() {
               {sessionExists ? (
                 <div className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-2 py-1 shadow-[0_10px_30px_rgba(2,6,23,0.2)] backdrop-blur-xl">
                   <div
-                    className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-emerald-400 text-xs font-semibold text-white shadow-md shadow-blue-500/40"
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-sky-400/90 via-blue-500/85 to-emerald-400/70 text-xs font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.18),0_6px_20px_rgba(2,6,23,0.22)]"
                     title={effectiveSession?.user?.email || ""}
                   >
                     {String(userInitial).toUpperCase()}
@@ -1316,9 +1312,7 @@ function ChatPageInner() {
               <div ref={chatContainerRef} className="flex-1 overflow-y-auto px-4 md:px-8 py-6 space-y-6 custom-scrollbar scroll-smooth">
                 {messages.length === 0 && !isLoading && (
                   <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-60">
-                    <div className="w-12 h-12 mb-4 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center">
-                      <span className="text-xl">⚡️</span>
-                    </div>
+                    <NexusOrb sizeClass="h-8 w-8" className="mb-4" />
                     <p className="text-sm font-medium">{isZh ? "系统已就绪，等待输入" : "System ready. Awaiting input."}</p>
                   </div>
                 )}
@@ -1347,12 +1341,12 @@ function ChatPageInner() {
                             : "bg-[#0f0f0f] text-slate-200 border border-white/5 rounded-bl-sm shadow-sm",
                         ].join(" ")}
                       >
+                        {m.stage === "assistant" ? <AiFormattedText text={m.content} className="text-[14px] leading-relaxed" /> : m.content}
                         {m.stage === "assistant" ? (
-                          <div className="mb-2 flex items-center justify-end">
-                            <CopyButton text={m.content} onCopied={() => setCopiedMessageId(m.id)} className="bg-slate-950/80" />
+                          <div className="mt-3 flex items-center justify-end pt-1">
+                            <CopyButton text={m.content} onCopied={() => setCopiedMessageId(m.id)} className="bg-slate-950/80 hover:bg-slate-900" />
                           </div>
                         ) : null}
-                        {m.stage === "assistant" ? <AiFormattedText text={m.content} className="text-[14px] leading-relaxed" /> : m.content}
                       </div>
                     </div>
                   ))
