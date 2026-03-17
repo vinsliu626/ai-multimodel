@@ -1,6 +1,6 @@
 import { callGroqChat } from "@/lib/ai/groq";
 import { callOpenRouterChat, shouldFallback, type ChatMessage } from "@/lib/ai/openrouter";
-import { normalizeAiText } from "@/lib/ui/aiTextFormat";
+import { buildDirectNoteSystemPrompt, buildDirectNoteUserPrompt } from "@/lib/aiNote/prompts";
 
 const OPENROUTER_CANDIDATES = [
   "google/gemma-3-12b-it:free",
@@ -8,42 +8,6 @@ const OPENROUTER_CANDIDATES = [
   "arcee-ai/trinity-large-preview:free",
   "openrouter/free",
 ];
-
-function noteSystemPrompt(maxItems: number) {
-  return [
-    "You are a premium study-note assistant.",
-    "Return clean structured plain text only. No preamble or meta commentary.",
-    "Do not use markdown bullets, markdown headings, or *** markers.",
-    `Keep the total number of structured items within ${maxItems}.`,
-    "Use emoji markers for structure:",
-    "⭐ Important: ...",
-    "📘 Concept: ...",
-    "⚡ Tip: ...",
-    "🧪 Example: ...",
-    "⚠️ Warning: ...",
-    "Keep answers readable, concise, and grounded in the source text.",
-  ].join("\n");
-}
-
-function noteUserPrompt(text: string) {
-  return `Generate structured study notes from the text below.\n\n${text}`;
-}
-
-function clipStructuredItems(output: string, maxItems: number) {
-  const lines = normalizeAiText(output).split(/\r?\n/);
-  let itemCount = 0;
-
-  return lines
-    .filter((line) => {
-      const trimmed = line.trim();
-      const isItem = /^[⭐📘⚡🧪⚠️]/u.test(trimmed);
-      if (!isItem) return true;
-      itemCount += 1;
-      return itemCount <= maxItems;
-    })
-    .join("\n")
-    .trim();
-}
 
 export async function generateStructuredNotes(input: {
   text: string;
@@ -55,9 +19,10 @@ export async function generateStructuredNotes(input: {
   if (!groqKey) throw new Error("MISSING_GROQ_API_KEY");
 
   const openrouterKey = process.env.OPENROUTER_API_KEY || undefined;
+  const language = input.isZh ? "zh" : "en";
   const messages: ChatMessage[] = [
-    { role: "system", content: noteSystemPrompt(input.maxItems) },
-    { role: "user", content: noteUserPrompt(input.text) },
+    { role: "system", content: buildDirectNoteSystemPrompt(input.maxItems, language) },
+    { role: "user", content: buildDirectNoteUserPrompt(input.text, language) },
   ];
 
   if (openrouterKey) {
@@ -67,11 +32,11 @@ export async function generateStructuredNotes(input: {
           apiKey: openrouterKey,
           modelId,
           messages,
-          maxTokens: input.maxOutputTokens ?? 1_000,
+          maxTokens: input.maxOutputTokens ?? 1200,
           temperature: 0.2,
         });
         return {
-          note: clipStructuredItems(out.content, input.maxItems),
+          note: out.content.trim(),
           provider: "openrouter" as const,
           model: out.modelUsed,
         };
@@ -85,12 +50,12 @@ export async function generateStructuredNotes(input: {
     apiKey: groqKey,
     modelId: process.env.AI_NOTE_TEXT_MODEL || "llama-3.3-70b-versatile",
     messages,
-    maxTokens: input.maxOutputTokens ?? 1_000,
+    maxTokens: input.maxOutputTokens ?? 1200,
     temperature: 0.2,
   });
 
   return {
-    note: clipStructuredItems(out.content, input.maxItems),
+    note: out.content.trim(),
     provider: "groq" as const,
     model: out.modelUsed,
   };

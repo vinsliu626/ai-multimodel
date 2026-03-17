@@ -3,12 +3,13 @@ export type OutlineSection = {
   heading: string;
   summary: string;
   keyPoints: string[];
-  sourceText: string; // 这一段对应的原文片段（后面给第二个模型）
+  sourceText: string;
 };
 
 export type OutlineResult = {
   title: string;
   language: "en" | "zh" | "auto";
+  sourceType: "lecture" | "meeting" | "quiz_review" | "study_material" | "general";
   sections: OutlineSection[];
 };
 
@@ -23,10 +24,11 @@ export type SectionNotes = {
 
 export type FinalNote = {
   title: string;
-  tldr: string[];
-  outline: { heading: string; bullets: string[] }[];
+  executiveSummary: string[];
+  sections: { heading: string; bullets: string[] }[];
   keyTerms: { term: string; definition: string }[];
-  reviewChecklist: string[];
-  quiz: { q: string; a: string }[];
-  markdown: string; // 最终可直接渲染/复制
+  takeaways: string[];
+  studyAids: { label: string; items: string[] }[];
+  answerKey: string[];
+  markdown: string;
 };

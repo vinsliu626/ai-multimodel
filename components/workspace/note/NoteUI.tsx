@@ -82,93 +82,87 @@ export function NoteUI({
         </div>
 
         <div className="custom-scrollbar flex-1 overflow-y-auto px-6 py-6">
-          <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-            <div className="space-y-6">
-              <section className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
-                <div className="flex flex-col gap-4 border-b border-white/10 pb-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Input</p>
-                      <p className="mt-2 text-sm text-slate-300">{helperText}</p>
-                    </div>
-
-                    <button
-                      onClick={ctl.generateNotes}
-                      disabled={!ctl.canGenerate}
-                      className="h-11 rounded-full bg-gradient-to-r from-blue-500 via-sky-500 to-emerald-400 px-5 text-sm font-semibold text-white shadow-md shadow-blue-500/30 transition hover:brightness-110 disabled:cursor-not-allowed disabled:from-slate-700 disabled:via-slate-700 disabled:to-slate-700 disabled:text-slate-300 disabled:shadow-none"
-                    >
-                      {ctl.loading ? "Generating..." : "Generate Notes"}
-                    </button>
+          <div className="mx-auto grid max-w-7xl gap-6 lg:grid-cols-[minmax(0,1.12fr)_minmax(20rem,0.88fr)] lg:grid-rows-[auto_auto]">
+            <section className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="flex flex-col gap-4 border-b border-white/10 pb-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Input</p>
+                    <p className="mt-2 text-sm text-slate-300">{helperText}</p>
                   </div>
 
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <NoteTabs
-                      tab={ctl.tab}
-                      isZh={isZh}
-                      recording={ctl.recording}
-                      loading={ctl.loading}
-                      isLoadingGlobal={isLoadingGlobal}
-                      locked={locked}
-                      onSwitch={ctl.switchTab}
-                    />
+                  <button
+                    onClick={ctl.generateNotes}
+                    disabled={!ctl.canGenerate}
+                    className="h-11 rounded-full bg-gradient-to-r from-blue-500 via-sky-500 to-emerald-400 px-5 text-sm font-semibold text-white shadow-md shadow-blue-500/30 transition hover:brightness-110 disabled:cursor-not-allowed disabled:from-slate-700 disabled:via-slate-700 disabled:to-slate-700 disabled:text-slate-300 disabled:shadow-none"
+                  >
+                    {ctl.loading ? "Generating..." : "Generate Notes"}
+                  </button>
+                </div>
 
-                    <div className="rounded-full border border-white/10 bg-slate-950/60 px-4 py-2 text-[11px] text-slate-400">
-                      {ctl.tab === "record"
-                        ? `${ctl.recordSecs}s recorded`
-                        : ctl.tab === "upload"
-                        ? ctl.file?.name || "Ready for upload"
-                        : `${ctl.text.trim().length.toLocaleString()} chars`}
-                    </div>
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <NoteTabs
+                    tab={ctl.tab}
+                    isZh={isZh}
+                    recording={ctl.recording}
+                    loading={ctl.loading}
+                    isLoadingGlobal={isLoadingGlobal}
+                    locked={locked}
+                    onSwitch={ctl.switchTab}
+                  />
+
+                  <div className="rounded-full border border-white/10 bg-slate-950/60 px-4 py-2 text-[11px] text-slate-400">
+                    {ctl.tab === "record"
+                      ? `${ctl.recordSecs}s recorded`
+                      : ctl.tab === "upload"
+                      ? ctl.file?.name || "Ready for upload"
+                      : `${ctl.text.trim().length.toLocaleString()} chars`}
                   </div>
                 </div>
+              </div>
 
-                <div className="mt-5 rounded-3xl border border-white/10 bg-slate-950/60 p-5">
-                  {ctl.tab === "upload" ? (
-                    <NoteUploadPane
-                      isZh={isZh}
-                      loading={ctl.loading}
-                      isLoadingGlobal={isLoadingGlobal}
-                      file={ctl.file}
-                      onPickFile={ctl.onPickFile}
-                    />
-                  ) : null}
+              <div className="mt-5 rounded-3xl border border-white/10 bg-slate-950/60 p-5">
+                {ctl.tab === "upload" ? (
+                  <NoteUploadPane
+                    isZh={isZh}
+                    loading={ctl.loading}
+                    isLoadingGlobal={isLoadingGlobal}
+                    file={ctl.file}
+                    onPickFile={ctl.onPickFile}
+                  />
+                ) : null}
 
-                  {ctl.tab === "record" ? (
-                    <NoteRecordPane
-                      isZh={isZh}
-                      locked={locked}
-                      loading={ctl.loading}
-                      isLoadingGlobal={isLoadingGlobal}
-                      recording={ctl.recording}
-                      recordSecs={ctl.recordSecs}
-                      noteId={ctl.noteId}
-                      uploadedChunks={ctl.uploadedChunks}
-                      liveTranscript={ctl.liveTranscript}
-                      finalizeStage={ctl.finalizeStage}
-                      finalizeProgress={ctl.finalizeProgress}
-                      onStart={ctl.startRecording}
-                      onStop={ctl.stopRecording}
-                    />
-                  ) : null}
+                {ctl.tab === "record" ? (
+                  <NoteRecordPane
+                    isZh={isZh}
+                    locked={locked}
+                    loading={ctl.loading}
+                    isLoadingGlobal={isLoadingGlobal}
+                    recording={ctl.recording}
+                    recordSecs={ctl.recordSecs}
+                    noteId={ctl.noteId}
+                    uploadedChunks={ctl.uploadedChunks}
+                    liveTranscript={ctl.liveTranscript}
+                    finalizeStage={ctl.finalizeStage}
+                    finalizeProgress={ctl.finalizeProgress}
+                    onStart={ctl.startRecording}
+                    onStop={ctl.stopRecording}
+                  />
+                ) : null}
 
-                  {ctl.tab === "text" ? (
-                    <NoteTextPane
-                      isZh={isZh}
-                      loading={ctl.loading}
-                      isLoadingGlobal={isLoadingGlobal}
-                      locked={locked}
-                      text={ctl.text}
-                      onChangeText={ctl.setText}
-                      onResetAll={ctl.resetAll}
-                    />
-                  ) : null}
-                </div>
-              </section>
-
-              {ctl.error && !ctl.loading ? (
-                <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-[12px] text-red-200">{ctl.error}</div>
-              ) : null}
-            </div>
+                {ctl.tab === "text" ? (
+                  <NoteTextPane
+                    isZh={isZh}
+                    loading={ctl.loading}
+                    isLoadingGlobal={isLoadingGlobal}
+                    locked={locked}
+                    text={ctl.text}
+                    onChangeText={ctl.setText}
+                    onResetAll={ctl.resetAll}
+                  />
+                ) : null}
+              </div>
+            </section>
 
             <div className="space-y-6">
               <NoteGenerationProgress
@@ -180,6 +174,12 @@ export function NoteUI({
                 error={ctl.loading ? null : ctl.error}
               />
 
+              {ctl.error && !ctl.loading ? (
+                <div className="rounded-2xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-[12px] text-red-200">{ctl.error}</div>
+              ) : null}
+            </div>
+
+            <div className="lg:col-span-2">
               <NoteResultPane
                 isZh={isZh}
                 result={ctl.result}

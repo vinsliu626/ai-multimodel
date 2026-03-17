@@ -15,6 +15,7 @@ const HF_KIMI_MODEL = "moonshotai/Kimi-K2-Instruct-0905";
 const OutlineSchema = z.object({
   title: z.string().min(1),
   language: z.enum(["en", "zh", "auto"]).default("auto"),
+  sourceType: z.enum(["lecture", "meeting", "quiz_review", "study_material", "general"]).default("general"),
   sections: z
     .array(
       z.object({
@@ -51,9 +52,9 @@ const SectionNotesSchema = z.object({
 const FinalNoteSchema = z.object({
   title: z.string().min(1).default("Notes"),
 
-  tldr: z.array(z.string().min(1)).min(0).max(8).default([]),
+  executiveSummary: z.array(z.string().min(1)).min(0).max(6).default([]),
 
-  outline: z
+  sections: z
     .array(
       z.object({
             heading: z.string().min(1),
@@ -69,8 +70,17 @@ const FinalNoteSchema = z.object({
     .max(10)
     .default([]),
 
-  reviewChecklist: z.array(z.string().min(1)).min(0).max(10).default([]),
-  quiz: z.array(z.object({ q: z.string().min(1), a: z.string().min(1) })).min(0).max(6).default([]),
+  takeaways: z.array(z.string().min(1)).min(0).max(8).default([]),
+  studyAids: z
+    .array(
+      z.object({
+        label: z.string().min(1),
+        items: z.array(z.string().min(1)).min(1).max(6),
+      })
+    )
+    .max(4)
+    .default([]),
+  answerKey: z.array(z.string().min(1)).min(0).max(8).default([]),
 
   markdown: z.string().min(0).default(""),
 });
@@ -238,30 +248,14 @@ function ensureMinKeyPoints(section: { summary: string; sourceText: string; keyP
     if (out.length >= min) break;
     if (!out.includes(c)) out.push(c);
   }
-  while (out.length < min) out.push("Key point");
   return out.slice(0, 12);
 }
 
 function ensureMinKeyTerms(
   obj: { heading: string; bullets: string[]; keyTerms?: { term: string; definition: string }[] },
-  min = 3
+  min = 1
 ) {
   const out = Array.isArray(obj.keyTerms) ? obj.keyTerms.filter((x) => x?.term && x?.definition) : [];
-
-  const text = `${obj.heading}\n${(obj.bullets || []).join("\n")}`.toLowerCase();
-  const candidates: { term: string; definition: string }[] = [];
-
-  if (text.includes("variable")) candidates.push({ term: "Variable", definition: "A named value that can change." });
-  if (text.includes("constant")) candidates.push({ term: "Constant", definition: "A named value that does not change." });
-  if (text.includes("data")) candidates.push({ term: "Data", definition: "Information stored and processed by a program." });
-  if (text.includes("value")) candidates.push({ term: "Value", definition: "The content stored in a variable/constant." });
-
-  for (const c of candidates) {
-    if (out.length >= min) break;
-    if (!out.some((x) => x.term.toLowerCase() === c.term.toLowerCase())) out.push(c);
-  }
-  while (out.length < min) out.push({ term: "Key term", definition: "Important concept from this section." });
-
   return out.slice(0, 10);
 }
 
@@ -270,10 +264,10 @@ function ensureSectionNotes(note: any): SectionNotes {
   const heading = String(note?.heading || "Section");
 
   const bullets = Array.isArray(note?.bullets) ? note.bullets.filter(Boolean) : [];
-  const safeBullets = bullets.length >= 2 ? bullets.slice(0, 8) : ["(No content)", "(No content)"];
+  const safeBullets = bullets.length > 0 ? bullets.slice(0, 8) : [heading];
 
   const keyTermsRaw = Array.isArray(note?.keyTerms) ? note.keyTerms : [];
-  const fixedKeyTerms = ensureMinKeyTerms({ heading, bullets: safeBullets, keyTerms: keyTermsRaw }, 3);
+  const fixedKeyTerms = ensureMinKeyTerms({ heading, bullets: safeBullets, keyTerms: keyTermsRaw }, 1);
 
   const examples = Array.isArray(note?.examples) ? note.examples.filter(Boolean).slice(0, 3) : [];
   const actionItems = Array.isArray(note?.actionItems) ? note.actionItems.filter(Boolean).slice(0, 3) : [];
@@ -292,7 +286,7 @@ function ensureSectionNotes(note: any): SectionNotes {
     return {
       id,
       heading,
-      bullets: ["(No content)", "(No content)"],
+      bullets: [heading],
       keyTerms: fixedKeyTerms,
       examples: [],
       actionItems: [],
@@ -304,12 +298,12 @@ function ensureSectionNotes(note: any): SectionNotes {
 function ensureFinalNote(note: any): FinalNote {
   const title = String(note?.title || "Notes").trim() || "Notes";
 
-  const tldr = Array.isArray(note?.tldr) ? note.tldr.filter(Boolean).slice(0, 8) : [];
-  const outlineRaw = Array.isArray(note?.outline) ? note.outline : [];
+  const executiveSummary = Array.isArray(note?.executiveSummary) ? note.executiveSummary.filter(Boolean).slice(0, 6) : [];
+  const sectionsRaw = Array.isArray(note?.sections) ? note.sections : [];
 
-  const safeOutline =
-    outlineRaw.length > 0
-      ? outlineRaw
+  const safeSections =
+    sectionsRaw.length > 0
+      ? sectionsRaw
           .map((x: any) => ({
             heading: String(x?.heading || "Section").trim() || "Section",
             bullets: Array.isArray(x?.bullets) ? x.bullets.filter(Boolean).slice(0, 10) : [],
@@ -317,14 +311,23 @@ function ensureFinalNote(note: any): FinalNote {
           .filter((x: any) => x.bullets.length > 0)
       : [
           {
-            heading: "Summary",
-            bullets: tldr.length ? tldr : ["(No content)"],
+            heading: "Main Notes",
+            bullets: executiveSummary.length ? executiveSummary : ["(No content)"],
           },
         ];
 
   const keyTerms = Array.isArray(note?.keyTerms) ? note.keyTerms : [];
-  const reviewChecklist = Array.isArray(note?.reviewChecklist) ? note.reviewChecklist.slice(0, 10) : [];
-  const quiz = Array.isArray(note?.quiz) ? note.quiz.slice(0, 6) : [];
+  const takeaways = Array.isArray(note?.takeaways) ? note.takeaways.filter(Boolean).slice(0, 8) : [];
+  const studyAids = Array.isArray(note?.studyAids)
+    ? note.studyAids
+        .map((x: any) => ({
+          label: String(x?.label || "Study Aid").trim() || "Study Aid",
+          items: Array.isArray(x?.items) ? x.items.filter(Boolean).slice(0, 6) : [],
+        }))
+        .filter((x: any) => x.items.length > 0)
+        .slice(0, 4)
+    : [];
+  const answerKey = Array.isArray(note?.answerKey) ? note.answerKey.filter(Boolean).slice(0, 8) : [];
 
   let markdown = String(note?.markdown || "").trim();
 
@@ -332,22 +335,25 @@ function ensureFinalNote(note: any): FinalNote {
     markdown = [
       `# ${title}`,
       ``,
-      `## TL;DR`,
-      ...(tldr.length ? tldr.map((x: string) => `- ${x}`) : ["- (empty)"]),
+      `## Executive Summary`,
+      ...(executiveSummary.length ? executiveSummary.map((x: string) => `- ${x}`) : ["- (empty)"]),
       ``,
-      `## Outline`,
-      ...safeOutline.flatMap((sec: any) => [`### ${sec.heading}`, ...sec.bullets.map((b: string) => `- ${b}`), ``]),
+      `## Main Notes`,
+      ...safeSections.flatMap((sec: any) => [`### ${sec.heading}`, ...sec.bullets.map((b: string) => `- ${b}`), ``]),
       keyTerms.length
-        ? [`## Key Terms`, ...keyTerms.slice(0, 10).map((k: any) => `- **${k.term}**: ${k.definition}`), ``].join("\n")
+        ? [`## Important Terms`, ...keyTerms.slice(0, 10).map((k: any) => `- **${k.term}**: ${k.definition}`), ``].join("\n")
         : ``,
-      reviewChecklist.length
-        ? [`## Review Checklist`, ...reviewChecklist.map((x: string) => `- ${x}`), ``].join("\n")
+      takeaways.length
+        ? [`## Takeaways`, ...takeaways.map((x: string) => `- ${x}`), ``].join("\n")
         : ``,
-      quiz.length
+      studyAids.length
         ? [
-            `## Quick Quiz`,
-            ...quiz.map((qa: any, i: number) => `**Q${i + 1}.** ${qa.q}\n\n**A${i + 1}.** ${qa.a}\n`),
+            `## Study Aids`,
+            ...studyAids.flatMap((aid: any) => [`### ${aid.label}`, ...aid.items.map((item: string) => `- ${item}`), ``]),
           ].join("\n")
+        : ``,
+      answerKey.length
+        ? [`## Answer Key / Extracted Answers`, ...answerKey.map((x: string) => `- ${x}`), ``].join("\n")
         : ``,
     ]
       .filter(Boolean)
@@ -356,11 +362,12 @@ function ensureFinalNote(note: any): FinalNote {
 
   const obj: FinalNote = {
     title,
-    tldr: tldr.length ? tldr : ["(empty)"],
-    outline: safeOutline,
+    executiveSummary: executiveSummary.length ? executiveSummary : ["(empty)"],
+    sections: safeSections,
     keyTerms,
-    reviewChecklist,
-    quiz,
+    takeaways,
+    studyAids,
+    answerKey,
     markdown,
   };
 
@@ -466,10 +473,10 @@ async function callSectionNotesRobust(args: {
             `}`,
             ``,
             `Constraints:`,
-            `- bullets: 2-12`,
-            `- keyTerms: 3-8`,
-            `- examples: 0-8`,
-            `- actionItems: 0-8`,
+            `- bullets: 3-8, each should explain a knowledge point`,
+            `- keyTerms: 0-5, only if truly supported`,
+            `- examples: 0-3`,
+            `- actionItems: 0-4, use as study aids or review prompts`,
             ``,
             `Source text:`,
             sourceText,
@@ -545,9 +552,9 @@ export async function runAiNotePipeline(rawText: string): Promise<string> {
         {
           role: "system",
           content:
-            "You write concise study notes in clean structured plain text. Do not use markdown bullets, markdown headings, or *** markers. Use emoji markers like ⭐ Important:, 📘 Concept:, ⚡ Tip:, 🧪 Example:, and ⚠️ Warning:.",
+            "You write compact but high-value study notes in markdown-style text. Use clear sections, short subpoints, and separated knowledge points. Avoid one giant wall of text and avoid shallow extraction dumps. You may use labels like ⭐ Important, 📘 Concept, ⚡ Tip, 🧪 Example, and ⚠️ Warning naturally inside sections.",
         },
-        { role: "user", content: `Make a short note from the text. Output structured plain text only.\n\nText:\n${text}` },
+        { role: "user", content: `Make a short but genuinely useful note from the text below.\nUse: Title, Executive Summary, Main Notes, and Takeaways.\nKeep each knowledge point distinct.\n\nText:\n${text}` },
       ],
       { temperature: 0 }
     );
@@ -592,6 +599,7 @@ export async function runAiNotePipeline(rawText: string): Promise<string> {
   // ---------------- Step 3: Final Merge ----------------
   const mergedInput = {
     title: outline.title,
+    sourceType: outline.sourceType,
     sections: outline.sections.map((s) => ({
       heading: s.heading,
       summary: s.summary,

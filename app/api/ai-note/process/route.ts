@@ -1,4 +1,3 @@
-// app/api/ai-note/process/route.ts
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
@@ -8,6 +7,7 @@ import { devBypassUserId } from "@/lib/auth/devBypass";
 import { callGroqTranscribe, callGroqChat } from "@/lib/ai/groq";
 import { callOpenRouterChat, shouldFallback, type ChatMessage } from "@/lib/ai/openrouter";
 import { parseEnvInt } from "@/lib/env/number";
+import { buildLegacyFinalWriterPrompt, buildLegacyPartSummarizerPrompt } from "@/lib/aiNote/prompts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +22,18 @@ type ApiErr =
   | "LLM_FAILED"
   | "INTERNAL_ERROR";
 
-function bad(code: ApiErr, status = 400, message?: string, extra?: any) {
+function asErrorInfo(error: unknown) {
+  if (!error || typeof error !== "object") return {};
+  const value = error as { code?: unknown; message?: unknown; extra?: unknown; httpStatus?: unknown };
+  return {
+    code: value.code,
+    message: value.message,
+    extra: value.extra,
+    httpStatus: value.httpStatus,
+  };
+}
+
+function bad(code: ApiErr, status = 400, message?: string, extra?: unknown) {
   return NextResponse.json({ ok: false, error: code, message: message ?? code, ...(extra ? { extra } : {}) }, { status });
 }
 
@@ -43,7 +54,6 @@ async function llmWithFallback(opts: {
   groqKey: string;
   groqModel: string;
 }) {
-  // 1) OpenRouter free 优先
   if (opts.openrouterKey) {
     for (const mid of opts.openrouterCandidates) {
       try {
@@ -53,14 +63,14 @@ async function llmWithFallback(opts: {
           messages: opts.messages,
         });
         return { provider: "openrouter" as const, model: r.modelUsed, content: r.content };
-      } catch (e: any) {
-        console.warn("[ai-note] openrouter failed:", mid, e?.code || e?.message, e?.httpStatus);
+      } catch (e: unknown) {
+        const info = asErrorInfo(e);
+        console.warn("[ai-note] openrouter failed:", mid, info.code || info.message, info.httpStatus);
         if (!shouldFallback(e)) throw e;
       }
     }
   }
 
-  // 2) Groq 兜底
   const g = await callGroqChat({
     apiKey: opts.groqKey,
     modelId: opts.groqModel,
@@ -70,54 +80,10 @@ async function llmWithFallback(opts: {
   return { provider: "groq" as const, model: g.modelUsed, content: g.content };
 }
 
-// 你可以按自己 UI 调整这个“最终笔记格式”
-function systemNoteWriter(isZh: boolean) {
-  return isZh
-    ? [
-        "你是一个专业的课堂/会议笔记整理助手。",
-        "输入是一段语音转写文本（可能有口语、重复、错别字）。",
-        "输出必须是可直接给用户的“最终笔记”，结构固定如下（必须包含这些标题）：",
-        "1) TL;DR（3-6条）",
-        "2) Outline（分层列表）",
-        "3) Key Points（要点，带小标题）",
-        "4) Action Items（如果没有就写 None）",
-        "5) Glossary（术语解释：可选，没有就写 None）",
-        "要求：尽量保留事实与数字；不要胡编；不确定就标注“(unclear)”；语言用中文。",
-      ].join("\n")
-    : [
-        "You are a professional note-taking assistant.",
-        "Input is ASR transcript (may be messy).",
-        "Output must be final notes with headings:",
-        "1) TL;DR (3-6 bullets)",
-        "2) Outline (nested)",
-        "3) Key Points (with mini headings)",
-        "4) Action Items (or None)",
-        "5) Glossary (or None)",
-        "Rules: don't invent facts; mark unclear as (unclear).",
-      ].join("\n");
-}
-
-// 分段：把每段压成“段落摘要+要点”，最后再合并
-function systemPartSummarizer(isZh: boolean) {
-  return isZh
-    ? [
-        "你是分段笔记压缩器。",
-        "给你一段转写文本，请输出：",
-        "- 段落摘要（1-3句）",
-        "- 段落要点（最多8条）",
-        "不要写最终 TL;DR，不要写 Action Items。",
-        "只输出纯文本，不要 JSON。",
-      ].join("\n")
-    : [
-        "You summarize one transcript part.",
-        "Output: short summary + bullet key points (<=8). No final TL;DR. Plain text only.",
-      ].join("\n");
-}
-
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
-    const userId = ((session as any)?.user?.id as string | undefined) ?? devBypassUserId();
+    const userId = ((session as { user?: { id?: string } } | null)?.user?.id as string | undefined) ?? devBypassUserId();
     if (!userId) return bad("AUTH_REQUIRED", 401);
 
     const body = (await req.json().catch(() => null)) as null | { noteId?: string; lang?: "zh" | "en" };
@@ -125,13 +91,11 @@ export async function POST(req: Request) {
     if (!noteId) return bad("MISSING_NOTE_ID", 400);
 
     const isZh = body?.lang === "zh";
-
+    const language = isZh ? "zh" : "en";
     const groqKey = process.env.GROQ_API_KEY;
     if (!groqKey) return bad("MISSING_KEYS", 500, "Missing GROQ_API_KEY");
-
     const openrouterKey = process.env.OPENROUTER_API_KEY || undefined;
 
-    // ✅ ownership
     const note = await prisma.aiNoteSession.findUnique({
       where: { id: noteId },
       select: { userId: true },
@@ -140,7 +104,6 @@ export async function POST(req: Request) {
     if (!note) return bad("NO_CHUNKS", 404, "Note session not found (upload chunks first).");
     if (note.userId !== userId) return bad("FORBIDDEN", 403);
 
-    // ✅ fetch chunks
     const chunks = await prisma.aiNoteChunk.findMany({
       where: { noteId },
       orderBy: { chunkIndex: "asc" },
@@ -149,14 +112,11 @@ export async function POST(req: Request) {
 
     if (!chunks.length) return bad("NO_CHUNKS", 400, "No chunks uploaded yet.");
 
-    // 合并
     const mime = chunks.find((c) => c.mime)?.mime || "audio/webm";
     const totalBytes = chunks.reduce((a, c) => a + (c.size || 0), 0);
-
-    const buffers = chunks.map((c) => Buffer.from(c.data as any));
+    const buffers = chunks.map((c) => Buffer.from(c.data as Uint8Array));
     const audio = Buffer.concat(buffers);
 
-    // 1) ASR
     let transcript = "";
     try {
       const asr = await callGroqTranscribe({
@@ -167,25 +127,25 @@ export async function POST(req: Request) {
         model: process.env.AI_NOTE_ASR_MODEL || "whisper-large-v3",
       });
       transcript = asr.text;
-    } catch (e: any) {
-      console.error("[ai-note] ASR failed:", e?.code || e?.message, e?.extra);
-      return bad("ASR_FAILED", 502, "ASR failed", { code: e?.code, message: e?.message, extra: e?.extra });
+    } catch (e: unknown) {
+      const info = asErrorInfo(e);
+      console.error("[ai-note] ASR failed:", info.code || info.message, info.extra);
+      return bad("ASR_FAILED", 502, "ASR failed", { code: info.code, message: info.message, extra: info.extra });
     }
 
-    // 2) transcript 分段
     const partChars = parseEnvInt("AI_NOTE_TRANSCRIPT_CHARS_PER_PART", 6000);
     const parts = splitByChars(transcript, partChars);
 
-    // 3) 每段压缩
     const partNotes: string[] = [];
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
-
       const msgs: ChatMessage[] = [
-        { role: "system", content: systemPartSummarizer(isZh) },
+        { role: "system", content: buildLegacyPartSummarizerPrompt(language) },
         {
           role: "user",
-          content: `这是第 ${i + 1}/${parts.length} 段转写：\n\n${part}`,
+          content: isZh
+            ? `这是第 ${i + 1}/${parts.length} 段转写内容。请提炼出后续可以合成为高质量学习笔记的内容。\n\n${part}`
+            : `This is transcript part ${i + 1}/${parts.length}. Extract the material that should survive into a high-quality study note document.\n\n${part}`,
         },
       ];
 
@@ -193,14 +153,12 @@ export async function POST(req: Request) {
         messages: msgs,
         openrouterKey,
         openrouterCandidates: [
-          // ✅ 你测试里“200 且快”的放前面（更稳）
           "liquid/lfm-2.5-1.2b-instruct:free",
           "google/gemma-3n-e4b-it:free",
           "google/gemma-3n-e2b-it:free",
           "arcee-ai/trinity-large-preview:free",
           "google/gemma-3-4b-it:free",
           "google/gemma-3-27b-it:free",
-          // 最终兜底
           "openrouter/free",
         ],
         groqKey,
@@ -210,14 +168,12 @@ export async function POST(req: Request) {
       partNotes.push(out.content);
     }
 
-    // 4) 最终合并生成最终笔记
     const finalMsgs: ChatMessage[] = [
-      { role: "system", content: systemNoteWriter(isZh) },
+      { role: "system", content: buildLegacyFinalWriterPrompt(language) },
       {
         role: "user",
         content:
-          `请根据“分段摘要与要点”合并成一份最终笔记。\n\n` +
-          `【分段内容】\n` +
+          (isZh ? "请将以下分段笔记整合为一份最终高质量笔记文档。\n\n[分段笔记]\n" : "Merge the staged notes below into one final high-quality note document.\n\n[Segment notes]\n") +
           partNotes.map((t, idx) => `--- Part ${idx + 1}/${partNotes.length} ---\n${t}`).join("\n\n"),
       },
     ];
@@ -228,7 +184,7 @@ export async function POST(req: Request) {
         messages: finalMsgs,
         openrouterKey,
         openrouterCandidates: [
-          "google/gemma-3-27b-it:free", // 你测试里慢一点但更“会写”
+          "google/gemma-3-27b-it:free",
           "arcee-ai/trinity-large-preview:free",
           "google/gemma-3-12b-it:free",
           "openrouter/free",
@@ -237,12 +193,12 @@ export async function POST(req: Request) {
         groqModel: "llama-3.3-70b-versatile",
       });
       finalNote = out.content;
-    } catch (e: any) {
-      console.error("[ai-note] LLM final failed:", e?.code || e?.message, e?.extra);
-      return bad("LLM_FAILED", 502, "LLM failed", { code: e?.code, message: e?.message, extra: e?.extra });
+    } catch (e: unknown) {
+      const info = asErrorInfo(e);
+      console.error("[ai-note] LLM final failed:", info.code || info.message, info.extra);
+      return bad("LLM_FAILED", 502, "LLM failed", { code: info.code, message: info.message, extra: info.extra });
     }
 
-    // 5) 写回 DB（字段名你按自己 schema 调整）
     await prisma.aiNoteSession.update({
       where: { id: noteId },
       data: {
@@ -250,21 +206,20 @@ export async function POST(req: Request) {
         notes: finalNote,
         bytes: totalBytes,
         mime,
-        // updatedAt: new Date(),
-      } as any,
+      } as { transcript: string; notes: string; bytes: number; mime: string },
     });
 
     return NextResponse.json({
       ok: true,
       noteId,
       bytes: totalBytes,
-      mime,
       transcriptChars: transcript.length,
       parts: parts.length,
       notes: finalNote,
     });
-  } catch (e: any) {
-    console.error("[ai-note/process] error:", e?.message || e);
-    return bad("INTERNAL_ERROR", 500, e?.message || "Internal error");
+  } catch (e: unknown) {
+    const info = asErrorInfo(e);
+    console.error("[/api/ai-note/process] fatal:", info.code || info.message, info.extra);
+    return bad("INTERNAL_ERROR", 500, typeof info.message === "string" ? info.message : "Internal error");
   }
 }

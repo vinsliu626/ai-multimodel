@@ -730,13 +730,7 @@ export async function POST(req: Request) {
 
           const merged = parts.map((p) => p.text || "").filter(Boolean).join("\n\n---\n\n");
 
-          const final = await withTimeout(
-            runAiNotePipeline(
-              `下面是多段摘要，请合并去重、按主题重排，生成最终笔记（含目录、要点、行动项清单、风险/待确认）：\n${merged}`
-            ),
-            llmTimeoutMs,
-            "llm_merge"
-          ).catch((e) => {
+          const final = await withTimeout(runAiNotePipeline(merged), llmTimeoutMs, "llm_merge").catch((e) => {
             throw Object.assign(new Error(String((e as any)?.message || e)), { _code: "LLM_FAILED" });
           });
 
@@ -771,19 +765,7 @@ export async function POST(req: Request) {
           await refreshJobLock(noteId, lock.lockId);
 
           const text = chunks[p];
-          const part = await withTimeout(
-            runAiNotePipeline(
-              `你是会议纪要助手。以下是第 ${p + 1}/${totalParts} 段转写，请输出：
-              - 要点（bullet）
-              - 决策
-              - 行动项（含负责人/截止时间如有）
-              - 问题与待确认事项
-              正文：
-${text}`
-            ),
-            llmTimeoutMs,
-            `llm_part_${p}`
-          ).catch((e) => {
+          const part = await withTimeout(runAiNotePipeline(text), llmTimeoutMs, `llm_part_${p}`).catch((e) => {
             throw Object.assign(new Error(String((e as any)?.message || e)), { _code: "LLM_FAILED" });
           });
 

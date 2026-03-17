@@ -2,6 +2,7 @@ import { callGroqChat } from "@/lib/ai/groq";
 import { callOpenRouterChat, shouldFallback, type ChatMessage } from "@/lib/ai/openrouter";
 import { parseEnvInt } from "@/lib/env/number";
 import { generateStructuredNotes } from "@/lib/aiNote/generate";
+import { buildStagedMergeSystemPrompt, buildStagedMergeUserPrompt } from "@/lib/aiNote/prompts";
 
 export type NoteGenerationMeta = {
   provider: "openrouter" | "groq";
@@ -38,23 +39,15 @@ function splitTextForStage(text: string, maxChars: number, overlap: number) {
     if (hardEnd < normalized.length) {
       const paragraphCut = normalized.lastIndexOf("\n\n", hardEnd);
       const lineCut = normalized.lastIndexOf("\n", hardEnd);
-      const sentenceCut = Math.max(
-        normalized.lastIndexOf(". ", hardEnd),
-        normalized.lastIndexOf("? ", hardEnd),
-        normalized.lastIndexOf("! ", hardEnd)
-      );
+      const sentenceCut = Math.max(normalized.lastIndexOf(". ", hardEnd), normalized.lastIndexOf("? ", hardEnd), normalized.lastIndexOf("! ", hardEnd));
       const preferred = [paragraphCut, lineCut, sentenceCut].find((idx) => idx > cursor + Math.floor(maxChars * 0.55));
-      if (preferred) {
-        end = preferred + 1;
-      }
+      if (preferred) end = preferred + 1;
     }
 
     const chunk = normalized.slice(cursor, end).trim();
     if (chunk) chunks.push(chunk);
     if (end >= normalized.length) break;
-
-    const nextCursor = Math.max(end - safeOverlap, cursor + 1);
-    cursor = nextCursor;
+    cursor = Math.max(end - safeOverlap, cursor + 1);
   }
 
   return chunks;
@@ -70,41 +63,10 @@ async function mergeChunkNotes(opts: {
   if (!groqKey) throw new Error("MISSING_GROQ_API_KEY");
 
   const openrouterKey = process.env.OPENROUTER_API_KEY || undefined;
+  const language = opts.isZh ? "zh" : "en";
   const messages: ChatMessage[] = [
-    {
-      role: "system",
-      content: opts.isZh
-        ? [
-            "你是高级学习笔记整理助手。",
-            "你会把多段阶段性笔记合并成一份最终高质量 Markdown 笔记。",
-            `总条目数控制在 ${opts.maxItems} 以内。`,
-            "必须包含这些标题：",
-            "## TL;DR",
-            "## Key Points",
-            "## Action Items",
-            "## Review Checklist",
-            "规则：去重；不要编造事实；保留重要数字和负责人；不确定写 (unclear)。",
-          ].join("\n")
-        : [
-            "You are a premium study-note assistant.",
-            "Merge staged chunk notes into one final Markdown note.",
-            `Keep the total bullet/item count within ${opts.maxItems}.`,
-            "Required headings:",
-            "## TL;DR",
-            "## Key Points",
-            "## Action Items",
-            "## Review Checklist",
-            "Rules: deduplicate, keep important numbers and owners, do not invent facts, mark uncertainty as (unclear).",
-          ].join("\n"),
-    },
-    {
-      role: "user",
-      content: [
-        opts.isZh ? "请将以下分段笔记合并为最终笔记：" : "Merge the staged notes below into final notes:",
-        "",
-        opts.chunkNotes.map((note, index) => `--- Chunk ${index + 1}/${opts.chunkNotes.length} ---\n${note}`).join("\n\n"),
-      ].join("\n"),
-    },
+    { role: "system", content: buildStagedMergeSystemPrompt(opts.maxItems, language) },
+    { role: "user", content: buildStagedMergeUserPrompt(opts.chunkNotes, language) },
   ];
 
   if (openrouterKey) {
@@ -145,10 +107,10 @@ export async function generateStructuredNotesSafely(input: {
   maxItems: number;
   maxOutputTokens?: number;
   preferStaged?: boolean;
-}) : Promise<NoteGenerationResult> {
+}): Promise<NoteGenerationResult> {
   const normalizedText = input.text.trim();
   const inputChars = normalizedText.length;
-  const maxOutputTokens = input.maxOutputTokens ?? 1_000;
+  const maxOutputTokens = input.maxOutputTokens ?? 1200;
   const stagedThreshold = Math.max(6_000, parseEnvInt("AI_NOTE_STAGED_TRIGGER_CHARS", 10_000));
   const chunkChars = Math.max(3_500, parseEnvInt("AI_NOTE_STAGED_CHUNK_CHARS", 6_000));
   const overlap = Math.max(160, parseEnvInt("AI_NOTE_STAGED_CHUNK_OVERLAP", 350));
@@ -178,8 +140,8 @@ export async function generateStructuredNotesSafely(input: {
     throw new Error(`NOTE_STAGED_TOO_LARGE:${chunks.length}:${maxChunks}`);
   }
 
-  const chunkItemCap = Math.max(5, Math.min(9, Math.ceil(input.maxItems * 0.6)));
-  const chunkTokenCap = Math.min(maxOutputTokens, Math.max(550, parseEnvInt("AI_NOTE_STAGED_CHUNK_MAX_TOKENS", 700)));
+  const chunkItemCap = Math.max(6, Math.min(10, Math.ceil(input.maxItems * 0.7)));
+  const chunkTokenCap = Math.min(maxOutputTokens, Math.max(700, parseEnvInt("AI_NOTE_STAGED_CHUNK_MAX_TOKENS", 900)));
   const chunkNotes: string[] = [];
 
   for (const chunk of chunks) {
@@ -196,7 +158,7 @@ export async function generateStructuredNotesSafely(input: {
     chunkNotes,
     isZh: input.isZh,
     maxItems: input.maxItems,
-    maxOutputTokens: Math.max(maxOutputTokens, parseEnvInt("AI_NOTE_STAGED_MERGE_MAX_TOKENS", 900)),
+    maxOutputTokens: Math.max(maxOutputTokens, parseEnvInt("AI_NOTE_STAGED_MERGE_MAX_TOKENS", 1200)),
   });
 
   return {
