@@ -58,6 +58,8 @@ type Copy = {
   privacyDesc: string;
   privacyPolicy: string;
   terms: string;
+  localData: string;
+  localDataDesc: string;
   clearLocalData: string;
   deleteAccount: string;
   deleteAccountHint: string;
@@ -101,13 +103,15 @@ const copyByLang: Record<Lang, Copy> = {
     language: "Language & Interface",
     languageDesc: "Keep the product in the language you prefer.",
     interfaceLanguage: "Interface language",
-    languageHint: "The workspace keeps the current dark premium interface.",
+    languageHint: "The current language is saved in this browser for future visits.",
     english: "English",
     chinese: "Chinese",
     privacy: "Privacy & Data",
-    privacyDesc: "Quick access to policy and local data controls.",
+    privacyDesc: "Policy links and browser-side controls.",
     privacyPolicy: "Privacy Policy",
     terms: "Terms of Service",
+    localData: "Local browser data",
+    localDataDesc: "Clears saved language and interface preferences on this device only.",
     clearLocalData: "Clear local data",
     deleteAccount: "Delete account",
     deleteAccountHint: "Coming soon",
@@ -122,7 +126,7 @@ const copyByLang: Record<Lang, Copy> = {
   zh: {
     badge: "工作区偏好",
     title: "设置",
-    intro: "管理账号、套餐、语言和隐私控制。",
+    intro: "管理账号、套餐、语言与隐私相关控制。",
     close: "关闭设置",
     account: "账号",
     accountDesc: "你的登录信息。",
@@ -132,10 +136,10 @@ const copyByLang: Record<Lang, Copy> = {
     signedOut: "未登录",
     guest: "访客模式",
     currentMode: "当前模式",
-    openAccount: "打开账户页面",
+    openAccount: "打开账户页",
     signOut: "退出登录",
     plan: "套餐与用量",
-    planDesc: "查看当前套餐和关键额度。",
+    planDesc: "查看当前套餐与关键额度。",
     currentPlan: "当前套餐",
     unlimited: "无限",
     chat: "聊天",
@@ -145,22 +149,24 @@ const copyByLang: Record<Lang, Copy> = {
     converter: "转换器",
     converterLimit: "转换器文件上限",
     viewPlans: "查看套餐",
-    redeemCode: "兑换礼包码",
+    redeemCode: "兑换码",
     language: "语言与界面",
-    languageDesc: "保持你偏好的产品语言。",
+    languageDesc: "让产品始终保持你偏好的语言。",
     interfaceLanguage: "界面语言",
-    languageHint: "工作区继续保持当前深色高级界面。",
+    languageHint: "当前语言会保存在此浏览器中，方便下次继续使用。",
     english: "英文",
     chinese: "中文",
     privacy: "隐私与数据",
-    privacyDesc: "快速访问政策与本地数据控制。",
+    privacyDesc: "查看政策链接并管理浏览器本地设置。",
     privacyPolicy: "隐私政策",
     terms: "服务条款",
+    localData: "本地浏览器数据",
+    localDataDesc: "只会清除这台设备里保存的语言与界面偏好，不会删除云端账户数据。",
     clearLocalData: "清除本地数据",
     deleteAccount: "删除账户",
     deleteAccountHint: "即将推出",
     aiSafety: "AI 安全提示",
-    aiSafetyText: "AI 结果可能不准确。依赖重要内容前请先自行核实。",
+    aiSafetyText: "AI 结果可能不准确。涉及重要内容时，请先自行核实。",
     help: "帮助与支持",
     helpDesc: "常用支持入口。",
     supportEmail: "支持邮箱",
@@ -184,9 +190,9 @@ function modeLabel(mode: ChatMode, isZh: boolean) {
     case "workflow":
       return isZh ? "工作流对话" : "Workflow chat";
     case "detector":
-      return "AI Detector";
+      return isZh ? "AI 检测器" : "AI Detector";
     case "note":
-      return "AI Note";
+      return isZh ? "AI 笔记" : "AI Note";
     case "study":
       return isZh ? "AI 学习" : "AI Study";
     case "humanizer":
@@ -201,7 +207,7 @@ function modeLabel(mode: ChatMode, isZh: boolean) {
 function planLabel(plan: EntitlementSummary["plan"], isZh: boolean) {
   switch (plan) {
     case "gift":
-      return isZh ? "礼包无限制" : "Gift Unlimited";
+      return isZh ? "礼包无限版" : "Gift Unlimited";
     case "ultra":
       return isZh ? "Ultra 专业版" : "Ultra Pro";
     case "pro":
@@ -374,37 +380,45 @@ export function SettingsModal({
 
             <div className="space-y-4">
               <Section title={copy.privacy} description={copy.privacyDesc}>
-                <div className="flex flex-wrap gap-2">
-                  <a
-                    href="/privacy"
-                    className="inline-flex h-10 items-center rounded-full border border-white/10 bg-white/5 px-4 text-[12px] font-medium text-slate-100 transition hover:bg-white/10"
-                  >
-                    {copy.privacyPolicy}
-                  </a>
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex h-10 items-center rounded-full border border-white/10 bg-white/5 px-4 text-[12px] font-medium text-slate-500"
-                  >
-                    {copy.terms}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onClearLocalData}
-                    className="inline-flex h-10 items-center rounded-full border border-white/10 bg-white/5 px-4 text-[12px] font-medium text-slate-100 transition hover:bg-white/10"
-                  >
-                    {copy.clearLocalData}
-                  </button>
-                  <button
-                    type="button"
-                    disabled
-                    className="inline-flex h-10 items-center rounded-full border border-red-400/20 bg-red-500/10 px-4 text-[12px] font-medium text-red-100/60"
-                  >
-                    {copy.deleteAccount}
-                  </button>
-                  <span className="inline-flex h-10 items-center rounded-full border border-white/10 bg-black/20 px-3 text-[11px] text-slate-400">
-                    {copy.deleteAccountHint}
-                  </span>
+                <div className="space-y-3">
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href="/privacy"
+                      className="inline-flex h-10 items-center rounded-full border border-white/10 bg-white/5 px-4 text-[12px] font-medium text-slate-100 transition hover:bg-white/10"
+                    >
+                      {copy.privacyPolicy}
+                    </a>
+                    <button
+                      type="button"
+                      disabled
+                      className="inline-flex h-10 items-center rounded-full border border-white/10 bg-white/5 px-4 text-[12px] font-medium text-slate-500"
+                    >
+                      {copy.terms}
+                    </button>
+                  </div>
+                  <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-3">
+                    <p className="text-[11px] font-medium text-slate-100">{copy.localData}</p>
+                    <p className="mt-1 text-[11px] leading-5 text-slate-400">{copy.localDataDesc}</p>
+                    <button
+                      type="button"
+                      onClick={onClearLocalData}
+                      className="mt-3 inline-flex h-10 items-center rounded-full border border-white/10 bg-white/5 px-4 text-[12px] font-medium text-slate-100 transition hover:bg-white/10"
+                    >
+                      {copy.clearLocalData}
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      disabled
+                      className="inline-flex h-10 items-center rounded-full border border-red-400/20 bg-red-500/10 px-4 text-[12px] font-medium text-red-100/60"
+                    >
+                      {copy.deleteAccount}
+                    </button>
+                    <span className="inline-flex h-10 items-center rounded-full border border-white/10 bg-black/20 px-3 text-[11px] text-slate-400">
+                      {copy.deleteAccountHint}
+                    </span>
+                  </div>
                 </div>
               </Section>
 

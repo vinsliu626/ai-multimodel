@@ -79,9 +79,7 @@ export function ModeDropdown({
 
       {open ? (
         <div className="absolute right-0 z-50 mt-2 w-[300px] overflow-hidden rounded-2xl border border-white/10 bg-slate-950/95 shadow-2xl shadow-black/40 backdrop-blur-xl">
-          <div className="border-b border-white/5 px-3 py-2 text-[11px] text-slate-400">
-            {isZh ? "选择工作区" : "Choose a workspace"}
-          </div>
+          <div className="border-b border-white/5 px-3 py-2 text-[11px] text-slate-400">{isZh ? "选择工作区" : "Choose a workspace"}</div>
 
           <div className="p-1">
             {items.map((item) => {

@@ -55,6 +55,7 @@ function useTypewriterRaf(text: string, charsPerFrame = 3) {
   return { out, done };
 }
 
+
 type DemoStep = {
   side: "left" | "right";
   role: "You" | "Planner" | "Writer" | "Reviewer" | "Final";

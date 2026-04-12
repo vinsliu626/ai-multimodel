@@ -1,7 +1,6 @@
-"use client";
+﻿"use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
-
 import {
   getFormatsByCategory,
   getTargetOptions,
@@ -32,77 +31,52 @@ type TestModeConfig = {
 
 type Copy = {
   badge: string;
-  workspaceDescription: string;
-  lockedTitle: string;
-  lockedBody: string;
   title: string;
   subtitle: string;
-  fromLabel: string;
-  toLabel: string;
-  swapLabel: string;
-  uploadTitle: string;
-  uploadSubtitle: string;
-  uploadHint: string;
-  dragActive: string;
-  browseLabel: string;
-  selectedFilesLabel: string;
-  supportedFormats: string;
-  planLimit: string;
-  temporaryNoteLabel: string;
-  temporaryNote: string;
-  currentPair: string;
-  pairReady: string;
-  pairUnavailable: string;
-  targetHelp: string;
-  invalidPair: string;
-  planUsage: string;
-  usageToday: string;
-  maxFileSize: string;
-  batchProcessing: string;
+  lockedTitle: string;
+  lockedBody: string;
+  from: string;
+  to: string;
+  swap: string;
+  upload: string;
+  limit: string;
+  hint: string;
+  pick: string;
+  selected: string;
+  ready: string;
+  pairOff: string;
+  invalid: string;
+  empty: string;
+  badFile: string;
+  tooLarge: string;
+  batch: string;
+  plan: string;
+  quota: string;
+  pending: string;
+  failed: string;
+  convert: string;
+  converting: string;
+  done: string;
+  done2: string;
+  download: string;
+  result: string;
+  preview: string;
+  usage: string;
+  size: string;
+  batching: string;
   speed: string;
-  mediaAccess: string;
-  standard: string;
-  faster: string;
-  priority: string;
-  singleFileOnly: string;
-  filesCount: string;
-  noAdvancedVideo: string;
-  limitedMedia: string;
-  fullCommonSupport: string;
-  plansLabel: string;
-  dailyLimitLabel: string;
-  batchLimitLabel: string;
-  activePlan: string;
+  media: string;
+  proc: string;
+  local: string;
+  formats: string;
+  pair: string;
+  desc: string;
   basic: string;
   pro: string;
   ultra: string;
-  dailyConversions: string;
-  batchUpTo: string;
-  noBatch: string;
-  standardSpeed: string;
-  fasterSpeed: string;
-  priorityProcessing: string;
-  basicFeature: string;
-  proFeature: string;
-  ultraFeature: string;
-  validationFileTooLarge: string;
-  validationBatch: string;
-  validationInvalidPair: string;
-  validationPlan: string;
-  validationUnsupportedFile: string;
-  validationEmpty: string;
-  validationQuota: string;
-  validationBatchPending: string;
-  conversionFailed: string;
-  convertAction: string;
-  convertingAction: string;
-  successTitle: string;
-  successDetail: string;
-  downloadAction: string;
-  resultReady: string;
-  previewLabel: string;
-  documents: string;
-  images: string;
+  current: string;
+  docs: string;
+  imgs: string;
   audio: string;
   video: string;
   pdf: string;
@@ -117,118 +91,174 @@ type Copy = {
   m4a: string;
   mp4: string;
   mov: string;
-  extractAudio: string;
-  upgradeForMore: string;
-  comingSoon: string;
+  extract: string;
+  upgrade: string;
+  soon: string;
+  single: string;
+  files: string;
+  none: string;
+  std: string;
+  fast: string;
+  prio: string;
+  noVideo: string;
+  limited: string;
+  full: string;
 };
 
-const copy: Copy = {
-  badge: "Converter",
-  workspaceDescription: "Convert documents, images, audio, and common media formats",
-  lockedTitle: "Sign in to open Converter",
-  lockedBody: "Use a dedicated NexusDesk workspace for flexible file conversion with plan-aware limits and a cleaner upload flow.",
-  title: "Convert files with a clear FROM to TO flow",
-  subtitle: "Supported live conversions currently focus on lightweight PDF and image workflows. Media paths stay visible but intentionally disabled until they are wired.",
-  fromLabel: "From",
-  toLabel: "To",
-  swapLabel: "Swap formats",
-  uploadTitle: "Upload or drag and drop your file",
-  uploadSubtitle: "Maximum size depends on your plan",
-  uploadHint: "Supported targets update automatically from the source format you choose.",
-  dragActive: "Drop files here to prepare the conversion",
-  browseLabel: "Choose files",
-  selectedFilesLabel: "Selected files",
-  supportedFormats: "Supported formats",
-  planLimit: "Plan limit",
-  temporaryNoteLabel: "Processing mode",
-  temporaryNote: "Supported live conversions run locally in your browser.",
-  currentPair: "Current pair",
-  pairReady: "Ready to convert this file.",
-  pairUnavailable: "This pair is disabled on your current plan or not wired yet.",
-  targetHelp: "Target options narrow down automatically after you choose a source format.",
-  invalidPair: "Choose another target format for this source.",
-  planUsage: "Plan & Usage",
-  usageToday: "Daily conversions",
-  maxFileSize: "Max file size",
-  batchProcessing: "Batch processing",
-  speed: "Processing speed",
-  mediaAccess: "Media support",
-  standard: "Standard",
-  faster: "Faster",
-  priority: "Priority",
-  singleFileOnly: "Single file only",
-  filesCount: "files",
-  noAdvancedVideo: "No advanced video conversion",
-  limitedMedia: "Limited media support",
-  fullCommonSupport: "Full common format support",
-  plansLabel: "Plan tiers",
-  dailyLimitLabel: "Daily limit",
-  batchLimitLabel: "Batch",
-  activePlan: "Current",
-  basic: "Basic",
-  pro: "Pro",
-  ultra: "Ultra",
-  dailyConversions: "daily conversions",
-  batchUpTo: "up to",
-  noBatch: "No batch",
-  standardSpeed: "Standard speed",
-  fasterSpeed: "Faster speed",
-  priorityProcessing: "Priority processing",
-  basicFeature: "Live image and PDF export",
-  proFeature: "More quota, media still staged",
-  ultraFeature: "Higher limits, advanced media still staged",
-  validationFileTooLarge: "Selected files exceed your current Converter file size limit.",
-  validationBatch: "This plan does not allow that many files in one conversion.",
-  validationInvalidPair: "That conversion pair is not supported.",
-  validationPlan: "This conversion needs a higher plan.",
-  validationUnsupportedFile: "The uploaded file does not match the selected FROM format.",
-  validationEmpty: "Upload a file before converting.",
-  validationQuota: "You've used all Converter runs for today. Upgrade your plan or try again tomorrow.",
-  validationBatchPending: "Batch conversion is not wired yet. Upload one file at a time.",
-  conversionFailed: "Unable to complete this conversion.",
-  convertAction: "Convert file",
-  convertingAction: "Converting...",
-  successTitle: "Conversion complete",
-  successDetail: "Your output is ready to download.",
-  downloadAction: "Download result",
-  resultReady: "Result ready",
-  previewLabel: "Preview",
-  documents: "Documents",
-  images: "Images",
-  audio: "Audio",
-  video: "Video / Media",
-  pdf: "PDF",
-  docx: "DOCX",
-  txt: "TXT",
-  pptx: "PPTX",
-  jpg: "JPG",
-  png: "PNG",
-  webp: "WEBP",
-  mp3: "MP3",
-  wav: "WAV",
-  m4a: "M4A",
-  mp4: "MP4",
-  mov: "MOV",
-  extractAudio: "Extract Audio",
-  upgradeForMore: "Upgrade for more",
-  comingSoon: "Coming soon",
+const COPY: Record<"en" | "zh", Copy> = {
+  en: {
+    badge: "Converter",
+    title: "Convert files with a clear FROM to TO flow",
+    subtitle: "Supported live conversions currently focus on lightweight PDF and image workflows. Media paths stay visible but intentionally disabled until they are wired.",
+    lockedTitle: "Sign in to open Converter",
+    lockedBody: "Use a dedicated NexusDesk workspace for flexible file conversion with plan-aware limits and a cleaner upload flow.",
+    from: "From",
+    to: "To",
+    swap: "Swap formats",
+    upload: "Upload or drag and drop your file",
+    limit: "Plan limit",
+    hint: "Supported targets update automatically from the source format you choose.",
+    pick: "Choose files",
+    selected: "Selected files",
+    ready: "Ready to convert this file.",
+    pairOff: "This pair is disabled on your current plan or not wired yet.",
+    invalid: "Choose another target format for this source.",
+    empty: "Upload a file before converting.",
+    badFile: "The uploaded file does not match the selected FROM format.",
+    tooLarge: "Selected files exceed your current Converter file size limit.",
+    batch: "This plan does not allow that many files in one conversion.",
+    plan: "This conversion needs a higher plan.",
+    quota: "You've used all Converter runs for today. Upgrade your plan or try again tomorrow.",
+    pending: "Batch conversion is not wired yet. Upload one file at a time.",
+    failed: "Unable to complete this conversion.",
+    convert: "Convert file",
+    converting: "Converting...",
+    done: "Conversion complete",
+    done2: "Your output is ready to download.",
+    download: "Download result",
+    result: "Result ready",
+    preview: "Preview",
+    usage: "Daily conversions",
+    size: "Max file size",
+    batching: "Batch processing",
+    speed: "Processing speed",
+    media: "Media support",
+    proc: "Processing mode",
+    local: "Supported live conversions run locally in your browser.",
+    formats: "Supported formats",
+    pair: "Current pair",
+    desc: "Convert documents, images, audio, and common media formats",
+    basic: "Basic",
+    pro: "Pro",
+    ultra: "Ultra",
+    current: "Current",
+    docs: "Documents",
+    imgs: "Images",
+    audio: "Audio",
+    video: "Video / Media",
+    pdf: "PDF",
+    docx: "DOCX",
+    txt: "TXT",
+    pptx: "PPTX",
+    jpg: "JPG",
+    png: "PNG",
+    webp: "WEBP",
+    mp3: "MP3",
+    wav: "WAV",
+    m4a: "M4A",
+    mp4: "MP4",
+    mov: "MOV",
+    extract: "Extract Audio",
+    upgrade: "Upgrade for more",
+    soon: "Coming soon",
+    single: "Single file only",
+    files: "files",
+    none: "No batch",
+    std: "Standard",
+    fast: "Faster",
+    prio: "Priority",
+    noVideo: "No advanced video conversion",
+    limited: "Limited media support",
+    full: "Full common format support",
+  },
+  zh: {
+    badge: "转换器",
+    title: "按 FROM → TO 的清晰流程转换文件",
+    subtitle: "当前已支持的在线转换以轻量 PDF 和图片流程为主。媒体路径会先展示，但在真正接入前仍保持禁用状态。",
+    lockedTitle: "登录后使用转换器",
+    lockedBody: "进入独立的 NexusDesk 转换工作区，按套餐限制进行更清晰的文件转换操作。",
+    from: "源格式",
+    to: "目标格式",
+    swap: "交换格式",
+    upload: "上传文件或直接拖拽到这里",
+    limit: "套餐限制",
+    hint: "选择源格式后，可用目标格式会自动更新。",
+    pick: "选择文件",
+    selected: "已选文件",
+    ready: "可以开始转换这个文件。",
+    pairOff: "当前套餐下此组合不可用，或该流程尚未接入。",
+    invalid: "请为当前源格式选择其他目标格式。",
+    empty: "请先上传文件再开始转换。",
+    badFile: "上传文件与当前选择的源格式不匹配。",
+    tooLarge: "所选文件超过当前转换器文件大小限制。",
+    batch: "当前套餐不允许一次转换这么多文件。",
+    plan: "此转换需要更高等级的套餐。",
+    quota: "你今天的转换次数已用完。请升级套餐或明天再试。",
+    pending: "批量转换尚未接入，请一次只上传一个文件。",
+    failed: "暂时无法完成这次转换。",
+    convert: "开始转换",
+    converting: "转换中...",
+    done: "转换完成",
+    done2: "输出文件已可下载。",
+    download: "下载结果",
+    result: "结果已就绪",
+    preview: "预览",
+    usage: "今日转换次数",
+    size: "最大文件大小",
+    batching: "批量处理",
+    speed: "处理速度",
+    media: "媒体支持",
+    proc: "处理方式",
+    local: "当前已接入的在线转换会直接在浏览器本地运行。",
+    formats: "支持格式",
+    pair: "当前组合",
+    desc: "转换文档、图片、音频和常见媒体格式",
+    basic: "Basic",
+    pro: "Pro",
+    ultra: "Ultra",
+    current: "当前套餐",
+    docs: "文档",
+    imgs: "图片",
+    audio: "音频",
+    video: "视频 / 媒体",
+    pdf: "PDF",
+    docx: "DOCX",
+    txt: "TXT",
+    pptx: "PPTX",
+    jpg: "JPG",
+    png: "PNG",
+    webp: "WEBP",
+    mp3: "MP3",
+    wav: "WAV",
+    m4a: "M4A",
+    mp4: "MP4",
+    mov: "MOV",
+    extract: "提取音频",
+    upgrade: "升级后可用",
+    soon: "即将推出",
+    single: "仅支持单文件",
+    files: "个文件",
+    none: "不支持批量",
+    std: "标准",
+    fast: "更快",
+    prio: "优先",
+    noVideo: "不支持高级视频转换",
+    limited: "有限媒体支持",
+    full: "支持完整常见格式",
+  },
 };
 
-const categoryOrder: ConverterCategory[] = ["documents", "images", "audio", "video"];
-
-type PlanCardDefinition = {
-  id: "basic" | "pro" | "ultra";
-  sizeBytes: number;
-  conversionsPerDay: number;
-  batchMaxFiles: number;
-  speed: "standard" | "fast" | "priority";
-};
-
-const PLAN_CARD_DEFS: PlanCardDefinition[] = [
-  { id: "basic", sizeBytes: 10 * 1024 * 1024, conversionsPerDay: 5, batchMaxFiles: 1, speed: "standard" },
-  { id: "pro", sizeBytes: 50 * 1024 * 1024, conversionsPerDay: 30, batchMaxFiles: 3, speed: "fast" },
-  { id: "ultra", sizeBytes: 200 * 1024 * 1024, conversionsPerDay: 100, batchMaxFiles: 10, speed: "priority" },
-];
+const CATEGORY_ORDER: ConverterCategory[] = ["documents", "images", "audio", "video"];
 
 function formatFileSize(bytes?: number | null) {
   if (!bytes && bytes !== 0) return "--";
@@ -239,7 +269,7 @@ function formatFileSize(bytes?: number | null) {
   return `${kb % 1 === 0 ? kb.toFixed(0) : kb.toFixed(1)} KB`;
 }
 
-function formatLabel(formatId: ConverterFormatId) {
+function formatLabel(format: ConverterFormatId, copy: Copy) {
   return {
     pdf: copy.pdf,
     docx: copy.docx,
@@ -253,56 +283,36 @@ function formatLabel(formatId: ConverterFormatId) {
     m4a: copy.m4a,
     mp4: copy.mp4,
     mov: copy.mov,
-    extract_audio: copy.extractAudio,
-  }[formatId];
+    extract_audio: copy.extract,
+  }[format];
 }
 
-function categoryLabel(category: ConverterCategory) {
+function categoryLabel(category: ConverterCategory, copy: Copy) {
   return {
-    documents: copy.documents,
-    images: copy.images,
+    documents: copy.docs,
+    images: copy.imgs,
     audio: copy.audio,
     video: copy.video,
   }[category];
 }
 
-function planLabel(plan: ConverterEntitlement["plan"]) {
+function planLabel(plan: ConverterEntitlement["plan"], copy: Copy) {
   const normalized = normalizeConverterPlan(plan);
-  if (normalized === "ultra") return copy.ultra;
-  if (normalized === "pro") return copy.pro;
-  return copy.basic;
+  return normalized === "ultra" ? copy.ultra : normalized === "pro" ? copy.pro : copy.basic;
 }
 
-function speedLabel(priority: ConverterEntitlement["converterPriority"]) {
-  if (priority === "priority") return copy.priority;
-  if (priority === "fast") return copy.faster;
-  return copy.standard;
+function speedLabel(priority: ConverterEntitlement["converterPriority"], copy: Copy) {
+  return priority === "priority" ? copy.prio : priority === "fast" ? copy.fast : copy.std;
 }
 
-function planTierSpeedLabel(speed: PlanCardDefinition["speed"]) {
-  if (speed === "priority") return copy.priorityProcessing;
-  if (speed === "fast") return copy.fasterSpeed;
-  return copy.standardSpeed;
-}
-
-function mediaSupportLabel(planId: PlanCardDefinition["id"]) {
-  if (planId === "ultra") return copy.ultraFeature;
-  if (planId === "pro") return copy.proFeature;
-  return copy.basicFeature;
-}
-
-function currentMediaSupport(entitlement: ConverterEntitlement | null) {
+function mediaLabel(entitlement: ConverterEntitlement | null, copy: Copy) {
   const normalized = normalizeConverterPlan(entitlement?.plan);
-  if (normalized === "ultra" && entitlement?.converterAllowAdvancedVideo) return copy.fullCommonSupport;
-  if (normalized === "pro") return copy.limitedMedia;
-  return copy.noAdvancedVideo;
+  if (normalized === "ultra" && entitlement?.converterAllowAdvancedVideo) return copy.full;
+  if (normalized === "pro") return copy.limited;
+  return copy.noVideo;
 }
 
-function buildSourceOptions(entitlement: ConverterEntitlement | null) {
-  return getFormatsByCategory(entitlement?.plan ?? "basic", Boolean(entitlement?.converterAllowAdvancedVideo));
-}
-
-function OptionMeta({ label, value }: { label: string; value: string }) {
+function Meta({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[22px] border border-white/8 bg-black/20 px-4 py-3">
       <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">{label}</p>
@@ -312,6 +322,7 @@ function OptionMeta({ label, value }: { label: string; value: string }) {
 }
 
 export function ConverterUI({
+  isZh,
   locked,
   entitlement,
   testMode,
@@ -321,6 +332,7 @@ export function ConverterUI({
   entitlement: ConverterEntitlement | null;
   testMode?: TestModeConfig | null;
 }) {
+  const copy = isZh ? COPY.zh : COPY.en;
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [fromFormat, setFromFormat] = useState<ConverterFormatId>("pdf");
   const [toFormat, setToFormat] = useState<ConverterFormatId>("jpg");
@@ -344,20 +356,21 @@ export function ConverterUI({
     setUsedToday(entitlement?.usedConverterCountToday ?? 0);
   }, [entitlement?.usedConverterCountToday, testMode?.dailyUsageStorageKey, testMode?.enabled]);
 
-  const sourceGroups = useMemo(() => buildSourceOptions(entitlement), [entitlement]);
+  const sourceGroups = useMemo(
+    () => getFormatsByCategory(entitlement?.plan ?? "basic", !!entitlement?.converterAllowAdvancedVideo),
+    [entitlement]
+  );
   const targetOptions = useMemo(
-    () => getTargetOptions(fromFormat, entitlement?.plan ?? "basic", Boolean(entitlement?.converterAllowAdvancedVideo)),
+    () => getTargetOptions(fromFormat, entitlement?.plan ?? "basic", !!entitlement?.converterAllowAdvancedVideo),
     [entitlement?.converterAllowAdvancedVideo, entitlement?.plan, fromFormat]
   );
   const enabledTarget = targetOptions.find((option) => option.enabled)?.id ?? null;
   const activeToFormat = targetOptions.some((option) => option.id === toFormat && option.enabled) ? toFormat : enabledTarget;
-  const currentPairValid = activeToFormat
-    ? isConversionPairAllowed(fromFormat, activeToFormat, entitlement?.plan ?? "basic", Boolean(entitlement?.converterAllowAdvancedVideo))
-    : false;
+  const currentPairValid = !!activeToFormat && isConversionPairAllowed(fromFormat, activeToFormat, entitlement?.plan ?? "basic", !!entitlement?.converterAllowAdvancedVideo);
   const activePlan = normalizeConverterPlan(entitlement?.plan);
   const supportedFormatsValue = useMemo(
-    () => categoryOrder.flatMap((category) => sourceGroups[category].map((item) => formatLabel(item.id))).join(" · "),
-    [sourceGroups]
+    () => CATEGORY_ORDER.flatMap((category) => sourceGroups[category].map((item) => formatLabel(item.id, copy))).join(" / "),
+    [copy, sourceGroups]
   );
 
   function setFeedback(tone: "neutral" | "warning" | "success", nextMessage: string | null) {
@@ -372,29 +385,22 @@ export function ConverterUI({
     }
   }
 
-  function getValidationCopy(code: string) {
-    switch (code) {
-      case "FILE_TOO_LARGE":
-        return copy.validationFileTooLarge;
-      case "BATCH_LIMIT_EXCEEDED":
-        return copy.validationBatch;
-      case "PLAN_REQUIRED":
-      case "ADVANCED_VIDEO_REQUIRED":
-        return copy.validationPlan;
-      default:
-        return copy.validationInvalidPair;
-    }
+  function validationMessage(code: string) {
+    if (code === "FILE_TOO_LARGE") return copy.tooLarge;
+    if (code === "BATCH_LIMIT_EXCEEDED") return copy.batch;
+    if (code === "PLAN_REQUIRED" || code === "ADVANCED_VIDEO_REQUIRED") return copy.plan;
+    return copy.invalid;
   }
 
-  function validateFiles(files: File[]) {
-    if (files.length === 0) return { ok: false as const, message: copy.validationEmpty };
+  function validate(files: File[]) {
+    if (files.length === 0) return { ok: false as const, message: copy.empty };
 
     const maxBatchFiles = entitlement?.converterBatchMaxFiles ?? 1;
     if (files.length > 1 && maxBatchFiles > 1) {
-      return { ok: false as const, message: copy.validationBatchPending };
+      return { ok: false as const, message: copy.pending };
     }
 
-    const requestValidation = validateConverterRequest({
+    const validation = validateConverterRequest({
       plan: entitlement?.plan ?? "basic",
       allowAdvancedVideo: entitlement?.converterAllowAdvancedVideo,
       from: fromFormat,
@@ -405,13 +411,9 @@ export function ConverterUI({
       maxFileSizeBytes: entitlement?.converterMaxFileSizeBytes ?? 10 * 1024 * 1024,
     });
 
-    if (!requestValidation.ok) return { ok: false as const, message: getValidationCopy(requestValidation.code) };
-    if (files.some((file) => !isFileCompatibleWithFormat(file, fromFormat))) {
-      return { ok: false as const, message: copy.validationUnsupportedFile };
-    }
-    if ((entitlement?.converterConversionsPerDay ?? 0) > 0 && usedToday >= (entitlement?.converterConversionsPerDay ?? 0)) {
-      return { ok: false as const, message: copy.validationQuota };
-    }
+    if (!validation.ok) return { ok: false as const, message: validationMessage(validation.code) };
+    if (files.some((file) => !isFileCompatibleWithFormat(file, fromFormat))) return { ok: false as const, message: copy.badFile };
+    if ((entitlement?.converterConversionsPerDay ?? 0) > 0 && usedToday >= (entitlement?.converterConversionsPerDay ?? 0)) return { ok: false as const, message: copy.quota };
     return { ok: true as const };
   }
 
@@ -420,21 +422,14 @@ export function ConverterUI({
     const files = Array.from(nextFiles);
     setSelectedFiles(files);
     setResult(null);
-    const validation = validateFiles(files);
-    setFeedback(validation.ok ? "neutral" : "warning", validation.ok ? copy.pairReady : validation.message);
+    const validation = validate(files);
+    setFeedback(validation.ok ? "neutral" : "warning", validation.ok ? copy.ready : validation.message);
   }
 
   async function handleConvert() {
-    if (!activeToFormat) {
-      setFeedback("warning", copy.validationInvalidPair);
-      return;
-    }
-
-    const validation = validateFiles(selectedFiles);
-    if (!validation.ok) {
-      setFeedback("warning", validation.message);
-      return;
-    }
+    if (!activeToFormat) return setFeedback("warning", copy.invalid);
+    const validation = validate(selectedFiles);
+    if (!validation.ok) return setFeedback("warning", validation.message);
 
     setIsConverting(true);
     setResult(null);
@@ -444,20 +439,19 @@ export function ConverterUI({
       if (testMode?.forceFailure) throw new Error("FORCED_FAILURE");
       const nextResult = await convertFile({ file: selectedFiles[0], from: fromFormat, to: activeToFormat });
       setResult(nextResult);
-      setFeedback("success", `${copy.successTitle}. ${copy.successDetail}`);
+      setFeedback("success", `${copy.done}. ${copy.done2}`);
       persistUsedToday(usedToday + 1);
     } catch (error) {
       console.error("[converter] conversion failed", error);
-      setFeedback("warning", copy.conversionFailed);
+      setFeedback("warning", copy.failed);
     } finally {
       setIsConverting(false);
     }
   }
 
   function handleSwap() {
-    if (!activeToFormat || !isConversionPairAllowed(activeToFormat, fromFormat, entitlement?.plan ?? "basic", Boolean(entitlement?.converterAllowAdvancedVideo))) {
-      setFeedback("warning", copy.invalidPair);
-      return;
+    if (!activeToFormat || !isConversionPairAllowed(activeToFormat, fromFormat, entitlement?.plan ?? "basic", !!entitlement?.converterAllowAdvancedVideo)) {
+      return setFeedback("warning", copy.invalid);
     }
     setResult(null);
     setSelectedFiles([]);
@@ -497,72 +491,59 @@ export function ConverterUI({
           <div className="mx-auto mt-8 max-w-4xl rounded-[30px] border border-white/10 bg-black/20 p-4 md:p-5">
             <div className="grid gap-3 md:grid-cols-[1fr_auto_1fr_auto] md:items-end">
               <label className="block">
-                <span className="mb-2 block text-left text-[11px] uppercase tracking-[0.24em] text-slate-500">{copy.fromLabel}</span>
+                <span className="mb-2 block text-left text-[11px] uppercase tracking-[0.24em] text-slate-500">{copy.from}</span>
                 <select
                   value={fromFormat}
                   onChange={(event) => {
                     const nextFrom = event.target.value as ConverterFormatId;
-                    const nextTargets = getTargetOptions(nextFrom, entitlement?.plan ?? "basic", Boolean(entitlement?.converterAllowAdvancedVideo));
-                    const nextTo = nextTargets.find((option) => option.enabled)?.id;
+                    const nextTo = getTargetOptions(nextFrom, entitlement?.plan ?? "basic", !!entitlement?.converterAllowAdvancedVideo).find((option) => option.enabled)?.id;
                     setFromFormat(nextFrom);
                     if (nextTo) setToFormat(nextTo);
                   }}
                   className="h-14 w-full rounded-[22px] border border-white/10 bg-white/[0.06] px-4 text-sm font-medium text-slate-100"
-                  aria-label={copy.fromLabel}
+                  aria-label={copy.from}
                 >
-                  {categoryOrder.map((category) => {
-                    const formats = sourceGroups[category];
-                    if (formats.length === 0) return null;
-                    return (
-                      <optgroup key={category} label={categoryLabel(category)}>
-                        {formats.map((format) => (
+                  {CATEGORY_ORDER.map((category) =>
+                    sourceGroups[category].length ? (
+                      <optgroup key={category} label={categoryLabel(category, copy)}>
+                        {sourceGroups[category].map((format) => (
                           <option key={format.id} value={format.id}>
-                            {formatLabel(format.id)}
+                            {formatLabel(format.id, copy)}
                           </option>
                         ))}
                       </optgroup>
-                    );
-                  })}
+                    ) : null
+                  )}
                 </select>
               </label>
 
               <div className="flex items-center justify-center pb-1">
-                <button
-                  type="button"
-                  onClick={handleSwap}
-                  className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] text-slate-200"
-                  aria-label={copy.swapLabel}
-                >
+                <button type="button" onClick={handleSwap} className="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/[0.06] text-slate-200" aria-label={copy.swap}>
                   ⇄
                 </button>
               </div>
 
               <label className="block">
-                <span className="mb-2 block text-left text-[11px] uppercase tracking-[0.24em] text-slate-500">{copy.toLabel}</span>
-                <select
-                  value={activeToFormat ?? ""}
-                  onChange={(event) => setToFormat(event.target.value as ConverterFormatId)}
-                  className="h-14 w-full rounded-[22px] border border-white/10 bg-white/[0.06] px-4 text-sm font-medium text-slate-100"
-                  aria-label={copy.toLabel}
-                >
+                <span className="mb-2 block text-left text-[11px] uppercase tracking-[0.24em] text-slate-500">{copy.to}</span>
+                <select value={activeToFormat ?? ""} onChange={(event) => setToFormat(event.target.value as ConverterFormatId)} className="h-14 w-full rounded-[22px] border border-white/10 bg-white/[0.06] px-4 text-sm font-medium text-slate-100" aria-label={copy.to}>
                   {targetOptions.map((option) => (
                     <option key={option.id} value={option.id} disabled={!option.enabled}>
-                      {formatLabel(option.id)}
-                      {!option.enabled ? ` · ${option.comingSoon ? copy.comingSoon : copy.upgradeForMore}` : ""}
+                      {formatLabel(option.id, copy)}
+                      {!option.enabled ? ` / ${option.comingSoon ? copy.soon : copy.upgrade}` : ""}
                     </option>
                   ))}
                 </select>
               </label>
 
               <div className="pb-1 text-left md:text-right">
-                <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">{copy.currentPair}</p>
+                <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">{copy.pair}</p>
                 <p className="mt-2 text-sm font-medium text-slate-100">
-                  {formatLabel(fromFormat)} → {activeToFormat ? formatLabel(activeToFormat) : "--"}
+                  {formatLabel(fromFormat, copy)} → {activeToFormat ? formatLabel(activeToFormat, copy) : "--"}
                 </p>
               </div>
             </div>
 
-            <p className="mt-3 text-center text-[12px] text-slate-400">{currentPairValid ? copy.targetHelp : copy.pairUnavailable}</p>
+            <p className="mt-3 text-center text-[12px] text-slate-400">{currentPairValid ? copy.hint : copy.pairOff}</p>
           </div>
 
           <div
@@ -584,28 +565,24 @@ export function ConverterUI({
               handleSelectedFiles(event.dataTransfer.files);
             }}
             data-testid="converter-dropzone"
-            className={[
-              "mx-auto mt-6 max-w-4xl rounded-[32px] border border-dashed px-6 py-10 text-center md:px-8 md:py-12",
-              dragActive ? "border-sky-300/50 bg-sky-400/5" : "border-white/12 bg-white/[0.02]",
-            ].join(" ")}
+            className={["mx-auto mt-6 max-w-4xl rounded-[32px] border border-dashed px-6 py-10 text-center md:px-8 md:py-12", dragActive ? "border-sky-300/50 bg-sky-400/5" : "border-white/12 bg-white/[0.02]"].join(" ")}
           >
             <input ref={inputRef} type="file" multiple hidden accept={getConverterAccept(fromFormat)} onChange={(event) => handleSelectedFiles(event.target.files)} data-testid="converter-file-input" />
-            <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-50">{dragActive ? copy.dragActive : copy.uploadTitle}</h3>
-            <p className="mt-2 text-sm text-slate-400">{copy.uploadSubtitle}</p>
-            <p className="mt-2 text-[12px] text-slate-500">
-              {copy.planLimit}: {formatFileSize(entitlement?.converterMaxFileSizeBytes)}
+            <h3 className="mt-2 text-2xl font-semibold tracking-tight text-slate-50">{copy.upload}</h3>
+            <p className="mt-2 text-sm text-slate-400">
+              {copy.limit}: {formatFileSize(entitlement?.converterMaxFileSizeBytes)}
             </p>
 
             <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
               <button type="button" onClick={() => inputRef.current?.click()} className="h-12 rounded-full bg-gradient-to-r from-blue-500 via-sky-500 to-emerald-400 px-5 text-sm font-semibold text-white">
-                {copy.browseLabel}
+                {copy.pick}
               </button>
-              <span className="text-[12px] text-slate-500">{copy.uploadHint}</span>
+              <span className="text-[12px] text-slate-500">{copy.hint}</span>
             </div>
 
             {selectedFiles.length > 0 ? (
               <div className="mt-6 rounded-[24px] border border-white/8 bg-black/20 p-4 text-left">
-                <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">{copy.selectedFilesLabel}</p>
+                <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">{copy.selected}</p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
                   {selectedFiles.map((file) => (
                     <div key={`${file.name}-${file.size}`} className="rounded-2xl border border-white/8 bg-black/20 px-4 py-3">
@@ -618,13 +595,8 @@ export function ConverterUI({
             ) : null}
 
             <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
-              <button
-                type="button"
-                onClick={handleConvert}
-                disabled={!currentPairValid || isConverting}
-                className="h-12 rounded-full bg-white px-6 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-slate-500"
-              >
-                {isConverting ? copy.convertingAction : copy.convertAction}
+              <button type="button" onClick={handleConvert} disabled={!currentPairValid || isConverting} className="h-12 rounded-full bg-white px-6 text-sm font-semibold text-slate-950 disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-slate-500">
+                {isConverting ? copy.converting : copy.convert}
               </button>
             </div>
 
@@ -633,27 +605,25 @@ export function ConverterUI({
                 {message}
               </p>
             ) : (
-              <p className="mt-5 text-sm text-slate-300">{currentPairValid ? copy.pairReady : copy.invalidPair}</p>
+              <p className="mt-5 text-sm text-slate-300">{currentPairValid ? copy.ready : copy.invalid}</p>
             )}
 
             {result ? (
               <div className="mt-6 rounded-[24px] border border-emerald-300/20 bg-emerald-400/5 p-4 text-left" data-testid="converter-result">
                 <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                   <div>
-                    <p className="text-[10px] uppercase tracking-[0.24em] text-emerald-200/80">{copy.resultReady}</p>
-                    <h4 className="mt-2 text-lg font-semibold text-slate-50">{copy.successTitle}</h4>
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-emerald-200/80">{copy.result}</p>
+                    <h4 className="mt-2 text-lg font-semibold text-slate-50">{copy.done}</h4>
                     <p className="mt-1 text-sm text-slate-300">{result.fileName}</p>
-                    <p className="mt-1 text-[12px] text-slate-400">
-                      {result.mimeType} · {formatFileSize(result.sizeBytes)}
-                    </p>
+                    <p className="mt-1 text-[12px] text-slate-400">{result.mimeType} / {formatFileSize(result.sizeBytes)}</p>
                   </div>
                   <a href={result.downloadUrl} download={result.fileName} className="inline-flex h-11 items-center justify-center rounded-full border border-emerald-300/20 bg-white px-5 text-sm font-semibold text-slate-950">
-                    {copy.downloadAction}
+                    {copy.download}
                   </a>
                 </div>
                 {result.previewUrl ? (
                   <div className="mt-4">
-                    <p className="mb-2 text-[10px] uppercase tracking-[0.24em] text-slate-500">{copy.previewLabel}</p>
+                    <p className="mb-2 text-[10px] uppercase tracking-[0.24em] text-slate-500">{copy.preview}</p>
                     <img src={result.previewUrl} alt={result.fileName} className="max-h-64 rounded-2xl border border-white/10 object-contain" />
                   </div>
                 ) : null}
@@ -662,9 +632,9 @@ export function ConverterUI({
           </div>
 
           <div className="mx-auto mt-5 grid max-w-4xl gap-3 md:grid-cols-3">
-            <OptionMeta label={copy.supportedFormats} value={supportedFormatsValue} />
-            <OptionMeta label={copy.planLimit} value={`${planLabel(entitlement?.plan ?? "basic")} · ${formatFileSize(entitlement?.converterMaxFileSizeBytes)}`} />
-            <OptionMeta label={copy.temporaryNoteLabel} value={copy.temporaryNote} />
+            <Meta label={copy.formats} value={supportedFormatsValue} />
+            <Meta label={copy.limit} value={`${planLabel(entitlement?.plan ?? "basic", copy)} / ${formatFileSize(entitlement?.converterMaxFileSizeBytes)}`} />
+            <Meta label={copy.proc} value={copy.local} />
           </div>
         </section>
 
@@ -672,60 +642,50 @@ export function ConverterUI({
           <div className="rounded-[30px] border border-white/10 bg-white/[0.04] p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">{copy.planUsage}</p>
-                <h3 className="mt-2 text-lg font-semibold text-slate-50">{planLabel(entitlement?.plan ?? "basic")}</h3>
-                <p className="mt-1 text-sm text-slate-400">{copy.workspaceDescription}</p>
+                <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">{copy.badge}</p>
+                <h3 className="mt-2 text-lg font-semibold text-slate-50">{planLabel(entitlement?.plan ?? "basic", copy)}</h3>
+                <p className="mt-1 text-sm text-slate-400">{copy.desc}</p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-black/20 px-3 py-2 text-right">
                 <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">{copy.speed}</p>
-                <p className="mt-1 text-sm font-semibold text-slate-100">{speedLabel(entitlement?.converterPriority)}</p>
+                <p className="mt-1 text-sm font-semibold text-slate-100">{speedLabel(entitlement?.converterPriority, copy)}</p>
               </div>
             </div>
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <OptionMeta label={copy.usageToday} value={`${usedToday} / ${entitlement?.converterConversionsPerDay ?? "--"}`} />
-              <OptionMeta label={copy.maxFileSize} value={formatFileSize(entitlement?.converterMaxFileSizeBytes)} />
-              <OptionMeta label={copy.batchProcessing} value={entitlement?.converterBatchMaxFiles && entitlement.converterBatchMaxFiles > 1 ? `${copy.batchUpTo} ${entitlement.converterBatchMaxFiles} ${copy.filesCount}` : copy.singleFileOnly} />
-              <OptionMeta label={copy.mediaAccess} value={currentMediaSupport(entitlement)} />
+              <Meta label={copy.usage} value={`${usedToday} / ${entitlement?.converterConversionsPerDay ?? "--"}`} />
+              <Meta label={copy.size} value={formatFileSize(entitlement?.converterMaxFileSizeBytes)} />
+              <Meta label={copy.batching} value={entitlement?.converterBatchMaxFiles && entitlement.converterBatchMaxFiles > 1 ? `${isZh ? "最多" : "up to"} ${entitlement.converterBatchMaxFiles} ${copy.files}` : copy.single} />
+              <Meta label={copy.media} value={mediaLabel(entitlement, copy)} />
             </div>
           </div>
 
           <div className="rounded-[30px] border border-white/10 bg-white/[0.04] p-5">
-            <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">{copy.plansLabel}</p>
+            <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">{copy.current}</p>
             <div className="mt-4 space-y-3">
-              {PLAN_CARD_DEFS.map((plan) => {
-                const isActive = plan.id === activePlan;
-                return (
-                  <div key={plan.id} className={["rounded-[24px] border px-4 py-4", isActive ? "border-sky-400/35 bg-sky-400/5" : "border-white/8 bg-black/20"].join(" ")}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-slate-50">{plan.id === "basic" ? copy.basic : plan.id === "pro" ? copy.pro : copy.ultra}</p>
-                        {isActive ? <span className="rounded-full border border-sky-300/20 bg-sky-300/10 px-2 py-0.5 text-[10px] text-sky-100">{copy.activePlan}</span> : null}
-                      </div>
-                      <p className="text-[12px] text-slate-400">{formatFileSize(plan.sizeBytes)}</p>
+              {[
+                { id: "basic", size: 10, day: 5, batch: 1, speed: copy.std, desc: isZh ? "已接入图片与 PDF 导出" : "Live image and PDF export" },
+                { id: "pro", size: 50, day: 30, batch: 3, speed: copy.fast, desc: isZh ? "额度更高，媒体仍在分阶段接入" : "More quota, media still staged" },
+                { id: "ultra", size: 200, day: 100, batch: 10, speed: copy.prio, desc: isZh ? "限制更高，高级媒体仍在分阶段接入" : "Higher limits, advanced media still staged" },
+              ].map((plan) => (
+                <div key={plan.id} className={["rounded-[24px] border px-4 py-4", plan.id === activePlan ? "border-sky-400/35 bg-sky-400/5" : "border-white/8 bg-black/20"].join(" ")}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-slate-50">{plan.id === "basic" ? copy.basic : plan.id === "pro" ? copy.pro : copy.ultra}</p>
+                      {plan.id === activePlan ? <span className="rounded-full border border-sky-300/20 bg-sky-300/10 px-2 py-0.5 text-[10px] text-sky-100">{copy.current}</span> : null}
                     </div>
-
-                    <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                      <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-2">
-                        <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">{copy.dailyLimitLabel}</p>
-                        <p className="mt-1 text-sm text-slate-100">
-                          {plan.conversionsPerDay} {copy.dailyConversions}
-                        </p>
-                      </div>
-                      <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-2">
-                        <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">{copy.batchLimitLabel}</p>
-                        <p className="mt-1 text-sm text-slate-100">{plan.batchMaxFiles > 1 ? `${copy.batchUpTo} ${plan.batchMaxFiles}` : copy.noBatch}</p>
-                      </div>
-                      <div className="rounded-2xl border border-white/8 bg-black/20 px-3 py-2">
-                        <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">{copy.speed}</p>
-                        <p className="mt-1 text-sm text-slate-100">{planTierSpeedLabel(plan.speed)}</p>
-                      </div>
-                    </div>
-
-                    <p className="mt-3 text-sm text-slate-300">{mediaSupportLabel(plan.id)}</p>
+                    <p className="text-[12px] text-slate-400">{plan.size} MB</p>
                   </div>
-                );
-              })}
+
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    <Meta label={copy.usage} value={`${plan.day} ${isZh ? "次 / 天" : "daily conversions"}`} />
+                    <Meta label={copy.batching} value={plan.batch > 1 ? `${isZh ? "最多" : "up to"} ${plan.batch}` : copy.none} />
+                    <Meta label={copy.speed} value={plan.speed} />
+                  </div>
+
+                  <p className="mt-3 text-sm text-slate-300">{plan.desc}</p>
+                </div>
+              ))}
             </div>
           </div>
         </section>

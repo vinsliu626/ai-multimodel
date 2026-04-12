@@ -265,6 +265,21 @@ function modeTitle(mode: ChatMode, isZh: boolean) {
   }
 }
 
+function getRequestedMode(value: string | null): ChatMode | null {
+  switch (value) {
+    case "workflow":
+    case "normal":
+    case "detector":
+    case "note":
+    case "study":
+    case "humanizer":
+    case "converter":
+      return value;
+    default:
+      return null;
+  }
+}
+
 function HeaderAuthMenu({
   isZh,
   sessionExists,
@@ -438,6 +453,7 @@ function ChatPageInner() {
   const sessionExists = !!session;
   const effectiveSession = session;
   const searchParams = useSearchParams();
+  const requestedMode = getRequestedMode(searchParams.get("mode"));
 
   // UI
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -453,7 +469,7 @@ function ChatPageInner() {
   const isZh = lang === "zh";
 
   // dropdown mode
-  const [mode, setMode] = useState<ChatMode>("normal");
+  const [mode, setMode] = useState<ChatMode>(requestedMode ?? "normal");
 
   // sessions sidebar
   const [chatSessionId, setChatSessionId] = useState<string | null>(null);
@@ -488,6 +504,12 @@ function ChatPageInner() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
+
+  useEffect(() => {
+    if (requestedMode) {
+      setMode(requestedMode);
+    }
+  }, [requestedMode]);
 
   // esc close sidebar
   useEffect(() => {
