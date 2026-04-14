@@ -1,6 +1,8 @@
 import type { MetadataRoute } from "next";
 
-import { absoluteUrl } from "@/lib/seo";
+import { absoluteUrl } from "@/lib/site-url";
+
+export const revalidate = 86400;
 
 const routes = [
   "/",
@@ -18,11 +20,8 @@ const routes = [
 ];
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const lastModified = new Date();
-
   return routes.map((route) => ({
     url: absoluteUrl(route),
-    lastModified,
     changeFrequency: route === "/" ? "weekly" : "monthly",
     priority:
       route === "/"
