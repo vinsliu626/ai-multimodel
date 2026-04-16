@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { computeRms, createSpeechSegmenter } from "./audioVad";
 
 export type NoteTab = "upload" | "record" | "text";
 
@@ -15,6 +16,14 @@ export function useNoteController({
   isZh: boolean;
   onUsageRefresh?: () => Promise<void> | void;
 }) {
+  const RECORDER_SLICE_MS = 250;
+  const VAD_POLL_MS = 50;
+  const VAD_SILENCE_MS = 650;
+  const VAD_PRE_SPEECH_PAD_MS = 250;
+  const VAD_POST_SPEECH_PAD_MS = 250;
+  const VAD_ENERGY_THRESHOLD = 0.02;
+  const MAX_SPEECH_SEGMENT_MS = 30_000;
+
   const finalizeAbortRef = useRef(false);
   const [tab, setTab] = useState<NoteTab>("upload");
 
@@ -31,6 +40,7 @@ export function useNoteController({
 
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
+  const [resultComplete, setResultComplete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -46,6 +56,22 @@ export function useNoteController({
 
   const uploadingRef = useRef<Promise<void>>(Promise.resolve());
   const chunkIndexRef = useRef(0);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const vadTimerRef = useRef<number | null>(null);
+  const sliceSpeechDetectedRef = useRef(false);
+  const recordingStartedAtRef = useRef<number | null>(null);
+  const recordedDurationMsRef = useRef<number | null>(null);
+  const speechSegmenterRef = useRef(
+    createSpeechSegmenter<Blob>({
+      sliceMs: RECORDER_SLICE_MS,
+      silenceMs: VAD_SILENCE_MS,
+      preSpeechPadMs: VAD_PRE_SPEECH_PAD_MS,
+      postSpeechPadMs: VAD_POST_SPEECH_PAD_MS,
+      maxSegmentMs: MAX_SPEECH_SEGMENT_MS,
+    })
+  );
 
   const canGenerate = useMemo(() => {
     if (locked) return false;
@@ -90,9 +116,37 @@ export function useNoteController({
     streamRef.current = null;
   }
 
+  function stopVadTimer() {
+    if (vadTimerRef.current) {
+      window.clearInterval(vadTimerRef.current);
+      vadTimerRef.current = null;
+    }
+  }
+
+  function cleanupAudioProcessing() {
+    stopVadTimer();
+    try {
+      audioSourceRef.current?.disconnect();
+    } catch {}
+    try {
+      analyserRef.current?.disconnect();
+    } catch {}
+    audioSourceRef.current = null;
+    analyserRef.current = null;
+
+    const ctx = audioContextRef.current;
+    audioContextRef.current = null;
+    if (ctx && ctx.state !== "closed") {
+      void ctx.close().catch(() => {});
+    }
+
+    sliceSpeechDetectedRef.current = false;
+  }
+
   function resetAll() {
     setError(null);
     setResult("");
+    setResultComplete(false);
     setSuccess(null);
   }
 
@@ -135,9 +189,19 @@ export function useNoteController({
     setRecordSecs(0);
     setNoteId(null);
     resetProgress();
+    recordingStartedAtRef.current = null;
+    recordedDurationMsRef.current = null;
 
     uploadingRef.current = Promise.resolve();
     chunkIndexRef.current = 0;
+    speechSegmenterRef.current = createSpeechSegmenter<Blob>({
+      sliceMs: RECORDER_SLICE_MS,
+      silenceMs: VAD_SILENCE_MS,
+      preSpeechPadMs: VAD_PRE_SPEECH_PAD_MS,
+      postSpeechPadMs: VAD_POST_SPEECH_PAD_MS,
+      maxSegmentMs: MAX_SPEECH_SEGMENT_MS,
+    });
+    sliceSpeechDetectedRef.current = false;
 
     try {
       const startRes = await fetch("/api/ai-note/start", { method: "POST" });
@@ -151,31 +215,54 @@ export function useNoteController({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
+      const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextCtor) {
+        throw new Error("AudioContext is not supported in this browser.");
+      }
+
+      const audioContext = new AudioContextCtor();
+      audioContextRef.current = audioContext;
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.1;
+      source.connect(analyser);
+      audioSourceRef.current = source;
+      analyserRef.current = analyser;
+
+      const waveform = new Float32Array(analyser.fftSize);
+      vadTimerRef.current = window.setInterval(() => {
+        try {
+          analyser.getFloatTimeDomainData(waveform);
+          if (computeRms(waveform) >= VAD_ENERGY_THRESHOLD) {
+            sliceSpeechDetectedRef.current = true;
+          }
+        } catch {}
+      }, VAD_POLL_MS);
+
       const preferredTypes = ["audio/ogg;codecs=opus", "audio/ogg", "audio/webm;codecs=opus", "audio/webm"];
       const mimeType = preferredTypes.find((value) => MediaRecorder.isTypeSupported(value));
-
       const mr = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = mr;
 
-      mr.ondataavailable = (event) => {
-        if (!event.data || event.data.size === 0) return;
-        if (!nid) return;
+      const queueSpeechSegmentUpload = (segmentBlobs: Blob[], sequenceIndex: number) => {
+        if (segmentBlobs.length === 0) return;
 
-        const blob = event.data;
-        const type = blob.type || mr.mimeType || "audio/webm";
+        const merged = new Blob(segmentBlobs, { type: mr.mimeType || segmentBlobs[0]?.type || "audio/webm" });
+        if (merged.size === 0) return;
+
+        const type = merged.type || mr.mimeType || "audio/webm";
         const ext = type.includes("ogg") ? "ogg" : "webm";
-        const thisIndex = chunkIndexRef.current;
-        chunkIndexRef.current += 1;
-        const fileChunk = new File([blob], `chunk-${thisIndex}.${ext}`, { type });
+        const fileChunk = new File([merged], `chunk-${sequenceIndex}.${ext}`, { type });
 
         uploadingRef.current = uploadingRef.current.then(async () => {
           try {
             const fd = new FormData();
             fd.append("noteId", nid);
-            fd.append("chunkIndex", String(thisIndex));
+            fd.append("chunkIndex", String(sequenceIndex));
             fd.append("file", fileChunk, fileChunk.name);
 
-            const response = await fetch(`/api/ai-note/chunk?noteId=${encodeURIComponent(nid)}&chunkIndex=${thisIndex}`, {
+            const response = await fetch(`/api/ai-note/chunk?noteId=${encodeURIComponent(nid)}&chunkIndex=${sequenceIndex}`, {
               method: "POST",
               credentials: "include",
               body: fd,
@@ -194,6 +281,7 @@ export function useNoteController({
             }
 
             setUploadedChunks((count) => count + 1);
+            chunkIndexRef.current = Math.max(chunkIndexRef.current, sequenceIndex + 1);
             if (json?.transcript) {
               setLiveTranscript((prev) => (prev ? `${prev}\n${String(json.transcript)}` : String(json.transcript)));
             }
@@ -203,19 +291,45 @@ export function useNoteController({
         });
       };
 
+      mr.ondataavailable = (event) => {
+        if (!event.data || event.data.size === 0) return;
+        if (!nid) return;
+
+        const segment = speechSegmenterRef.current.push({
+          value: event.data,
+          hasSpeech: sliceSpeechDetectedRef.current,
+        });
+        sliceSpeechDetectedRef.current = false;
+
+        if (segment) {
+          queueSpeechSegmentUpload(segment.slices, segment.sequenceIndex);
+        }
+      };
+
       mr.onstop = async () => {
         stopTimer();
+        if (recordingStartedAtRef.current) {
+          recordedDurationMsRef.current = Math.max(1, Date.now() - recordingStartedAtRef.current);
+          recordingStartedAtRef.current = null;
+        }
+        const finalSegment = speechSegmenterRef.current.flush();
+        if (finalSegment) {
+          queueSpeechSegmentUpload(finalSegment.slices, finalSegment.sequenceIndex);
+        }
         try {
           await uploadingRef.current;
         } catch {}
+        cleanupAudioProcessing();
         cleanupStream();
         setRecording(false);
       };
 
-      mr.start(30_000);
+      mr.start(RECORDER_SLICE_MS);
       setRecording(true);
+      recordingStartedAtRef.current = Date.now();
       timerRef.current = window.setInterval(() => setRecordSecs((value) => value + 1), 1000);
     } catch (recordError: any) {
+      cleanupAudioProcessing();
       cleanupStream();
       setRecording(false);
       setError(recordError?.message || (isZh ? "无法访问麦克风或当前浏览器不支持录音。" : "Cannot access microphone or the browser does not support recording."));
@@ -228,6 +342,9 @@ export function useNoteController({
 
     try {
       if (recorder.state === "recording") {
+        if (recordingStartedAtRef.current) {
+          recordedDurationMsRef.current = Math.max(1, Date.now() - recordingStartedAtRef.current);
+        }
         try {
           recorder.requestData();
         } catch {}
@@ -236,6 +353,7 @@ export function useNoteController({
       recorder.stop();
     } catch {
       stopTimer();
+      cleanupAudioProcessing();
       cleanupStream();
       setRecording(false);
     }
@@ -285,6 +403,7 @@ export function useNoteController({
     setLoading(true);
     setError(null);
     setResult("");
+    setResultComplete(false);
     setSuccess(null);
     if (tab !== "record") startSimulatedProgress();
 
@@ -305,6 +424,7 @@ export function useNoteController({
         setDisplayStage("done");
         setDisplayProgress(100);
         setResult(String(data?.note ?? data?.result ?? ""));
+        setResultComplete(true);
         setSuccess(isZh ? "笔记已生成。" : "Notes generated.");
         onUsageRefresh?.();
         return;
@@ -326,6 +446,7 @@ export function useNoteController({
         setDisplayStage("done");
         setDisplayProgress(100);
         setResult(String(data?.note ?? data?.result ?? ""));
+        setResultComplete(true);
         setSuccess(isZh ? "笔记已生成。" : "Notes generated.");
         onUsageRefresh?.();
         return;
@@ -362,7 +483,7 @@ export function useNoteController({
         const response = await fetch("/api/ai-note/finalize", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ noteId }),
+          body: JSON.stringify({ noteId, totalDurationMs: recordedDurationMsRef.current ?? Math.max(1, recordSecs * 1000) }),
         });
 
         const raw = await response.text();
@@ -391,10 +512,25 @@ export function useNoteController({
 
         const nextStage = String(json?.stage || "done");
         const nextProgress = Number.isFinite(json?.progress) ? Number(json.progress) : 100;
+        const partialNote = String(json?.partialNote || "").trim();
         setFinalizeStage(nextStage);
         setFinalizeProgress(nextProgress);
-        setDisplayStage(nextStage === "asr" ? "extracting" : nextStage === "llm" ? "summarizing" : nextStage === "done" ? "formatting" : nextStage);
+        setDisplayStage(
+          nextStage === "asr"
+            ? "extracting"
+            : nextStage === "llm"
+            ? "summarizing"
+            : nextStage === "merge"
+            ? "merge"
+            : nextStage === "done"
+            ? "formatting"
+            : nextStage
+        );
         setDisplayProgress(nextProgress);
+        if (partialNote) {
+          setResult(partialNote);
+          setResultComplete(false);
+        }
 
         if (nextStage === "done") {
           finalNote = String(json?.note ?? json?.result ?? "");
@@ -411,6 +547,7 @@ export function useNoteController({
       setDisplayStage("done");
       setDisplayProgress(100);
       setResult(finalNote);
+      setResultComplete(true);
       setSuccess(isZh ? "笔记已生成。" : "Notes generated.");
       onUsageRefresh?.();
     } catch (generateError: any) {
@@ -431,6 +568,7 @@ export function useNoteController({
       } catch {}
     }
 
+    cleanupAudioProcessing();
     cleanupStream();
     setTab(next);
     resetAll();
@@ -440,6 +578,8 @@ export function useNoteController({
     setRecordSecs(0);
     setNoteId(null);
     setFile(null);
+    recordingStartedAtRef.current = null;
+    recordedDurationMsRef.current = null;
     resetProgress();
   }
 
@@ -448,6 +588,7 @@ export function useNoteController({
       finalizeAbortRef.current = true;
       stopTimer();
       stopProgressTimer();
+      cleanupAudioProcessing();
       cleanupStream();
     };
   }, []);
@@ -460,6 +601,7 @@ export function useNoteController({
     recordSecs,
     loading,
     result,
+    resultComplete,
     error,
     success,
     finalizeStage,

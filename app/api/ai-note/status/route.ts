@@ -4,6 +4,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { devBypassUserId } from "@/lib/auth/devBypass";
+import { buildProgressiveNote } from "@/lib/aiNote/finalizeHelpers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,9 +51,25 @@ export async function POST(req: Request) {
     } catch {}
   }
 
+  const partialNote =
+    job.stage === "llm" || job.stage === "merge"
+      ? buildProgressiveNote(
+          (
+            await prisma.aiNoteSummaryPart.findMany({
+              where: { noteId },
+              orderBy: { partIndex: "asc" },
+              select: { text: true },
+            })
+          )
+            .map((row) => String(row.text || "").trim())
+            .filter(Boolean)
+        )
+      : "";
+
   return NextResponse.json({
     ok: true,
     job,
+    partialNote,
     progressDetail: {
       completedSegments: job.asrNextIndex,
       totalSegments: job.segmentsTotal,

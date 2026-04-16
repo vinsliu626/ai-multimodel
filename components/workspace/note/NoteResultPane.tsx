@@ -7,6 +7,7 @@ import { CopyButton } from "@/components/ui/copy-button";
 export function NoteResultPane({
   isZh,
   result,
+  resultComplete,
   loading,
   error,
   success,
@@ -15,6 +16,7 @@ export function NoteResultPane({
 }: {
   isZh: boolean;
   result: string;
+  resultComplete?: boolean;
   loading?: boolean;
   error?: string | null;
   success?: string | null;
@@ -34,7 +36,9 @@ export function NoteResultPane({
       <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Generated Notes</p>
-          <p className="mt-2 text-lg font-semibold text-slate-50">{result ? (isZh ? "Final note output" : "Final note output") : "Awaiting result"}</p>
+          <p className="mt-2 text-lg font-semibold text-slate-50">
+            {result ? (resultComplete ? "Final note output" : "Generating note draft") : "Awaiting result"}
+          </p>
           <p className="mt-1 text-sm text-slate-400">{progressStage ? `Stage: ${progressStage}` : " "}</p>
         </div>
 

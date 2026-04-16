@@ -15,6 +15,8 @@ import { Buffer } from "node:buffer";
 import { transcribeAudioToText } from "@/lib/asr/transcribe";
 import { callGroqTranscribe } from "@/lib/ai/groq";
 import { runAiNotePipeline } from "@/lib/aiNote/pipeline";
+import { AI_NOTE_ASR_SKIPPED_PREFIX, buildProgressiveNote, isSkippedTranscript, nextUnprocessedIndex } from "@/lib/aiNote/finalizeHelpers";
+import { deriveRecordedSeconds, parseRecordedDurationMs } from "@/lib/aiNote/recordingUsage";
 import { assertNoteRequestAllowed, markNoteAttempt, NoteLimitError, recordNoteGenerateSuccess } from "@/lib/aiNote/quota";
 import { parseEnvInt } from "@/lib/env/number";
 
@@ -31,7 +33,6 @@ type ApiErr =
   | "NOTE_NOT_FOUND"
   | "FORBIDDEN"
   | "NO_CHUNKS"
-  | "CHUNKS_NOT_CONTIGUOUS"
   | "FFMPEG_FAILED"
   | "ASR_FAILED"
   | "LLM_FAILED"
@@ -183,36 +184,11 @@ async function withRetry<T>(fn: () => Promise<T>, label: string, maxTry = 4) {
   throw lastErr;
 }
 
-async function setJobError(noteId: string, stage: string, progress: number, message: string) {
-  await prisma.aiNoteJob.update({
-    where: { noteId },
-    data: { stage, progress, error: message },
-  }).catch(() => {});
-}
-
-function buildSegmentFailureMessage(input: {
-  noteId: string;
-  segmentIndex: number;
-  segmentsTotal: number;
-  filename: string;
-  cause: string;
-}) {
-  return JSON.stringify({
-    code: "ASR_SEGMENT_FAILED",
-    noteId: input.noteId,
-    segmentIndex: input.segmentIndex,
-    segmentNumber: input.segmentIndex + 1,
-    segmentsTotal: input.segmentsTotal,
-    filename: input.filename,
-    cause: input.cause,
-    retryable: true,
-  });
-}
-
 async function transcribeWithFallback(
   buf: Buffer,
   fname: string,
-  asrTimeoutMs: number
+  asrTimeoutMs: number,
+  asrMaxTry: number
 ): Promise<string> {
   if (isOfflineMode()) {
     return `[offline transcript] ${fname}`;
@@ -230,7 +206,8 @@ async function transcribeWithFallback(
           asrTimeoutMs,
           `asr_external_${fname}`
         ),
-      `asr_external_${fname}`
+      `asr_external_${fname}`,
+      asrMaxTry
     );
   } catch (e) {
     // 2) Groq fallback
@@ -249,7 +226,8 @@ async function transcribeWithFallback(
           asrTimeoutMs,
           `asr_groq_${fname}`
         ),
-      `asr_groq_${fname}`
+      `asr_groq_${fname}`,
+      asrMaxTry
     );
     return String(out?.text || "").trim();
   }
@@ -371,7 +349,7 @@ async function releaseJobLock(noteId: string, lockId: string) {
 
 export async function POST(req: Request) {
   const t0 = Date.now();
-  const { noteId } = await readBodyNoteId(req);
+  const { noteId, body } = await readBodyNoteId(req);
 
   try {
     const session = await getServerSession(authOptions);
@@ -383,10 +361,16 @@ export async function POST(req: Request) {
     // ownership check
     const sess = await prisma.aiNoteSession.findUnique({
       where: { id: noteId },
-      select: { userId: true },
+      select: { userId: true, createdAt: true },
     });
     if (!sess) return bad("NOTE_NOT_FOUND", 404);
     if (sess.userId !== userId) return bad("FORBIDDEN", 403);
+    const reportedDurationMs = parseRecordedDurationMs(body?.totalDurationMs);
+    const recordedSeconds = deriveRecordedSeconds({
+      totalDurationMs: reportedDurationMs ?? undefined,
+      sessionCreatedAt: sess.createdAt,
+      nowMs: Date.now(),
+    });
 
     // ensure job exists
     const job = await prisma.aiNoteJob.upsert({
@@ -422,11 +406,6 @@ export async function POST(req: Request) {
         if (isOfflineMode()) {
           const files = await getOfflineChunkFiles(noteId);
           if (files.length === 0) return bad("NO_CHUNKS", 409, "No chunks uploaded.");
-          for (let i = 0; i < files.length; i++) {
-            if (files[i].index !== i) {
-              return bad("CHUNKS_NOT_CONTIGUOUS", 400, `Chunks not contiguous. Expect ${i}, got ${files[i].index}`);
-            }
-          }
         } else {
           const chunks = await prisma.aiNoteChunk.findMany({
             where: { noteId },
@@ -435,12 +414,6 @@ export async function POST(req: Request) {
           });
 
           if (chunks.length === 0) return bad("NO_CHUNKS", 409, "No chunks uploaded.");
-
-          for (let i = 0; i < chunks.length; i++) {
-            if (chunks[i].chunkIndex !== i) {
-              return bad("CHUNKS_NOT_CONTIGUOUS", 400, `Chunks not contiguous. Expect ${i}, got ${chunks[i].chunkIndex}`);
-            }
-          }
         }
 
         await prisma.aiNoteJob.update({
@@ -485,6 +458,7 @@ export async function POST(req: Request) {
           parseEnvInt("AI_NOTE_ASR_BATCH", parseEnvInt("AI_NOTE_ASR_CONCURRENCY", 1))
         );
         const asrTimeoutMs = Math.max(30_000, parseEnvInt("AI_NOTE_ASR_TIMEOUT_MS", 180_000));
+        const asrMaxTry = Math.max(1, parseEnvInt("AI_NOTE_ASR_MAX_TRIES", 4));
         // Keep individual ASR requests bounded; larger slices were causing upstream resets/timeouts.
         const requestedSegTime = Math.max(30, job.segmentTimeSec || parseEnvInt("AI_NOTE_SEGMENT_TIME_SEC", 300));
         const segTime = Math.min(requestedSegTime, 180);
@@ -536,11 +510,7 @@ export async function POST(req: Request) {
           select: { chunkIndex: true, text: true },
           orderBy: { chunkIndex: "asc" },
         });
-        const completedTranscriptIndexes = existingTranscriptRows
-          .filter((row) => String(row.text || "").trim().length > 0)
-          .map((row) => row.chunkIndex);
-        const resumeFromTranscript = Math.min(total, firstMissingContiguousIndex(completedTranscriptIndexes));
-        const startIdx = resumeFromTranscript;
+        const startIdx = nextUnprocessedIndex(existingTranscriptRows, total);
         const endIdx = Math.min(total, startIdx + ASR_BATCH);
 
         if (startIdx !== (job.asrNextIndex || 0)) {
@@ -568,18 +538,17 @@ export async function POST(req: Request) {
 
           let text = "";
           try {
-            text = await transcribeWithFallback(buf, fname, asrTimeoutMs);
+            text = await transcribeWithFallback(buf, fname, asrTimeoutMs, asrMaxTry);
           } catch (e: any) {
             const cause = String(e?.message || e);
-            const errorMessage = buildSegmentFailureMessage({
+            console.warn(`[ai-note/finalize] skipping ASR segment noteId=${noteId} index=${i} file=${fname}: ${cause}`);
+            text = `${AI_NOTE_ASR_SKIPPED_PREFIX}${JSON.stringify({
               noteId,
               segmentIndex: i,
-              segmentsTotal: total,
               filename: fname,
               cause,
-            });
-            await setJobError(noteId, "asr", job.progress || 1, errorMessage);
-            throw Object.assign(new Error(errorMessage), { _code: "ASR_FAILED" });
+              tries: asrMaxTry,
+            })}`;
           }
 
           const cleaned = String(text || "").trim();
@@ -621,7 +590,11 @@ export async function POST(req: Request) {
           select: { text: true },
         });
 
-        const transcriptAll = rows.map((r) => r.text || "").filter(Boolean).join("\n").trim();
+        const transcriptAll = rows
+          .map((r) => String(r.text || "").trim())
+          .filter((text) => text && !isSkippedTranscript(text))
+          .join("\n")
+          .trim();
         if (!transcriptAll) return bad("ASR_FAILED", 422, "Transcript is empty.");
         try {
           await assertNoteRequestAllowed(userId, transcriptAll.length, { allowStaged: true });
@@ -658,7 +631,7 @@ export async function POST(req: Request) {
               stage: "done",
               progress: 100,
               noteMarkdown: final,
-              secondsBilled: 0,
+              secondsBilled: recordedSeconds,
               error: null,
             } as any,
           });
@@ -671,14 +644,13 @@ export async function POST(req: Request) {
             progress: 100,
             noteId,
             note: final,
-            secondsBilled: 0,
+            secondsBilled: recordedSeconds,
             elapsedMs: Date.now() - t0,
           });
         }
 
-        const seconds = estimateSecondsByTranscript(transcriptAll);
         try {
-          await assertQuotaOrThrow({ userId, action: "note", amount: seconds });
+          await assertQuotaOrThrow({ userId, action: "note", amount: recordedSeconds });
         } catch (e) {
           if (e instanceof QuotaError) {
             return NextResponse.json({ ok: false, error: e.code, message: e.message }, { status: e.status ?? 429 });
@@ -722,43 +694,26 @@ export async function POST(req: Request) {
         }
 
         if (startPart >= totalParts) {
-          const parts = await prisma.aiNoteSummaryPart.findMany({
-            where: { noteId },
-            orderBy: { partIndex: "asc" },
-            select: { text: true },
-          });
-
-          const merged = parts.map((p) => p.text || "").filter(Boolean).join("\n\n---\n\n");
-
-          const final = await withTimeout(runAiNotePipeline(merged), llmTimeoutMs, "llm_merge").catch((e) => {
-            throw Object.assign(new Error(String((e as any)?.message || e)), { _code: "LLM_FAILED" });
-          });
-
-          await addUsageEvent(userId, "note_seconds", seconds).catch(() => {});
-          await recordNoteGenerateSuccess(userId).catch(() => {});
-
           await prisma.aiNoteJob.update({
             where: { noteId },
-            data: {
-              stage: "done",
-              progress: 100,
-              noteMarkdown: String(final || ""),
-              secondsBilled: seconds,
-              error: null,
-            } as any,
+            data: { stage: "merge", progress: 96, error: null },
           });
-
-          await prisma.aiNoteChunk.deleteMany({ where: { noteId } }).catch(() => {});
 
           return NextResponse.json({
             ok: true,
-            stage: "done",
-            progress: 100,
+            stage: "merge",
+            progress: 96,
             noteId,
-            note: String(final || ""),
-            secondsBilled: seconds,
+            partialNote: buildProgressiveNote(existingSummaryParts.map((part) => String(part.text || "").trim()).filter(Boolean)),
+            secondsBilled: recordedSeconds,
             elapsedMs: Date.now() - t0,
           });
+        }
+
+        const progressiveParts = new Map<number, string>();
+        for (const row of existingSummaryParts) {
+          const value = String(row.text || "").trim();
+          if (value) progressiveParts.set(row.partIndex, value);
         }
 
         for (let p = startPart; p < endPart; p++) {
@@ -768,12 +723,14 @@ export async function POST(req: Request) {
           const part = await withTimeout(runAiNotePipeline(text), llmTimeoutMs, `llm_part_${p}`).catch((e) => {
             throw Object.assign(new Error(String((e as any)?.message || e)), { _code: "LLM_FAILED" });
           });
+          const normalizedPart = String(part || "").trim();
 
           await prisma.aiNoteSummaryPart.upsert({
             where: { noteId_partIndex: { noteId, partIndex: p } },
-            update: { text: String(part || "") },
-            create: { noteId, partIndex: p, text: String(part || "") },
+            update: { text: normalizedPart },
+            create: { noteId, partIndex: p, text: normalizedPart },
           });
+          if (normalizedPart) progressiveParts.set(p, normalizedPart);
 
           if (pauseMs > 0) {
             await new Promise((r) => setTimeout(r, pauseMs));
@@ -796,6 +753,64 @@ export async function POST(req: Request) {
           llmPartsTotal: totalParts,
           completedParts: newNext,
           llmNextPart: newNext,
+          partialNote: buildProgressiveNote(
+            Array.from(progressiveParts.entries())
+              .sort((a, b) => a[0] - b[0])
+              .map(([, value]) => value)
+          ),
+          elapsedMs: Date.now() - t0,
+        });
+      }
+
+      if (job.stage === "merge") {
+        await refreshJobLock(noteId, lock.lockId);
+
+        const rows = await prisma.aiNoteTranscript.findMany({
+          where: { noteId },
+          orderBy: { chunkIndex: "asc" },
+          select: { text: true },
+        });
+        const transcriptAll = rows
+          .map((r) => String(r.text || "").trim())
+          .filter((text) => text && !isSkippedTranscript(text))
+          .join("\n")
+          .trim();
+        if (!transcriptAll) return bad("ASR_FAILED", 422, "Transcript is empty.");
+
+        const llmTimeoutMs = Math.max(60_000, parseEnvInt("AI_NOTE_LLM_TIMEOUT_MS", 180_000));
+        const parts = await prisma.aiNoteSummaryPart.findMany({
+          where: { noteId },
+          orderBy: { partIndex: "asc" },
+          select: { text: true },
+        });
+        const merged = parts.map((p) => String(p.text || "").trim()).filter(Boolean).join("\n\n---\n\n");
+        const final = await withTimeout(runAiNotePipeline(merged), llmTimeoutMs, "llm_merge").catch((e) => {
+          throw Object.assign(new Error(String((e as any)?.message || e)), { _code: "LLM_FAILED" });
+        });
+
+        await addUsageEvent(userId, "note_seconds", recordedSeconds).catch(() => {});
+        await recordNoteGenerateSuccess(userId).catch(() => {});
+
+        await prisma.aiNoteJob.update({
+          where: { noteId },
+          data: {
+            stage: "done",
+            progress: 100,
+            noteMarkdown: String(final || ""),
+            secondsBilled: recordedSeconds,
+            error: null,
+          } as any,
+        });
+
+        await prisma.aiNoteChunk.deleteMany({ where: { noteId } }).catch(() => {});
+
+        return NextResponse.json({
+          ok: true,
+          stage: "done",
+          progress: 100,
+          noteId,
+          note: String(final || ""),
+          secondsBilled: recordedSeconds,
           elapsedMs: Date.now() - t0,
         });
       }

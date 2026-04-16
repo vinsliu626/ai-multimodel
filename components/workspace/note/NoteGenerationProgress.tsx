@@ -2,14 +2,15 @@
 
 import React from "react";
 
-const STAGES = ["analyzing", "extracting", "summarizing", "formatting"] as const;
+const STAGES = ["analyzing", "extracting", "summarizing", "merge", "formatting"] as const;
 
 function normalizedStage(stage: string) {
   const value = stage.toLowerCase();
   if (value === "idle") return "idle";
   if (value === "prep") return "analyzing";
   if (value === "asr") return "extracting";
-  if (value === "llm" || value === "merge") return "summarizing";
+  if (value === "llm") return "summarizing";
+  if (value === "merge") return "merge";
   if (value === "done") return "formatting";
   if (value === "failed") return "failed";
   return STAGES.includes(value as (typeof STAGES)[number]) ? value : "analyzing";
@@ -27,7 +28,8 @@ function stageDescription(stage: string) {
   if (value === "idle") return "Choose an input mode and start a generation.";
   if (value === "analyzing") return "Preparing the request and checking the input.";
   if (value === "extracting") return "Transcribing or extracting the source material.";
-  if (value === "summarizing") return "Building the note structure and key points.";
+  if (value === "summarizing") return "Summarizing completed transcript sections into note parts.";
+  if (value === "merge") return "Generating the final merged note from completed sections.";
   if (value === "formatting") return "Finalizing the note output.";
   return "Processing stopped unexpectedly.";
 }

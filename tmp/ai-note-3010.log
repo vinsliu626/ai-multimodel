@@ -1,0 +1,52 @@
+▲ Next.js 16.1.5 (Turbopack)
+- Local:         http://localhost:3010
+- Network:       http://169.254.83.107:3010
+- Environments: .env.local, .env
+
+✓ Starting...
+✓ Ready in 775ms
+ GET / 200 in 313ms (compile: 213ms, render: 100ms)
+[prisma] initializing client {
+  nodeEnv: 'development',
+  databaseUrl: 'postgresql://ep-young-shadow-a47s4och.us-east-1.aws.neon.tech:(default)/neondb',
+  directUrlPresent: true,
+  useGlobalCache: true
+}
+[ai-note/start] hit { dbHead: 'postgresql://neondb_owner:npg_7bvn4XfuRI' }
+ POST /api/ai-note/start 200 in 1149ms (compile: 97ms, render: 1052ms)
+[prisma] startup connectivity check passed { durationMs: 1280 }
+ POST /api/ai-note/chunk 200 in 1265ms (compile: 26ms, render: 1238ms)
+ POST /api/ai-note/chunk 200 in 553ms (compile: 1981µs, render: 551ms)
+ POST /api/ai-note/chunk 200 in 536ms (compile: 1765µs, render: 534ms)
+ POST /api/ai-note/chunk 200 in 560ms (compile: 1674µs, render: 559ms)
+ POST /api/ai-note/chunk 200 in 554ms (compile: 1577µs, render: 553ms)
+ POST /api/ai-note/chunk 200 in 576ms (compile: 1800µs, render: 575ms)
+ POST /api/ai-note/chunk 200 in 562ms (compile: 1693µs, render: 560ms)
+ POST /api/ai-note/chunk 200 in 551ms (compile: 1808µs, render: 549ms)
+ POST /api/ai-note/chunk 200 in 527ms (compile: 1668µs, render: 526ms)
+ POST /api/ai-note/chunk 200 in 556ms (compile: 1514µs, render: 554ms)
+ POST /api/ai-note/chunk 200 in 540ms (compile: 1635µs, render: 539ms)
+ POST /api/ai-note/chunk 200 in 569ms (compile: 1379µs, render: 568ms)
+ POST /api/ai-note/finalize 200 in 1301ms (compile: 91ms, render: 1209ms)
+ POST /api/ai-note/status 200 in 195ms (compile: 20ms, render: 174ms)
+ POST /api/ai-note/finalize 200 in 19.0s (compile: 3ms, render: 19.0s)
+ POST /api/ai-note/status 200 in 78ms (compile: 1645µs, render: 76ms)
+ POST /api/ai-note/finalize 200 in 13.0s (compile: 3ms, render: 13.0s)
+ POST /api/ai-note/status 200 in 66ms (compile: 2ms, render: 64ms)
+ POST /api/ai-note/finalize 200 in 16.9s (compile: 1692µs, render: 16.9s)
+ POST /api/ai-note/status 200 in 86ms (compile: 2ms, render: 84ms)
+ POST /api/ai-note/finalize 200 in 6.8s (compile: 3ms, render: 6.8s)
+ POST /api/ai-note/status 200 in 66ms (compile: 1530µs, render: 64ms)
+ POST /api/ai-note/finalize 200 in 3.7s (compile: 3ms, render: 3.7s)
+ POST /api/ai-note/status 200 in 156ms (compile: 1501µs, render: 155ms)
+prisma:error 
+Invalid `client.userEntitlement.upsert()` invocation in
+C:\Users\gcswz\Desktop\AI\ai-multimodel\.next\dev\server\chunks\[root-of-the-server]__5c5e785f._.js:2149:45
+
+  2146 }
+  2147 async function ensureRuntimeEntitlement(client, userId) {
+  2148     try {
+→ 2149         return await client.userEntitlement.upsert(
+The column `UserEntitlement.developerBypass` does not exist in the current database.
+ POST /api/ai-note/finalize 503 in 12.5s (compile: 2ms, render: 12.5s)
+ POST /api/ai-note/status 200 in 114ms (compile: 2ms, render: 112ms)

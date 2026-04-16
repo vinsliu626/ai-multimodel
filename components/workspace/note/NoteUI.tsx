@@ -42,7 +42,7 @@ export function NoteUI({
   onUsageRefresh?: () => Promise<void> | void;
 }) {
   const ctl = useNoteController({ locked, isLoadingGlobal, isZh, onUsageRefresh });
-  const resultReady = Boolean(ctl.result.trim());
+  const resultReady = ctl.resultComplete;
   const helperText =
     ctl.tab === "upload"
       ? "Upload audio and generate structured notes."
@@ -183,6 +183,7 @@ export function NoteUI({
               <NoteResultPane
                 isZh={isZh}
                 result={ctl.result}
+                resultComplete={ctl.resultComplete}
                 loading={ctl.loading}
                 error={ctl.error}
                 success={ctl.success}
