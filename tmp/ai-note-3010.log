@@ -50,3 +50,63 @@ C:\Users\gcswz\Desktop\AI\ai-multimodel\.next\dev\server\chunks\[root-of-the-ser
 The column `UserEntitlement.developerBypass` does not exist in the current database.
  POST /api/ai-note/finalize 503 in 12.5s (compile: 2ms, render: 12.5s)
  POST /api/ai-note/status 200 in 114ms (compile: 2ms, render: 112ms)
+[ai-note/start] hit { dbHead: 'postgresql://neondb_owner:npg_7bvn4XfuRI' }
+ POST /api/ai-note/start 200 in 115ms (compile: 2ms, render: 113ms)
+ POST /api/ai-note/chunk 200 in 948ms (compile: 3ms, render: 945ms)
+ POST /api/ai-note/chunk 200 in 930ms (compile: 2ms, render: 928ms)
+ POST /api/ai-note/chunk 200 in 787ms (compile: 1505µs, render: 786ms)
+ POST /api/ai-note/chunk 200 in 765ms (compile: 1425µs, render: 764ms)
+ POST /api/ai-note/finalize 200 in 596ms (compile: 1430µs, render: 595ms)
+ POST /api/ai-note/status 200 in 76ms (compile: 1899µs, render: 74ms)
+ POST /api/ai-note/finalize 200 in 15.3s (compile: 6ms, render: 15.3s)
+ POST /api/ai-note/status 200 in 75ms (compile: 1509µs, render: 73ms)
+ POST /api/ai-note/finalize 200 in 15.3s (compile: 3ms, render: 15.3s)
+ POST /api/ai-note/status 200 in 61ms (compile: 5ms, render: 56ms)
+ POST /api/ai-note/finalize 200 in 15.7s (compile: 4ms, render: 15.7s)
+ POST /api/ai-note/status 200 in 73ms (compile: 1446µs, render: 72ms)
+ POST /api/ai-note/finalize 200 in 8.7s (compile: 5ms, render: 8.7s)
+ POST /api/ai-note/status 200 in 88ms (compile: 3ms, render: 85ms)
+ POST /api/ai-note/finalize 200 in 4.0s (compile: 3ms, render: 4.0s)
+ POST /api/ai-note/status 200 in 111ms (compile: 4ms, render: 107ms)
+prisma:error 
+Invalid `client.userEntitlement.upsert()` invocation in
+C:\Users\gcswz\Desktop\AI\ai-multimodel\.next\dev\server\chunks\[root-of-the-server]__5c5e785f._.js:2149:45
+
+  2146 }
+  2147 async function ensureRuntimeEntitlement(client, userId) {
+  2148     try {
+→ 2149         return await client.userEntitlement.upsert(
+The column `UserEntitlement.developerBypass` does not exist in the current database.
+ POST /api/ai-note/finalize 503 in 12.9s (compile: 1942µs, render: 12.9s)
+prisma:error 
+Invalid `client.userEntitlement.upsert()` invocation in
+C:\Users\gcswz\Desktop\AI\ai-multimodel\.next\dev\server\chunks\[root-of-the-server]__5c5e785f._.js:2149:45
+
+  2146 }
+  2147 async function ensureRuntimeEntitlement(client, userId) {
+  2148     try {
+→ 2149         return await client.userEntitlement.upsert(
+The column `UserEntitlement.developerBypass` does not exist in the current database.
+prisma:error 
+Invalid `client.userEntitlement.upsert()` invocation in
+C:\Users\gcswz\Desktop\AI\ai-multimodel\.next\dev\server\chunks\[root-of-the-server]__5c5e785f._.js:2149:45
+
+  2146 }
+  2147 async function ensureRuntimeEntitlement(client, userId) {
+  2148     try {
+→ 2149         return await client.userEntitlement.upsert(
+The column `UserEntitlement.developerBypass` does not exist in the current database.
+ POST /api/ai-note 200 in 25.8s (compile: 120ms, render: 25.7s)
+prisma:error 
+Invalid `client.userEntitlement.upsert()` invocation in
+C:\Users\gcswz\Desktop\AI\ai-multimodel\.next\dev\server\chunks\[root-of-the-server]__5c5e785f._.js:2149:45
+
+  2146 }
+  2147 async function ensureRuntimeEntitlement(client, userId) {
+  2148     try {
+→ 2149         return await client.userEntitlement.upsert(
+The column `UserEntitlement.developerBypass` does not exist in the current database.
+ POST /api/ai-note/finalize 503 in 12.5s (compile: 3ms, render: 12.5s)
+ POST /api/ai-note/status 200 in 219ms (compile: 3ms, render: 216ms)
+prisma:error Error in PostgreSQL connection: Error { kind: Db, cause: Some(DbError { severity: "FATAL", parsed_severity: Some(Fatal), code: SqlState(E57P01), message: "terminating connection due to administrator command", detail: None, hint: None, position: None, where_: None, schema: None, table: None, column: None, datatype: None, constraint: None, file: Some("postgres.c"), line: Some(3318), routine: Some("ProcessInterrupts") }) }
+prisma:error Error in PostgreSQL connection: Error { kind: Db, cause: Some(DbError { severity: "FATAL", parsed_severity: Some(Fatal), code: SqlState(E57P01), message: "terminating connection due to administrator command", detail: None, hint: None, position: None, where_: None, schema: None, table: None, column: None, datatype: None, constraint: None, file: Some("postgres.c"), line: Some(3318), routine: Some("ProcessInterrupts") }) }

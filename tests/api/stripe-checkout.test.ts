@@ -42,6 +42,7 @@ describe("POST /api/billing/checkout", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    process.env.STRIPE_SECRET_KEY = "sk_test_checkout";
     process.env.STRIPE_PRICE_PRO = "price_pro_test";
     process.env.STRIPE_PRICE_ULTRA = "price_ultra_test";
     process.env.NEXTAUTH_URL = "http://localhost:3000";
