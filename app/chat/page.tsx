@@ -494,7 +494,7 @@ function ChatPageInner() {
   const { ent, refresh: refreshEnt } = useEntitlement(sessionExists);
   const trialWheel = useProTrialWheel({
     sessionExists,
-    userId: effectiveSession?.user?.id ?? null,
+    userId: effectiveSession?.user?.id ?? effectiveSession?.user?.email ?? null,
   });
 
   // login gating

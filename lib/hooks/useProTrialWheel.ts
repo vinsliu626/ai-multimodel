@@ -19,7 +19,9 @@ function fallbackStatus(userId: string): ProTrialWheelStatus {
     ok: true,
     userId,
     canSpin: true,
-    devUnlimitedSpins: true,
+    devUnlimitedSpins: false,
+    hasSpun: false,
+    spinUsedAt: null,
     activeTrialEndsAt: null,
   };
 }

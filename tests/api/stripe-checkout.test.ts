@@ -1,3 +1,8 @@
+process.env.STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "sk_test_ci";
+process.env.STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "whsec_ci";
+process.env.STRIPE_PRICE_PRO = process.env.STRIPE_PRICE_PRO || "price_test_pro";
+process.env.STRIPE_PRICE_ULTRA = process.env.STRIPE_PRICE_ULTRA || "price_test_ultra";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -42,9 +47,10 @@ describe("POST /api/billing/checkout", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    process.env.STRIPE_SECRET_KEY = "sk_test_checkout";
-    process.env.STRIPE_PRICE_PRO = "price_pro_test";
-    process.env.STRIPE_PRICE_ULTRA = "price_ultra_test";
+    process.env.STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "sk_test_ci";
+    process.env.STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "whsec_ci";
+    process.env.STRIPE_PRICE_PRO = process.env.STRIPE_PRICE_PRO || "price_test_pro";
+    process.env.STRIPE_PRICE_ULTRA = process.env.STRIPE_PRICE_ULTRA || "price_test_ultra";
     process.env.NEXTAUTH_URL = "http://localhost:3000";
   });
 
@@ -73,7 +79,7 @@ describe("POST /api/billing/checkout", () => {
       expect.objectContaining({
         mode: "subscription",
         customer: "cus_123",
-        line_items: [{ price: "price_pro_test", quantity: 1 }],
+        line_items: [{ price: process.env.STRIPE_PRICE_PRO, quantity: 1 }],
         success_url: "http://localhost:3000/chat?success=1&plan=pro",
         cancel_url: "http://localhost:3000/chat?canceled=1",
       })

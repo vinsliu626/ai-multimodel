@@ -46,6 +46,8 @@ export type ProTrialWheelStatus = {
   userId: string;
   canSpin: boolean;
   devUnlimitedSpins: boolean;
+  hasSpun: boolean;
+  spinUsedAt: string | null;
   activeTrialEndsAt: string | null;
 };
 

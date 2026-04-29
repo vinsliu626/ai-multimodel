@@ -32,8 +32,9 @@ export const authOptions: NextAuthOptions = {
   secret: process.env.NEXTAUTH_SECRET,
   callbacks: {
     async session({ session, token }) {
-      const email = (token?.email as string) || session.user?.email || "";
-      (session.user as any).id = email || (token?.sub as string) || "";
+      if (session.user) {
+        session.user.id = (token?.sub as string) || session.user.email || "";
+      }
       return session;
     },
   },

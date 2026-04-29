@@ -21,6 +21,17 @@ export async function POST(req: Request) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[billing.wheel.spin] failed", { userId, message });
 
+    if (message === "PRO_TRIAL_WHEEL_ALREADY_USED") {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: message,
+          message: "You've already used your free Pro Trial spin.",
+        },
+        { status: 403 }
+      );
+    }
+
     if (message === "PRO_TRIAL_WHEEL_NOT_ELIGIBLE") {
       return NextResponse.json({ ok: false, error: message }, { status: 403 });
     }

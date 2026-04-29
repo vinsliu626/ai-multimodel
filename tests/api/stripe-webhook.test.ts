@@ -1,3 +1,8 @@
+process.env.STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "sk_test_ci";
+process.env.STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "whsec_ci";
+process.env.STRIPE_PRICE_PRO = process.env.STRIPE_PRICE_PRO || "price_test_pro";
+process.env.STRIPE_PRICE_ULTRA = process.env.STRIPE_PRICE_ULTRA || "price_test_ultra";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { planToFlags } from "@/lib/billing/planFlags";
 
@@ -36,10 +41,10 @@ describe("POST /api/stripe/webhook", () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    process.env.STRIPE_SECRET_KEY = "sk_test_webhook";
-    process.env.STRIPE_WEBHOOK_SECRET = "whsec_test_123";
-    process.env.STRIPE_PRICE_PRO = "price_pro_test";
-    process.env.STRIPE_PRICE_ULTRA = "price_ultra_test";
+    process.env.STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "sk_test_ci";
+    process.env.STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "whsec_ci";
+    process.env.STRIPE_PRICE_PRO = process.env.STRIPE_PRICE_PRO || "price_test_pro";
+    process.env.STRIPE_PRICE_ULTRA = process.env.STRIPE_PRICE_ULTRA || "price_test_ultra";
   });
 
   it("verifies signature and fulfills entitlement on invoice.paid", async () => {
@@ -51,7 +56,7 @@ describe("POST /api/stripe/webhook", () => {
           customer: "cus_123",
           subscription: "sub_123",
           lines: {
-            data: [{ price: { id: "price_pro_test" } }],
+            data: [{ price: { id: process.env.STRIPE_PRICE_PRO } }],
           },
         },
       },
@@ -83,7 +88,11 @@ describe("POST /api/stripe/webhook", () => {
 
     expect(res.status).toBe(200);
     expect(json).toEqual({ ok: true });
-    expect(mocks.stripe.webhooks.constructEvent).toHaveBeenCalledWith(rawBody, "t=123,v1=testsig", "whsec_test_123");
+    expect(mocks.stripe.webhooks.constructEvent).toHaveBeenCalledWith(
+      rawBody,
+      "t=123,v1=testsig",
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
     expect(mocks.prisma.userEntitlement.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { userId: "user_1" },
@@ -174,7 +183,7 @@ describe("POST /api/stripe/webhook", () => {
           customer: "cus_456",
           subscription: "sub_456",
           lines: {
-            data: [{ price: { id: "price_pro_test" } }],
+            data: [{ price: { id: process.env.STRIPE_PRICE_PRO } }],
           },
         },
       },

@@ -312,7 +312,7 @@ export function PublicWorkspaceShell({
   const userEmail = session?.user?.email || "";
   const trialWheel = useProTrialWheel({
     sessionExists,
-    userId: typeof session?.user?.id === "string" ? session.user.id : null,
+    userId: session?.user?.id ?? session?.user?.email ?? null,
   });
 
   function openRedeemModal(prefillCode = "") {

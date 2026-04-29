@@ -87,6 +87,10 @@ function polarToCartesian(cx: number, cy: number, radius: number, angleInDegrees
   };
 }
 
+function unitToPercent(value: number) {
+  return `${(value / 320) * 100}%`;
+}
+
 function describeArc(cx: number, cy: number, radius: number, startAngle: number, endAngle: number) {
   const start = polarToCartesian(cx, cy, radius, endAngle);
   const end = polarToCartesian(cx, cy, radius, startAngle);
@@ -300,22 +304,25 @@ function PrizeWheel({
             <div
               className="absolute h-px origin-left bg-gradient-to-r from-white/0 via-white/18 to-white/0"
               style={{
-                left: `${pointerPoint.x}px`,
-                top: `${pointerPoint.y}px`,
-                width: `${Math.max(10, badgeRadius - pointerRadius - 12)}px`,
+                left: unitToPercent(pointerPoint.x),
+                top: unitToPercent(pointerPoint.y),
+                width: unitToPercent(Math.max(10, badgeRadius - pointerRadius - 12)),
                 transform: `rotate(${segment.midAngle}deg)`,
               }}
             />
             <div
               className="absolute"
               style={{
-                left: `${badgePoint.x - badgeWidth / 2}px`,
-                top: `${badgePoint.y - badgeHeight / 2}px`,
+                left: unitToPercent(badgePoint.x - badgeWidth / 2),
+                top: unitToPercent(badgePoint.y - badgeHeight / 2),
               }}
             >
               <div
                 className={`flex items-center justify-center rounded-full border px-3 py-1 text-center backdrop-blur-xl ${badgeClassName}`}
-                style={{ minWidth: `${badgeWidth}px`, minHeight: `${badgeHeight}px` }}
+                style={{
+                  minWidth: `clamp(${Math.max(38, badgeWidth - 8)}px, ${unitToPercent(badgeWidth)}, ${badgeWidth}px)`,
+                  minHeight: `clamp(${Math.max(24, badgeHeight - 4)}px, ${unitToPercent(badgeHeight)}, ${badgeHeight}px)`,
+                }}
               >
                 <span className={`text-[11px] font-black leading-none sm:text-xs ${textClassName}`}>{segment.weight}%</span>
               </div>
@@ -407,15 +414,11 @@ function ResultCard({
   expired,
   countdownLabel,
   onUseCode,
-  onSpin,
-  spinning,
 }: {
   spinResult: ProTrialWheelSpinResult;
   expired: boolean;
   countdownLabel: string;
   onUseCode: (code: string) => void;
-  onSpin: () => Promise<ProTrialWheelSpinResult | null>;
-  spinning: boolean;
 }) {
   const prize = PRO_TRIAL_WHEEL_PRIZES.find((entry) => entry.durationDays === spinResult.prizeDurationDays);
   const celebration = getCelebrationConfig(spinResult.prizeDurationDays);
@@ -456,7 +459,7 @@ function ResultCard({
         </p>
         <p className="mt-1.5 text-sm text-slate-300">
           {expired
-            ? "This code expired. Spin again to generate a new one."
+            ? "This code expired. Your free Pro Trial spin has already been used."
             : "Your one-time code is ready. Redeem it before the countdown ends."}
         </p>
 
@@ -494,11 +497,10 @@ function ResultCard({
           ) : null}
           <button
             type="button"
-            onClick={() => void onSpin()}
-            disabled={spinning}
-            className="h-12 rounded-2xl border border-white/10 bg-white/[0.06] px-5 text-sm font-semibold text-slate-100 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled
+            className="h-12 rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-sm font-semibold text-slate-400 opacity-75"
           >
-            {spinning ? "Spinning..." : expired ? "Spin Again" : "Spin for Another Code"}
+            Free spin used
           </button>
         </div>
       </div>
@@ -608,6 +610,7 @@ export function ProTrialWheelModal({
   const debugHint = process.env.NODE_ENV !== "production" && status?.devUnlimitedSpins;
   const hasResult = Boolean(revealedResult);
   const celebration = getCelebrationConfig(revealedResult?.prizeDurationDays);
+  const alreadyUsed = Boolean(status?.hasSpun);
 
   return (
     <div className="fixed inset-0 z-[220] flex items-center justify-center p-3 sm:p-4">
@@ -642,7 +645,7 @@ export function ProTrialWheelModal({
           </div>
         </div>
 
-        <div className="relative max-h-[calc(min(92vh,860px)-64px)] overflow-y-auto px-5 pb-5 pt-2 pr-5 sm:px-6 sm:pb-6 sm:pr-6">
+        <div className="wheel-modal-scrollbar relative max-h-[calc(min(92vh,860px)-64px)] overflow-y-auto px-5 pb-5 pt-2 pr-5 sm:px-6 sm:pb-6 sm:pr-6">
           <div
             className={`grid gap-6 lg:gap-8 ${
               hasResult
@@ -679,8 +682,6 @@ export function ProTrialWheelModal({
                       expired={resultExpired}
                       countdownLabel={formatCountdown(msRemaining)}
                       onUseCode={onUseCode}
-                      onSpin={onSpin}
-                      spinning={spinning}
                     />
                   </motion.div>
                 ) : (
@@ -706,6 +707,12 @@ export function ProTrialWheelModal({
                       Spin the wheel to generate a one-time Pro trial code. Codes expire in 10 minutes.
                     </p>
 
+                    {alreadyUsed ? (
+                      <div className="mt-4 rounded-2xl border border-amber-300/18 bg-amber-300/10 px-4 py-3 text-sm text-amber-100">
+                        You&apos;ve already used your free Pro Trial spin.
+                      </div>
+                    ) : null}
+
                     <div className="mt-5 flex flex-wrap gap-3">
                       <button
                         type="button"
@@ -713,7 +720,7 @@ export function ProTrialWheelModal({
                         disabled={spinning || !canSpin}
                         className="h-12 rounded-2xl bg-gradient-to-r from-sky-500 via-blue-500 to-emerald-400 px-5 text-sm font-semibold text-white shadow-[0_14px_34px_rgba(59,130,246,0.24)] transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {spinning ? "Spinning..." : "Spin Now"}
+                        {spinning ? "Spinning..." : alreadyUsed ? "Spin Used" : "Spin Now"}
                       </button>
                     </div>
 
@@ -772,6 +779,31 @@ export function ProTrialWheelModal({
         </div>
         </div>
       </div>
+      <style jsx global>{`
+        .wheel-modal-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: rgba(100, 116, 139, 0.82) rgba(15, 23, 42, 0.72);
+        }
+
+        .wheel-modal-scrollbar::-webkit-scrollbar {
+          width: 10px;
+        }
+
+        .wheel-modal-scrollbar::-webkit-scrollbar-track {
+          background: rgba(15, 23, 42, 0.72);
+          border-radius: 999px;
+        }
+
+        .wheel-modal-scrollbar::-webkit-scrollbar-thumb {
+          background: linear-gradient(180deg, rgba(71, 85, 105, 0.92), rgba(59, 130, 246, 0.38));
+          border-radius: 999px;
+          border: 2px solid rgba(15, 23, 42, 0.84);
+        }
+
+        .wheel-modal-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: linear-gradient(180deg, rgba(100, 116, 139, 0.96), rgba(96, 165, 250, 0.48));
+        }
+      `}</style>
     </div>
   );
 }

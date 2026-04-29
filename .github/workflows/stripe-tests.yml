@@ -8,6 +8,11 @@ on:
 jobs:
   stripe-tests:
     runs-on: ubuntu-latest
+    env:
+      STRIPE_SECRET_KEY: sk_test_ci
+      STRIPE_WEBHOOK_SECRET: whsec_ci
+      STRIPE_PRICE_PRO: price_test_pro
+      STRIPE_PRICE_ULTRA: price_test_ultra
     steps:
       - name: Checkout
         uses: actions/checkout@v4
