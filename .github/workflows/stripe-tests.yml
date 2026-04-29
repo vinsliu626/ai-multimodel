@@ -13,6 +13,9 @@ jobs:
       STRIPE_WEBHOOK_SECRET: whsec_ci
       STRIPE_PRICE_PRO: price_test_pro
       STRIPE_PRICE_ULTRA: price_test_ultra
+      NEXTAUTH_SECRET: nextauth_test_secret
+      NEXTAUTH_URL: http://localhost:3000
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
       - name: Checkout
         uses: actions/checkout@v4

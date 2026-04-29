@@ -2,6 +2,10 @@ process.env.STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "sk_test_ci";
 process.env.STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "whsec_ci";
 process.env.STRIPE_PRICE_PRO = process.env.STRIPE_PRICE_PRO || "price_test_pro";
 process.env.STRIPE_PRICE_ULTRA = process.env.STRIPE_PRICE_ULTRA || "price_test_ultra";
+process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "nextauth_test_secret";
+process.env.NEXTAUTH_URL = process.env.NEXTAUTH_URL || "http://localhost:3000";
+process.env.DATABASE_URL =
+  process.env.DATABASE_URL || "postgresql://ci:ci@localhost:5432/ci";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -51,7 +55,10 @@ describe("POST /api/billing/checkout", () => {
     process.env.STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "whsec_ci";
     process.env.STRIPE_PRICE_PRO = process.env.STRIPE_PRICE_PRO || "price_test_pro";
     process.env.STRIPE_PRICE_ULTRA = process.env.STRIPE_PRICE_ULTRA || "price_test_ultra";
-    process.env.NEXTAUTH_URL = "http://localhost:3000";
+    process.env.NEXTAUTH_SECRET = process.env.NEXTAUTH_SECRET || "nextauth_test_secret";
+    process.env.NEXTAUTH_URL = process.env.NEXTAUTH_URL || "http://localhost:3000";
+    process.env.DATABASE_URL =
+      process.env.DATABASE_URL || "postgresql://ci:ci@localhost:5432/ci";
   });
 
   it("creates a Stripe Checkout Session for pro plan using configured price ID", async () => {
