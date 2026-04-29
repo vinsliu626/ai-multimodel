@@ -12,8 +12,8 @@ export function formatLimitSeconds(sec: number | null) {
 }
 
 export function planLabel(plan: PlanId, isZh: boolean) {
-  if (plan === "gift") return isZh ? "礼包无限制" : "Gift Unlimited";
+  if (plan === "gift") return isZh ? "\u793c\u5305\u4e0d\u9650\u91cf" : "Gift Unlimited";
   if (plan === "ultra") return "Ultra Pro";
   if (plan === "pro") return "Pro";
-  return isZh ? "Basic（免费）" : "Basic (Free)";
+  return isZh ? "Basic\uff08\u514d\u8d39\uff09" : "Basic (Free)";
 }

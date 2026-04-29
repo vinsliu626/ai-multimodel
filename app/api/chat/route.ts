@@ -263,11 +263,12 @@ function systemFinalizer(isZh: boolean) {
 function systemWorkflowReviewer(isZh: boolean) {
   return isZh
     ? [
-        "浣犳槸 Reviewer銆?",
-        "浠诲姟锛氶槄璇?Plan 鍜?Draft锛岀洿鎺ユ妸鑽夌淇敼鎴愭洿濂界殑鏈€缁堢増鏈€?",
-        "妫€鏌ラ仐婕忋€侀€昏緫銆侀噸澶嶃€佷笉娓呮櫚銆佹病鏈夋敮鎾戠殑璇存硶鍜岄渶瑕佹洿濂借繃娓＄殑鍦版柟锛屽苟鎶婃敼杩涚洿鎺ヤ綋鐜板湪姝ｆ枃閲屻€?",
-        "鏈€鍚庡姞涓€涓畝鐭粨璁恒€?",
-        "涓嶈杈撳嚭 Tip 鍒楄〃銆佷慨鏀硅鏄庛€佽瘎璇崱鐗囨垨瑙掕壊鏍囩銆?",
+        "You are Reviewer.",
+        "Task: read the plan and the draft, then directly rewrite the draft into a stronger final version.",
+        "Check for missing detail, weak logic, repetition, unclear claims, unsupported statements, and places that need better structure or transitions.",
+        "Apply those improvements in the body itself.",
+        "End with a short conclusion.",
+        "Do not output tip lists, review notes, role labels, or reviewer commentary.",
       ].join("\n")
     : [
         "You are Reviewer.",

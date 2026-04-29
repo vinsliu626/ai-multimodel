@@ -55,7 +55,6 @@ function useTypewriterRaf(text: string, charsPerFrame = 3) {
   return { out, done };
 }
 
-
 type DemoStep = {
   side: "left" | "right";
   role: "You" | "Planner" | "Writer" | "Reviewer" | "Final";
@@ -101,10 +100,10 @@ function AccentDot({ accent }: { accent: DemoStep["accent"] }) {
     accent === "blue"
       ? "bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.7)]"
       : accent === "emerald"
-      ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]"
-      : accent === "purple"
-      ? "bg-purple-400 shadow-[0_0_8px_rgba(167,139,250,0.7)]"
-      : "bg-slate-400 shadow-[0_0_8px_rgba(148,163,184,0.6)]";
+        ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]"
+        : accent === "purple"
+          ? "bg-purple-400 shadow-[0_0_8px_rgba(167,139,250,0.7)]"
+          : "bg-slate-400 shadow-[0_0_8px_rgba(148,163,184,0.6)]";
   return <span className={cn("inline-block w-1.5 h-1.5 rounded-full", cls)} />;
 }
 
@@ -129,8 +128,8 @@ const ChatBubble = React.memo(function ChatBubble({
     role === "Final"
       ? "bg-gradient-to-br from-blue-900/35 via-purple-900/18 to-emerald-900/18"
       : role === "You"
-      ? "bg-white/[0.04]"
-      : "bg-black/40";
+        ? "bg-white/[0.04]"
+        : "bg-black/40";
 
   const border =
     role === "Final"
@@ -141,10 +140,10 @@ const ChatBubble = React.memo(function ChatBubble({
     accent === "blue"
       ? "text-blue-300"
       : accent === "emerald"
-      ? "text-emerald-300"
-      : accent === "purple"
-      ? "text-purple-300"
-      : "text-slate-300";
+        ? "text-emerald-300"
+        : accent === "purple"
+          ? "text-purple-300"
+          : "text-slate-300";
 
   return (
     <div className={cn("flex w-full", isLeft ? "justify-start" : "justify-end")}>
@@ -156,25 +155,25 @@ const ChatBubble = React.memo(function ChatBubble({
           "chat-bubble"
         )}
       >
-        <div className="flex items-center justify-between gap-4 mb-1.5">
+        <div className="mb-1.5 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider">
             <AccentDot accent={accent} />
             <span className={cn("font-bold", nameColor)}>{role}</span>
-            {title && <span className="text-slate-500 tracking-normal capitalize">/ {title}</span>}
+            {title && <span className="tracking-normal text-slate-500 capitalize">/ {title}</span>}
           </div>
 
           {isTyping && (
-            <span className="text-[10px] text-slate-400 flex items-center gap-1.5 font-mono">
-              <span className="w-1 h-1 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="flex items-center gap-1.5 font-mono text-[10px] text-slate-400">
+              <span className="h-1 w-1 rounded-full bg-emerald-400 animate-pulse" />
               generating
             </span>
           )}
         </div>
 
-        <div className="text-[13px] text-slate-200 leading-relaxed whitespace-pre-wrap font-light">
+        <div className="text-[13px] leading-relaxed whitespace-pre-wrap font-light text-slate-200">
           {text}
           {isTyping && (
-            <span className="ml-1 inline-block w-1.5 h-3 align-middle bg-emerald-400/80 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+            <span className="ml-1 inline-block h-3 w-1.5 align-middle bg-emerald-400/80 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
           )}
         </div>
       </div>
@@ -187,9 +186,9 @@ function NeuroOrb() {
     <div className="relative h-10 w-10">
       <div className="absolute inset-0 rounded-2xl orb-spin orb-jitter opacity-80" />
       <div className="absolute inset-0 rounded-2xl orb-glow" />
-      <div className="absolute inset-[1px] rounded-2xl bg-[#0a0a0a]/80 backdrop-blur-md border border-white/10" />
+      <div className="absolute inset-[1px] rounded-2xl border border-white/10 bg-[#0a0a0a]/80 backdrop-blur-md" />
       <div className="absolute inset-0 flex items-center justify-center">
-        <span className="text-[14px] font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-white/40 tracking-tight">
+        <span className="bg-gradient-to-b from-white to-white/40 bg-clip-text text-[14px] font-black tracking-tight text-transparent">
           N
         </span>
       </div>
@@ -218,25 +217,25 @@ function ChatDemo({ isZh, steps }: { isZh: boolean; steps: DemoStep[] }) {
     <div className="relative w-full max-w-[520px]">
       <div className="absolute -inset-1 rounded-[2rem] bg-gradient-to-tr from-blue-500/18 via-cyan-500/10 to-purple-500/18 blur-lg opacity-50" />
 
-      <div className="relative rounded-[2rem] border border-white/10 bg-[#050505]/80 backdrop-blur-xl p-6 shadow-[0_0_40px_rgba(0,0,0,0.75)] overflow-hidden">
-        <div className="flex items-center justify-between border-b border-white/5 pb-4 mb-4">
-          <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
+      <div className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-[#050505]/80 p-6 shadow-[0_0_40px_rgba(0,0,0,0.75)] backdrop-blur-xl">
+        <div className="mb-4 flex items-center justify-between border-b border-white/5 pb-4">
+          <div className="flex items-center gap-2 font-mono text-xs text-slate-400">
             <span className="flex gap-1">
-              <span className="w-2 h-2 rounded-full bg-red-500/50" />
-              <span className="w-2 h-2 rounded-full bg-yellow-500/50" />
-              <span className="w-2 h-2 rounded-full bg-green-500/50" />
+              <span className="h-2 w-2 rounded-full bg-red-500/50" />
+              <span className="h-2 w-2 rounded-full bg-yellow-500/50" />
+              <span className="h-2 w-2 rounded-full bg-green-500/50" />
             </span>
-            <span className="ml-2 pl-2 border-l border-white/10 tracking-wider">
+            <span className="ml-2 border-l border-white/10 pl-2 tracking-wider">
               {isZh ? "终端演示" : "TERMINAL_DEMO"}
             </span>
           </div>
-          <div className="text-[10px] uppercase tracking-widest text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded border border-blue-400/20">
+          <div className="rounded border border-blue-400/20 bg-blue-400/10 px-2 py-0.5 text-[10px] uppercase tracking-widest text-blue-400">
             {isZh ? "自动执行" : "AUTO-EXEC"}
           </div>
         </div>
 
         {/* 注意：这里不再加 scroll-smooth（它会让连续 scroll 更贵） */}
-        <div ref={scrollRef} className="h-[400px] overflow-y-auto pr-3 chat-scroll">
+        <div ref={scrollRef} className="chat-scroll h-[400px] overflow-y-auto pr-3">
           <div className="space-y-4">
             {feed.map((s, i) => (
               <ChatBubble key={`${s.role}-${i}-${s.title ?? ""}`} side={s.side} role={s.role} accent={s.accent} title={s.title} text={s.text} />
@@ -245,15 +244,15 @@ function ChatDemo({ isZh, steps }: { isZh: boolean; steps: DemoStep[] }) {
           </div>
         </div>
 
-        <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
-          <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-xl px-4 py-2.5 text-xs text-slate-500 font-mono">
+        <div className="mt-4 flex items-center justify-between border-t border-white/5 pt-4">
+          <div className="flex-1 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5 font-mono text-xs text-slate-500">
             {isZh ? "等待指令..." : "Awaiting input..."}
           </div>
         </div>
       </div>
 
-      <div className="hidden sm:block absolute -bottom-6 -right-6 px-4 py-2 rounded-xl bg-[#0a0a0a] border border-white/10 text-xs text-slate-300 float-soft2 shadow-xl shadow-purple-900/20 z-20 flex items-center gap-2">
-        <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+      <div className="float-soft2 absolute -right-6 -bottom-6 z-20 hidden items-center gap-2 rounded-xl border border-white/10 bg-[#0a0a0a] px-4 py-2 text-xs text-slate-300 shadow-xl shadow-purple-900/20 sm:flex">
+        <span className="h-1.5 w-1.5 rounded-full bg-purple-400" />
         Writer Node Active
       </div>
     </div>
@@ -282,27 +281,27 @@ export default function Home() {
   );
 
   return (
-    <main className="relative min-h-screen bg-[#030303] text-white overflow-hidden font-sans selection:bg-blue-500/30 selection:text-blue-200">
+    <main className="relative min-h-screen overflow-hidden bg-[#030303] font-sans text-white selection:bg-blue-500/30 selection:text-blue-200">
       {/* ✅ 保留你想要的网格，但它是静态的，OK */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff04_1px,transparent_1px),linear-gradient(to_bottom,#ffffff04_1px,transparent_1px)] bg-[size:34px_34px] pointer-events-none z-0 opacity-60" />
+      <div className="pointer-events-none absolute inset-0 z-0 bg-[linear-gradient(to_right,#ffffff04_1px,transparent_1px),linear-gradient(to_bottom,#ffffff04_1px,transparent_1px)] bg-[size:34px_34px] opacity-60" />
 
       {/* ✅ scanlines：改成“静态纹理 + 超低频轻位移”(不会每帧重绘) */}
-      <div className="absolute inset-0 scanlines pointer-events-none z-0 opacity-45" />
+      <div className="scanlines pointer-events-none absolute inset-0 z-0 opacity-45" />
 
       {/* ✅ noise：改成轻量点阵 noise（不要 feTurbulence！） */}
-      <div className="pointer-events-none absolute inset-0 noise-lite z-0" />
+      <div className="noise-lite pointer-events-none absolute inset-0 z-0" />
 
       {/* 柔光（保留你风格，但 blur 控制） */}
-      <div className="pointer-events-none absolute -top-40 left-1/4 w-[40rem] h-[40rem] bg-blue-600/10 blur-[90px] rounded-full" />
-      <div className="pointer-events-none absolute bottom-0 right-0 w-[50rem] h-[50rem] bg-purple-600/10 blur-[110px] rounded-full" />
+      <div className="pointer-events-none absolute top-[-10rem] left-1/4 h-[40rem] w-[40rem] rounded-full bg-blue-600/10 blur-[90px]" />
+      <div className="pointer-events-none absolute right-0 bottom-0 h-[50rem] w-[50rem] rounded-full bg-purple-600/10 blur-[110px]" />
 
       {/* Header */}
-      <header className="fixed top-0 inset-x-0 z-50 px-6 py-4 bg-[#030303]/60 backdrop-blur-xl border-b border-white/5">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-3 group cursor-pointer">
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-white/5 bg-[#030303]/60 px-6 py-4 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-7xl items-center justify-between">
+          <div className="group flex cursor-pointer items-center gap-3">
             <NeuroOrb />
             <div className="leading-tight">
-              <p className="text-[10px] uppercase tracking-[0.25em] text-slate-500 group-hover:text-slate-300 transition-colors">
+              <p className="text-[10px] uppercase tracking-[0.25em] text-slate-500 transition-colors group-hover:text-slate-300">
                 NexusDesk
               </p>
               <p className="text-sm font-semibold text-slate-200">{isZh ? "多模型协作矩阵" : "Multi-Agent Matrix"}</p>
@@ -310,11 +309,11 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="flex items-center p-1 rounded-full bg-white/[0.02] border border-white/5 shadow-inner">
+            <div className="flex items-center rounded-full border border-white/5 bg-white/[0.02] p-1 shadow-inner">
               <button
                 onClick={() => setLang("en")}
                 className={cn(
-                  "px-3 py-1 rounded-full transition-all duration-200 text-xs font-medium tracking-wide",
+                  "rounded-full px-3 py-1 text-xs font-medium tracking-wide transition-all duration-200",
                   lang === "en" ? "bg-white/10 text-white shadow-sm" : "text-slate-500 hover:text-slate-300"
                 )}
               >
@@ -323,7 +322,7 @@ export default function Home() {
               <button
                 onClick={() => setLang("zh")}
                 className={cn(
-                  "px-3 py-1 rounded-full transition-all duration-200 text-xs font-medium tracking-wide",
+                  "rounded-full px-3 py-1 text-xs font-medium tracking-wide transition-all duration-200",
                   lang === "zh" ? "bg-white/10 text-white shadow-sm" : "text-slate-500 hover:text-slate-300"
                 )}
               >
@@ -333,7 +332,7 @@ export default function Home() {
 
             <Link
               href="/chat"
-              className="hidden sm:inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white text-black text-xs font-bold tracking-wide hover:scale-105 hover:shadow-[0_0_20px_rgba(255,255,255,0.25)] transition-all duration-200"
+              className="hidden items-center gap-2 rounded-full bg-white px-4 py-2 text-xs font-bold tracking-wide text-black transition-all duration-200 hover:scale-105 hover:shadow-[0_0_20px_rgba(255,255,255,0.25)] sm:inline-flex"
             >
               <span>{isZh ? "启动终端" : "Launch Terminal"}</span>
               <span aria-hidden className="text-slate-500">↗</span>
@@ -343,56 +342,56 @@ export default function Home() {
       </header>
 
       {/* Hero */}
-      <section className="relative z-10 px-6 pt-40 pb-24 min-h-[90vh] flex items-center">
-        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-16 items-center">
-          <div className="lg:col-span-6 text-center lg:text-left">
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/20 text-[11px] mb-8 font-mono tracking-wider text-blue-300 shadow-[0_0_15px_rgba(59,130,246,0.12)]">
-              <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+      <section className="relative z-10 flex min-h-[90vh] items-center px-6 pt-40 pb-24">
+        <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-16 lg:grid-cols-12">
+          <div className="text-center lg:col-span-6 lg:text-left">
+            <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1.5 font-mono text-[11px] tracking-wider text-blue-300 shadow-[0_0_15px_rgba(59,130,246,0.12)]">
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
               {isZh ? "系统版本 v2.4 在线" : "SYSTEM v2.4 ONLINE"}
             </div>
 
-            <h1 className="text-5xl sm:text-6xl lg:text-[4.8rem] font-extrabold tracking-tighter leading-[1.05] mb-6">
+            <h1 className="mb-6 text-5xl leading-[1.05] font-extrabold tracking-tighter sm:text-6xl lg:text-[4.8rem]">
               <span className="block text-white">{isZh ? "AI 不该是孤岛" : "AI shouldn't work"}</span>
               <span className="ai-title pb-2">{isZh ? "让它们组队为你工作" : "in isolation."}</span>
             </h1>
 
-            <p className="text-base sm:text-lg text-slate-400 leading-relaxed max-w-2xl mx-auto lg:mx-0 font-light mb-10">
+            <p className="mx-auto mb-10 max-w-2xl text-base leading-relaxed font-light text-slate-400 lg:mx-0 sm:text-lg">
               {isZh ? (
                 <>
-                  NexusDesk 重构了人机交互。我们用 <strong className="text-slate-200 font-medium">规划器、撰写者与审核员</strong>{" "}
+                  NexusDesk 重构了人机交互。我们用 <strong className="font-medium text-slate-200">规划器、撰写者与审核员</strong>{" "}
                   组成的 AI 矩阵，将复杂的学习与分析任务拆解。你无需再绞尽脑汁编写提示词，只需下达指令。
                 </>
               ) : (
                 <>
                   NexusDesk redesigns human-AI interaction. We use a matrix of{" "}
-                  <strong className="text-slate-200 font-medium">planners, writers, and reviewers</strong> to decompose complex
+                  <strong className="font-medium text-slate-200">planners, writers, and reviewers</strong> to decompose complex
                   study and writing tasks across AI Note, AI Detector, AI Humanizer, AI Study, and Workflow. Stop crafting
                   perfect prompts, just issue commands.
                 </>
               )}
             </p>
 
-            <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
+            <div className="flex flex-col justify-center gap-4 sm:flex-row lg:justify-start">
               <Link
                 href="/chat"
-                className="group relative px-8 py-4 rounded-2xl bg-white text-black font-semibold text-sm transition-transform hover:scale-[1.02] flex items-center justify-center gap-2 overflow-hidden"
+                className="group relative flex items-center justify-center gap-2 overflow-hidden rounded-2xl bg-white px-8 py-4 text-sm font-semibold text-black transition-transform hover:scale-[1.02]"
               >
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700 ease-in-out" />
+                <div className="absolute inset-0 translate-x-[-100%] bg-gradient-to-r from-transparent via-white/40 to-transparent transition-transform duration-700 ease-in-out group-hover:translate-x-[100%]" />
                 {isZh ? "初始化工作流" : "Initialize Workflow"}
-                <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="h-4 w-4 transition-transform group-hover:translate-x-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
                 </svg>
               </Link>
 
               <a
                 href="#use-cases"
-                className="px-8 py-4 rounded-2xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] text-sm text-slate-300 text-center transition-colors font-medium"
+                className="rounded-2xl border border-white/10 bg-white/[0.02] px-8 py-4 text-center text-sm font-medium text-slate-300 transition-colors hover:bg-white/[0.05]"
               >
                 {isZh ? "浏览架构特性" : "Explore Architecture"}
               </a>
             </div>
 
-            <div className="mt-8 flex flex-wrap gap-2 justify-center lg:justify-start">
+            <div className="mt-8 flex flex-wrap justify-center gap-2 lg:justify-start">
               {["AI Note", "AI Detector", "AI Humanizer", "AI Study", "Workflow"].map((item) => (
                 <div
                   key={item}
@@ -404,20 +403,20 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="lg:col-span-6 relative flex justify-center lg:justify-end">
-            <div className="hidden md:flex absolute -left-16 top-10 z-20 flex-col gap-3 p-4 rounded-2xl bg-black/60 border border-white/10 backdrop-blur-lg float-soft shadow-2xl">
-              <div className="text-[9px] uppercase tracking-widest text-slate-500 font-mono mb-1">Telemetry</div>
+          <div className="relative flex justify-center lg:col-span-6 lg:justify-end">
+            <div className="float-soft absolute top-10 left-[-4rem] z-20 hidden flex-col gap-3 rounded-2xl border border-white/10 bg-black/60 p-4 shadow-2xl backdrop-blur-lg md:flex">
+              <div className="mb-1 font-mono text-[9px] uppercase tracking-widest text-slate-500">Telemetry</div>
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-emerald-500/20 flex items-center justify-center border border-emerald-500/30">
-                  <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                <div className="flex h-8 w-8 items-center justify-center rounded-full border border-emerald-500/30 bg-emerald-500/20">
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
                 </div>
                 <div>
                   <div className="text-xs font-bold text-slate-200">System Nominal</div>
-                  <div className="text-[10px] text-emerald-400 font-mono mt-0.5">Latency: 12ms</div>
+                  <div className="mt-0.5 font-mono text-[10px] text-emerald-400">Latency: 12ms</div>
                 </div>
               </div>
-              <div className="h-[1px] w-full bg-gradient-to-r from-white/10 to-transparent my-1" />
-              <div className="flex justify-between items-center text-[10px] font-mono text-slate-400">
+              <div className="my-1 h-[1px] w-full bg-gradient-to-r from-white/10 to-transparent" />
+              <div className="flex items-center justify-between font-mono text-[10px] text-slate-400">
                 <span>Active Nodes:</span>
                 <span className="text-white">4/4</span>
               </div>
@@ -429,105 +428,113 @@ export default function Home() {
       </section>
 
       {/* 下面模块保持你原来样式（略） */}
-      <section id="use-cases" className="relative py-24 px-6 z-10">
-        <div className="max-w-7xl mx-auto">
+      <section id="use-cases" className="relative z-10 px-6 py-24">
+        <div className="mx-auto max-w-7xl">
           <div className="mb-16">
-            <h2 className="text-3xl sm:text-4xl font-bold text-white tracking-tight">{isZh ? "矩阵核心能力" : "Matrix Capabilities"}</h2>
-            <p className="mt-3 text-slate-400 text-sm max-w-xl font-light">
+            <h2 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">{isZh ? "矩阵核心能力" : "Matrix Capabilities"}</h2>
+            <p className="mt-3 max-w-xl text-sm font-light text-slate-400">
               {isZh
                 ? "抛弃单薄的对话框，用工程化的思维管理输出。每个模块都经过专门微调以应对特定场景。"
                 : "Ditch the flat chatbox. Manage output with engineering mindset across note generation, detection, rewriting, study prep, and multi-agent workflows."}
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-6">
-            <div className="group relative rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 hover:bg-white/[0.02] transition-colors overflow-hidden">
-              <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
-                <svg className="w-24 h-24" fill="currentColor" viewBox="0 0 24 24">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-5">
+            <div className="group relative overflow-hidden rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 transition-colors hover:bg-white/[0.02]">
+              <div className="absolute top-0 right-0 p-8 opacity-10 transition-opacity group-hover:opacity-20">
+                <svg className="h-24 w-24" fill="currentColor" viewBox="0 0 24 24">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" />
                 </svg>
               </div>
-              <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mb-6 shadow-[0_0_15px_rgba(59,130,246,0.1)]">
+              <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl border border-blue-500/20 bg-blue-500/10 shadow-[0_0_15px_rgba(59,130,246,0.1)]">
                 <span className="text-xl">📝</span>
               </div>
-              <h3 className="text-lg font-semibold text-white mb-3 tracking-wide">AI Notes</h3>
-              <p className="text-sm text-slate-400 leading-relaxed font-light mb-6">
+              <h3 className="mb-3 text-lg font-semibold tracking-wide text-white">AI Notes</h3>
+              <p className="mb-6 text-sm leading-relaxed font-light text-slate-400">
                 {isZh ? "输入冗长的文献或录音稿，矩阵会自动剥离冗余，重组为结构化笔记与自测清单。" : "Feed lengthy papers or transcripts. The matrix strips bloat and rebuilds structured notes and self-test checklists."}
               </p>
-              <div className="text-xs font-mono text-blue-400"># READ_COMPREHENSION</div>
+              <div className="font-mono text-xs text-blue-400"># READ_COMPREHENSION</div>
             </div>
 
-            <div className="group relative rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 hover:bg-white/[0.02] transition-colors overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-b from-purple-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="w-12 h-12 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mb-6 shadow-[0_0_15px_rgba(167,139,250,0.1)]">
+            <div className="group relative overflow-hidden rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 transition-colors hover:bg-white/[0.02]">
+              <div className="absolute inset-0 bg-gradient-to-b from-purple-500/5 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+              <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl border border-purple-500/20 bg-purple-500/10 shadow-[0_0_15px_rgba(167,139,250,0.1)]">
                 <span className="text-xl">🛡️</span>
               </div>
-              <h3 className="text-lg font-semibold text-white mb-3 tracking-wide">AI Detector</h3>
-              <p className="text-sm text-slate-400 leading-relaxed font-light mb-6">
+              <h3 className="mb-3 text-lg font-semibold tracking-wide text-white">AI Detector</h3>
+              <p className="mb-6 text-sm leading-relaxed font-light text-slate-400">
                 {isZh ? "逐句扫描文本指纹，标注高风险的机器生成痕迹，并提供拟人化改写建议。" : "Line-by-line text fingerprint scanning. Highlights high-risk machine footprints and suggests humanized revisions."}
               </p>
-              <div className="text-xs font-mono text-purple-400"># RISK_ANALYSIS</div>
+              <div className="font-mono text-xs text-purple-400"># RISK_ANALYSIS</div>
             </div>
 
-            <div className="group relative rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 hover:bg-white/[0.02] transition-colors overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center mb-6 shadow-[0_0_15px_rgba(34,211,238,0.08)]">
+            <div className="group relative overflow-hidden rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 transition-colors hover:bg-white/[0.02]">
+              <div className="absolute inset-0 bg-gradient-to-b from-cyan-500/5 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+              <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-500/20 bg-cyan-500/10 shadow-[0_0_15px_rgba(34,211,238,0.08)]">
                 <span className="text-xl">✍</span>
               </div>
-              <h3 className="text-lg font-semibold text-white mb-3 tracking-wide">AI Humanizer</h3>
-              <p className="text-sm text-slate-400 leading-relaxed font-light mb-6">
+              <h3 className="mb-3 text-lg font-semibold tracking-wide text-white">AI Humanizer</h3>
+              <p className="mb-6 text-sm leading-relaxed font-light text-slate-400">
                 {isZh
-                  ? "鍦ㄤ繚鐣欏師鎰忕殑鍓嶆彁涓嬶紝璁╄姘斻€佽妭濂忓拰鍙ュ紡鏇磋嚜鐒躲€佹洿鍍忕湡瀹炰汉绫诲啓浣溿€?"
+                  ? "在保留原意的前提下，让语气、节奏和句式更自然、更像真人写作。"
                   : "Refine wording, rhythm, and phrasing so text feels more natural without changing the original meaning."}
               </p>
-              <div className="text-xs font-mono text-cyan-400"># TONE_REFINEMENT</div>
+              <div className="font-mono text-xs text-cyan-400"># TONE_REFINEMENT</div>
             </div>
 
-            <div className="group relative rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 hover:bg-white/[0.02] transition-colors overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-b from-amber-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mb-6 shadow-[0_0_15px_rgba(245,158,11,0.08)]">
+            <div className="group relative overflow-hidden rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 transition-colors hover:bg-white/[0.02]">
+              <div className="absolute inset-0 bg-gradient-to-b from-amber-500/5 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+              <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl border border-amber-500/20 bg-amber-500/10 shadow-[0_0_15px_rgba(245,158,11,0.08)]">
                 <span className="text-xl">▣</span>
               </div>
-              <h3 className="text-lg font-semibold text-white mb-3 tracking-wide">AI Study</h3>
-              <p className="text-sm text-slate-400 leading-relaxed font-light mb-6">
+              <h3 className="mb-3 text-lg font-semibold tracking-wide text-white">AI Study</h3>
+              <p className="mb-6 text-sm leading-relaxed font-light text-slate-400">
                 {isZh
-                  ? "浠庢枃妗ｆ姽鍙栧唴瀹癸紝鐢熸垚 notes銆乫lashcards 鍜?quiz锛屾妸鏉愭枡鐩存帴鍙樻垚鍙涔犵殑瀛︿範鍗曞厓銆?"
+                  ? "从文档中提取内容，生成 notes、flashcards 和 quiz，把材料直接变成可复习的学习单元。"
                   : "Extract from documents and turn source material into notes, flashcards, and quiz sets for actual study sessions."}
               </p>
-              <div className="text-xs font-mono text-amber-400"># STUDY_PIPELINE</div>
+              <div className="font-mono text-xs text-amber-400"># STUDY_PIPELINE</div>
             </div>
 
-            <div className="group relative rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 hover:bg-white/[0.02] transition-colors overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-b from-emerald-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-6 shadow-[0_0_15px_rgba(52,211,153,0.1)]">
+            <div className="group relative overflow-hidden rounded-3xl border border-white/5 bg-[#0a0a0a] p-8 transition-colors hover:bg-white/[0.02]">
+              <div className="absolute inset-0 bg-gradient-to-b from-emerald-500/5 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+              <div className="mb-6 flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-500/20 bg-emerald-500/10 shadow-[0_0_15px_rgba(52,211,153,0.1)]">
                 <span className="text-xl">🤝</span>
               </div>
-              <h3 className="text-lg font-semibold text-white mb-3 tracking-wide">Team Mode</h3>
-              <p className="text-sm text-slate-400 leading-relaxed font-light mb-6">
+              <h3 className="mb-3 text-lg font-semibold tracking-wide text-white">Team Mode</h3>
+              <p className="mb-6 text-sm leading-relaxed font-light text-slate-400">
                 {isZh ? "召唤多角色工作流：大纲规划师主导逻辑，文案撰写者填充细节，严苛审核员把关质量。" : "Summon a multi-role workflow: Planners lead logic, Writers fill details, strict Reviewers enforce quality."}
               </p>
-              <div className="text-xs font-mono text-emerald-400"># SYNERGY_PROTOCOL</div>
+              <div className="font-mono text-xs text-emerald-400"># SYNERGY_PROTOCOL</div>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="relative py-32 px-6 z-10">
+      <section className="relative z-10 px-6 py-32">
         <div className="absolute inset-0 bg-gradient-to-b from-transparent to-[#050505]" />
-        <div className="relative max-w-4xl mx-auto text-center">
-          <h2 className="text-4xl sm:text-5xl font-extrabold text-white tracking-tighter mb-6">{isZh ? "准备好接入矩阵了吗？" : "Ready to access the Matrix?"}</h2>
-          <p className="text-slate-400 font-light text-lg mb-10">{isZh ? "极简界面之下，是强大的工程化底座。马上开启高效协作。" : "Beneath the minimal interface lies a powerful engineering foundation."}</p>
+        <div className="relative mx-auto max-w-4xl text-center">
+          <h2 className="mb-6 text-4xl font-extrabold tracking-tighter text-white sm:text-5xl">{isZh ? "准备好接入矩阵了吗？" : "Ready to access the Matrix?"}</h2>
+          <p className="mb-10 text-lg font-light text-slate-400">{isZh ? "极简界面之下，是强大的工程化底座。马上开启高效协作。" : "Beneath the minimal interface lies a powerful engineering foundation."}</p>
           <Link
             href="/chat"
-            className="inline-flex items-center justify-center px-10 py-4 text-sm font-bold bg-white text-black rounded-full hover:shadow-[0_0_28px_rgba(255,255,255,0.35)] hover:scale-105 transition-all duration-200 tracking-wide"
+            className="inline-flex items-center justify-center rounded-full bg-white px-10 py-4 text-sm font-bold tracking-wide text-black transition-all duration-200 hover:scale-105 hover:shadow-[0_0_28px_rgba(255,255,255,0.35)]"
           >
             {isZh ? "启动工作台 →" : "Launch Workspace →"}
           </Link>
         </div>
       </section>
 
-      <footer className="relative z-10 py-8 text-center border-t border-white/5 bg-[#030303]">
-        <p className="text-slate-600 text-xs font-mono tracking-wider">© {new Date().getFullYear()} NEXUSDESK SYSTEM // VINS.ENGINEERING</p>
+      <footer className="relative z-10 border-t border-white/5 bg-[#030303] py-8 text-center">
+        <div className="mb-4 flex items-center justify-center gap-4 text-xs uppercase tracking-[0.18em] text-slate-500">
+          <Link href="/blog" className="transition hover:text-slate-300">
+            Blog
+          </Link>
+          <Link href="/privacy" className="transition hover:text-slate-300">
+            Privacy
+          </Link>
+        </div>
+        <p className="font-mono text-xs tracking-wider text-slate-600">© {new Date().getFullYear()} NEXUSDESK SYSTEM // VINS.ENGINEERING</p>
       </footer>
 
       <style jsx global>{`

@@ -37,3 +37,29 @@ export function buildMetadata({ title, description, path, keywords, robots }: Me
     robots,
   };
 }
+
+export function buildArticleMetadata({ title, description, path, keywords, robots }: MetadataInput): Metadata {
+  return {
+    metadataBase: new URL(getSiteUrl()),
+    title,
+    description,
+    keywords,
+    alternates: {
+      canonical: absoluteUrl(path),
+    },
+    openGraph: {
+      type: "article",
+      siteName: SITE_NAME,
+      title,
+      description,
+      url: absoluteUrl(path),
+      locale: "en_US",
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+    },
+    robots,
+  };
+}
