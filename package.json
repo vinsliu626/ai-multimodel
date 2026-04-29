@@ -13,7 +13,7 @@
     "lint": "eslint",
     "test": "node ./node_modules/vitest/vitest.mjs run --configLoader native --pool threads",
     "test:e2e": "playwright test",
-    "test:stripe": "node ./node_modules/vitest/vitest.mjs run --configLoader native --pool threads tests/api/stripe-checkout.test.ts tests/api/stripe-webhook.test.ts",
+    "test:stripe": "vitest run --pool threads tests/api/stripe-checkout.test.ts tests/api/stripe-webhook.test.ts",
     "postinstall": "prisma generate",
     "gift:create": "ts-node scripts/create-gift-code.ts",
     "gift:cleanup:expired": "ts-node scripts/cleanup-expired-gift-codes.ts",
