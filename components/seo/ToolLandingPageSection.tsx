@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { SeoContent } from "@/components/seo/SeoContent";
+import { SeoLandingSection } from "@/components/seo/SeoLandingSection";
 import type { ToolSeoContent } from "@/lib/seo/toolPageContent";
 
 export function ToolLandingPageSection({
@@ -24,8 +24,7 @@ export function ToolLandingPageSection({
         {children}
       </section>
 
-      <SeoContent title={hero.seoTitle} sections={hero.sections} />
+      <SeoLandingSection content={hero} />
     </>
   );
 }
-

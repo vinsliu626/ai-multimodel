@@ -1,13 +1,46 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
-
-import type { SeoContentSection } from "@/components/seo/SeoContent";
 
 export type ToolSeoContent = {
   heroEyebrow: string;
   heroTitle: string;
   heroSubtitle: string;
+  guideLabel: string;
   seoTitle: string;
-  sections: SeoContentSection[];
+  productName: string;
+  overviewIntro: string;
+  whatIs: ReactNode[];
+  howItWorks: ReactNode[];
+  audienceTitle: string;
+  audiences: Array<{
+    title: string;
+    subtitle: string;
+    bullets: string[];
+  }>;
+  stepsIntro: string;
+  steps: Array<{
+    title: string;
+    description: string;
+  }>;
+  trustTitle: string;
+  trustParagraphs: ReactNode[];
+  benefits: Array<{
+    title: string;
+    description: string;
+  }>;
+  limitations: Array<{
+    title: string;
+    description: string;
+  }>;
+  useCasesIntro: string;
+  useCases: Array<{
+    title: string;
+    description: string;
+  }>;
+  faqs: Array<{
+    question: string;
+    answer: string;
+  }>;
 };
 
 export const toolPageContent: Record<"detector" | "note" | "study" | "humanizer" | "converter", ToolSeoContent> = {
@@ -16,128 +49,145 @@ export const toolPageContent: Record<"detector" | "note" | "study" | "humanizer"
     heroTitle: "AI Detector for Student Writing, Draft Reviews, and Risk Checks",
     heroSubtitle:
       "Paste text, review suspicious passages, and check whether writing sounds overly machine-like before you submit or publish it.",
+    guideLabel: "AI WRITING CHECKER GUIDE",
     seoTitle: "AI Detector Guide",
-    sections: [
+    productName: "AI Detector",
+    overviewIntro:
+      "This page combines the live detector with a richer decision layer below it, so students and educators can understand what the tool does, who it helps, and how it fits into a responsible review workflow.",
+    whatIs: [
+      "An AI detector reviews writing patterns and estimates whether a passage looks machine-generated. The useful version of that task is not a dramatic yes-or-no verdict. It is a guided review process that helps you find sections where the phrasing, rhythm, or consistency feels too synthetic for comfort.",
+      "That matters when your workflow already moves through multiple tools. A draft may begin as class material inside " +
+        "AI Note, turn into concept review in AI Study, and then become a final paper. Somewhere in that chain, the voice can flatten. AI Detector gives you a deliberate checkpoint before submission or publication.",
+    ],
+    howItWorks: [
+      "The detector looks at sentence predictability, repetitive structure, flow uniformity, and other surface features that often appear in generated writing. The goal is not to replace judgment. It is to show you where judgment should be applied first.",
+      "When those flagged sections still carry the right idea but sound too polished, the next step is often " +
+        "AI Humanizer. If the issue comes from weak source notes or shaky understanding, it usually makes more sense to revisit AI Note or AI Study before rewriting. If the draft started from exported files, Converter helps get the raw materials into a cleaner format first.",
+    ],
+    audienceTitle: "Who uses AI Detector?",
+    audiences: [
       {
-        heading: "What is AI Detector?",
-        content: (
-          <>
-            <p>
-              An AI detector is a tool that reviews writing patterns and estimates whether a passage looks machine-generated. The
-              keyword here is pattern, not proof. Good detectors do not claim mind-reading accuracy. They help you find sections
-              that deserve another look because the rhythm, phrasing, or consistency feels too synthetic.
-            </p>
-            <p>
-              That matters for students because modern writing workflows are messy. A paper might start with class notes from{" "}
-              <Link href="/ai-note">AI Note</Link>, move into concept review with <Link href="/ai-study">AI Study</Link>, and
-              later become a final submission. Somewhere in that chain, the voice can become too polished or generic. AI Detector
-              gives you a checkpoint before that becomes someone else&apos;s concern.
-            </p>
-          </>
-        ),
+        title: "Students",
+        subtitle: "Check papers before submission and catch wording that sounds overly generated or too generic.",
+        bullets: ["Check AI-like writing patterns quickly", "See which sections need another pass", "Rewrite flagged sections before turning work in"],
       },
       {
-        heading: "How does it work?",
-        content: (
-          <>
-            <p>
-              The detector looks at sentence predictability, phrasing repetition, flow uniformity, and other surface signals that
-              commonly appear in generated text. Instead of reducing a draft to one magic verdict, the more useful workflow is
-              sentence-level review. You want to know where the suspicious language is, not just whether a score looks high.
-            </p>
-            <p>
-              In practice, that means the tool helps you inspect the exact sections that need editing. A result can then feed into{" "}
-              <Link href="/ai-humanizer">AI Humanizer</Link> if the tone is too stiff, or back into your study source if the
-              problem started earlier. If supporting files come from screenshots or document exports, <Link href="/converter">Converter</Link>{" "}
-              helps clean up the raw inputs before you even reach the writing stage.
-            </p>
-          </>
-        ),
+        title: "Educators",
+        subtitle: "Review student work with more context instead of relying on one suspicious overall score.",
+        bullets: ["Scan assignments for sentence-level clues", "Use the result as discussion support, not final proof", "Review style drift before escalating concerns"],
       },
       {
-        heading: "How to use it (step-by-step)",
-        content: (
-          <>
-            <ol>
-              <li>Paste your draft, paragraph, or suspicious excerpt into the detector.</li>
-              <li>Run the check and focus on the highlighted passages rather than only the overall score.</li>
-              <li>Read those lines out loud and compare them to your class notes or outline.</li>
-              <li>Rewrite vague or overly smooth sections in your own words.</li>
-              <li>If the tone still feels synthetic, refine it in <Link href="/ai-humanizer">AI Humanizer</Link>.</li>
-            </ol>
-            <p>
-              Students usually get the best results when they use the detector late in the process, after building cleaner inputs
-              in <Link href="/ai-note">AI Note</Link> and improving understanding with <Link href="/ai-study">AI Study</Link>.
-              Detection works better as an editing step than as a first draft strategy.
-            </p>
-          </>
-        ),
+        title: "Content creators",
+        subtitle: "Publish with more confidence when drafts involve AI-assisted outlines, summaries, or rewrites.",
+        bullets: ["Scan blog drafts and social copy", "Reduce robotic phrasing before publishing", "Pair detector results with a final tone pass"],
+      },
+    ],
+    stepsIntro:
+      "The best detector workflow is simple: check the text, inspect the risky sections, and improve the draft with context instead of chasing one percentage.",
+    steps: [
+      {
+        title: "Paste or upload your content",
+        description:
+          "Start with the exact passage, assignment draft, or article section you want to inspect. Focus on real submission language instead of isolated test sentences.",
       },
       {
-        heading: "Key benefits",
-        content: (
-          <>
-            <ul>
-              <li>Fast review before assignment submission or publication.</li>
-              <li>Sentence-level visibility into the passages that actually need work.</li>
-              <li>Useful for self-checking, not just for policing other writers.</li>
-              <li>Pairs well with note, study, rewrite, and file-prep workflows.</li>
-            </ul>
-            <p>
-              The real advantage is clarity. Instead of worrying abstractly about whether a draft &quot;looks AI,&quot; you can
-              see which passages need sharper examples, more variation, or a less templated tone.
-            </p>
-          </>
-        ),
+        title: "Run the tool",
+        description:
+          "Use the detector to surface suspicious passages. Look at where the patterns appear, not just the overall number, so you know which sections actually need work.",
       },
       {
-        heading: "Limitations",
-        content: (
-          <>
-            <p>
-              No AI detector is perfect. Formal student writing, carefully edited prose, or highly repetitive technical language
-              can trigger false positives. That means you should never treat detector output as a final judgment on authorship or
-              honesty.
-            </p>
-            <p>
-              The smarter mindset is to treat detection as review support. If a passage gets flagged, revise it if the language is
-              genuinely weak. If the writing is sound and grounded in your own work, use the signal as a prompt to double-check,
-              not to panic.
-            </p>
-          </>
-        ),
+        title: "Review results and improve your work",
+        description:
+          "Read the flagged lines aloud, compare them to your source notes, and rewrite vague or machine-like phrasing. If the meaning is right but the flow is stiff, move into AI Humanizer next.",
+      },
+    ],
+    trustTitle: "Responsible review beats blind trust",
+    trustParagraphs: [
+      "Students and educators both need a review tool that supports context instead of replacing it. The healthiest use of AI Detector is as an editing and oversight layer. It helps you slow down and look closely at the sections that deserve attention without pretending software can perfectly determine intent or authorship on its own.",
+      <>
+        That is also why NexusDesk works better as a connected system. You can build cleaner source material in{" "}
+        <Link href="/ai-note">AI Note</Link>, strengthen understanding in <Link href="/ai-study">AI Study</Link>, inspect a
+        final draft here, and then smooth tone in <Link href="/ai-humanizer">AI Humanizer</Link>. If you are working from
+        exported documents or screenshots, <Link href="/converter">Converter</Link> keeps the input side manageable too.
+      </>,
+    ],
+    benefits: [
+      {
+        title: "Sentence-level visibility",
+        description:
+          "Instead of reducing a paper to one abstract score, the detector shows where the risky language lives so your edits can be targeted and defensible.",
       },
       {
-        heading: "Use cases (students, developers, etc.)",
-        content: (
-          <>
-            <p>
-              Students use AI Detector before submitting essays, scholarship drafts, and discussion posts. Tutors and teachers can
-              use it to identify passages that deserve closer reading, especially when style drifts sharply from the rest of a
-              paper. Developers and content teams can also use it as a QA pass when generated copy needs to sound less robotic.
-            </p>
-            <p>
-              In all of those cases, the best results come from combining tools: gather source material in{" "}
-              <Link href="/ai-note">AI Note</Link>, build understanding in <Link href="/ai-study">AI Study</Link>, inspect the
-              draft here, humanize awkward sections, and keep file handling simple with <Link href="/converter">Converter</Link>.
-            </p>
-          </>
-        ),
+        title: "Fast pre-submission review",
+        description:
+          "When deadlines are close, you can run one more check for passages that sound too smooth, too repetitive, or disconnected from your actual notes.",
       },
       {
-        heading: "FAQ",
-        content: (
-          <>
-            <h3>Can an AI detector prove that text is AI-generated?</h3>
-            <p>No. It can flag patterns and probabilities, but it should not be treated as absolute proof.</p>
-            <h3>Should students use AI Detector on their own drafts?</h3>
-            <p>Yes. That is one of the best use cases because it helps catch stiff wording before submission.</p>
-            <h3>What should I do if a section gets flagged?</h3>
-            <p>Compare it to your source notes, add more specific detail, and rewrite it in a more natural voice.</p>
-            <h3>When should I use AI Humanizer after the detector?</h3>
-            <p>Use it when the meaning is right but the wording is still too smooth, generic, or obviously generated.</p>
-          </>
-        ),
+        title: "Better collaboration",
+        description:
+          "Teachers, tutors, and editors can use the output to discuss specific lines and patterns instead of arguing over a vague gut feeling.",
+      },
+      {
+        title: "Stronger workflow fit",
+        description:
+          "AI Detector becomes more useful when it sits beside note cleanup, study generation, and rewrite tools instead of operating as a one-off website.",
+      },
+    ],
+    limitations: [
+      {
+        title: "No detector is perfect",
+        description:
+          "Formal prose, technical writing, or heavily edited drafts can trigger false positives. The output should always be interpreted with human review.",
+      },
+      {
+        title: "Weak source material still causes weak drafts",
+        description:
+          "If your notes or outline are shallow, the detector can show a symptom but it cannot repair understanding by itself. That part belongs earlier in the workflow.",
+      },
+    ],
+    useCasesIntro:
+      "The most valuable use cases are the ones where the detector acts as a smart checkpoint, not a dramatic referee.",
+    useCases: [
+      {
+        title: "Essay review before submission",
+        description:
+          "Run a scholarship essay, reflection, or research response through the detector and tighten the sections that sound too template-driven before you submit.",
+      },
+      {
+        title: "Classroom feedback",
+        description:
+          "Use the detector to identify passages worth discussing with students, especially when tone shifts sharply from one part of a draft to another.",
+      },
+      {
+        title: "Content quality control",
+        description:
+          "Scan AI-assisted blog intros, product copy, or newsletter drafts to catch wording that sounds smooth but empty before it goes live.",
+      },
+    ],
+    faqs: [
+      {
+        question: "Can AI Detector prove that text is AI-generated?",
+        answer: "No. It surfaces patterns and probability signals, but it should never be treated as absolute proof on its own.",
+      },
+      {
+        question: "Should students use the detector on their own drafts?",
+        answer: "Yes. Self-review is one of the best use cases because it helps you catch stiff, overly polished language before submission.",
+      },
+      {
+        question: "What should I do if a section gets flagged?",
+        answer: "Compare it to your notes or outline, add more specific detail, and rewrite it in a more natural voice. If the meaning is fine but the tone is awkward, use AI Humanizer next.",
+      },
+      {
+        question: "Is a high score always bad?",
+        answer: "Not automatically. It means the draft deserves closer review, especially if the writing is formal, repetitive, or heavily edited.",
+      },
+      {
+        question: "Do teachers need to rely on one detector result?",
+        answer: "No. The healthier approach is to combine detector output with source review, draft history, and conversation with the student when needed.",
+      },
+      {
+        question: "How does this fit with the rest of NexusDesk?",
+        answer: "AI Detector works best after note cleanup and study prep, and it often feeds directly into AI Humanizer for final wording improvements.",
       },
     ],
   },
@@ -146,125 +196,150 @@ export const toolPageContent: Record<"detector" | "note" | "study" | "humanizer"
     heroTitle: "AI Note Generator for Lectures, Readings, and Fast Study Prep",
     heroSubtitle:
       "Upload audio, paste source text, or work from transcripts to turn raw material into structured notes you can actually review.",
+    guideLabel: "AI NOTE TAKING GUIDE",
     seoTitle: "AI Note Generator Guide",
-    sections: [
+    productName: "AI Note",
+    overviewIntro:
+      "This page keeps the live AI note tool in front and adds a more visual explainer below it, so students can understand how note generation fits into lecture review, reading compression, and study prep.",
+    whatIs: [
+      "An AI note generator helps convert lectures, transcripts, recordings, and source text into cleaner notes. The main benefit for students is not fancy wording. It is reduced cleanup. When your raw material is long, repetitive, or incomplete, AI can impose a structure that is easier to study from later.",
+      "That only becomes useful when the notes are actually reviewable. Good note output separates main concepts from examples, pulls repeated points together, and leaves you with something that can feed directly into " +
+        "AI Study instead of forcing another round of manual rewriting.",
+    ],
+    howItWorks: [
+      "The tool accepts audio, text, or transcript input and restructures it into clearer notes with headings, summaries, and cleaner logic. Instead of treating everything as one block of text, it helps you extract the ideas that matter first.",
+      <>
+        In a broader workflow, note generation usually comes before studying and writing. Students often start here, move into{" "}
+        <Link href="/ai-study">AI Study</Link> for flashcards or quizzes, then use <Link href="/ai-detector">AI Detector</Link>{" "}
+        and <Link href="/ai-humanizer">AI Humanizer</Link> if note-based writing needs a final quality check. If the source file
+        is awkward, <Link href="/converter">Converter</Link> helps prep it.
+      </>,
+    ],
+    audienceTitle: "Who uses AI Note?",
+    audiences: [
       {
-        heading: "What is AI Note?",
-        content: (
-          <>
-            <p>
-              An AI note generator helps convert lectures, transcripts, recordings, and source text into more structured notes.
-              For students, that usually means less cleanup after class and a faster path to studying. Instead of manually
-              reorganizing messy material, you can start with a cleaner summary, outline, or concept list.
-            </p>
-            <p>
-              The important distinction is that good notes are not just shorter text. They should make the material easier to scan,
-              compare, and revisit. That is why <Link href="/ai-note">AI Note</Link> is most useful when your source is rough or
-              incomplete, not when the material is already perfectly formatted.
-            </p>
-          </>
-        ),
+        title: "Students",
+        subtitle: "Turn messy lectures and dense readings into cleaner notes you can actually review before class or exams.",
+        bullets: ["Convert audio or text into structured notes", "Summarize long readings faster", "Build study-ready outlines without manual cleanup"],
       },
       {
-        heading: "How does it work?",
-        content: (
-          <>
-            <p>
-              The tool accepts audio, recordings, transcripts, or pasted text and then restructures the content into clearer notes.
-              It can separate main points from supporting examples, remove filler, and produce a cleaner study base. That base can
-              then move into <Link href="/ai-study">AI Study</Link> if you want flashcards, quiz prompts, or revision outputs.
-            </p>
-            <p>
-              In a broader workflow, the note stage sits near the beginning. If you later transform note content into written
-              answers, <Link href="/ai-detector">AI Detector</Link> can help you spot robotic phrasing, while{" "}
-              <Link href="/ai-humanizer">AI Humanizer</Link> can make the final language sound more natural. If class materials
-              arrive as files that need reformatting, <Link href="/converter">Converter</Link> keeps that part simple too.
-            </p>
-          </>
-        ),
+        title: "Researchers",
+        subtitle: "Compress source-heavy material into a clearer note base before outlining or reviewing a topic.",
+        bullets: ["Strip out filler and repetition", "Keep the key concepts visible", "Prepare cleaner material for later analysis"],
       },
       {
-        heading: "How to use it (step-by-step)",
-        content: (
-          <>
-            <ol>
-              <li>Start with one real input: a lecture recording, transcript, article, or rough class note set.</li>
-              <li>Generate structured notes with headings, key terms, and examples.</li>
-              <li>Compare the output to your slides or syllabus to confirm the emphasis is right.</li>
-              <li>Trim or regenerate anything that feels too vague or too broad.</li>
-              <li>Move the strongest sections into <Link href="/ai-study">AI Study</Link> for active recall later.</li>
-            </ol>
-            <p>
-              This keeps the tool grounded in real student use. You are not asking AI to replace understanding. You are using it
-              to remove repetitive formatting work so you can focus on comprehension and review.
-            </p>
-          </>
-        ),
+        title: "Teams",
+        subtitle: "Turn meeting recordings or internal transcripts into follow-up notes that are easier to scan and share.",
+        bullets: ["Create fast summaries after calls", "Capture action points in one pass", "Standardize rough notes across contributors"],
+      },
+    ],
+    stepsIntro:
+      "The strongest note workflow starts with raw material, produces a cleaner structure, and then turns that structure into something you can study or reuse with confidence.",
+    steps: [
+      {
+        title: "Paste or upload your content",
+        description:
+          "Start with a lecture transcript, reading, recording, or rough note set that would otherwise take too long to clean manually.",
       },
       {
-        heading: "Key benefits",
-        content: (
-          <>
-            <ul>
-              <li>Speeds up note cleanup after long lectures or dense readings.</li>
-              <li>Creates more consistent structure across classes and sources.</li>
-              <li>Reduces manual rewriting when your inputs are messy.</li>
-              <li>Feeds directly into study and writing-review workflows.</li>
-            </ul>
-            <p>
-              The biggest benefit is momentum. Once the notes are clear, the rest of the workflow becomes easier to trust and much
-              faster to continue.
-            </p>
-          </>
-        ),
+        title: "Run the tool",
+        description:
+          "Generate structured notes with clearer sections, better emphasis, and a format that mirrors how you actually want to review the topic later.",
       },
       {
-        heading: "Limitations",
-        content: (
-          <>
-            <p>
-              AI notes are only as useful as the review step that follows them. A polished note set can create false confidence if
-              you never verify or actively study it. The tool may also miss nuance if the lecture wandered or if the reading had
-              unclear priorities.
-            </p>
-            <p>
-              That means you still need to compare results to the original material. Clean notes are helpful. Perfectly reliable
-              notes do not exist without human judgment.
-            </p>
-          </>
-        ),
+        title: "Review results and improve your work",
+        description:
+          "Compare the output against the lecture slides or source text, then move the strongest sections into AI Study if you want flashcards, quizzes, or targeted revision prompts.",
+      },
+    ],
+    trustTitle: "Clean notes are only useful when they stay grounded",
+    trustParagraphs: [
+      "A note tool should speed up the boring parts of studying, not encourage blind trust. The best results come from using AI Note to remove repetition, impose structure, and make the material easier to revisit, while still comparing the output to the original lecture or reading when accuracy matters.",
+      <>
+        That is also why the rest of the stack matters. Notes from <Link href="/ai-note">AI Note</Link> can become active
+        review inside <Link href="/ai-study">AI Study</Link>. If those notes later become assignment language,{" "}
+        <Link href="/ai-detector">AI Detector</Link> and <Link href="/ai-humanizer">AI Humanizer</Link> help make sure the
+        final voice still sounds natural. <Link href="/converter">Converter</Link> keeps file prep from slowing the whole process
+        down.
+      </>,
+    ],
+    benefits: [
+      {
+        title: "Faster lecture cleanup",
+        description:
+          "Instead of spending another hour reorganizing class notes after a long lecture, you can move more quickly to the part that actually improves retention.",
       },
       {
-        heading: "Use cases (students, developers, etc.)",
-        content: (
-          <>
-            <p>
-              Students use AI Note for lecture recordings, reading-heavy courses, seminar transcripts, and revision sheets.
-              Researchers can use it to compress source material before outlining. Teams can use it to turn meetings or interviews
-              into structured follow-up notes before turning action items into more formal documentation.
-            </p>
-            <p>
-              In each case, the long-term value comes from chaining the workflow: organize content here, study it in{" "}
-              <Link href="/ai-study">AI Study</Link>, inspect submitted writing with <Link href="/ai-detector">AI Detector</Link>,
-              humanize the final tone, and use <Link href="/converter">Converter</Link> when the source files are inconvenient.
-            </p>
-          </>
-        ),
+        title: "More consistent structure",
+        description:
+          "When every source comes in a different format, AI Note gives you a more stable layout for headings, concepts, and examples across classes.",
       },
       {
-        heading: "FAQ",
-        content: (
-          <>
-            <h3>Is AI Note best for recordings or text?</h3>
-            <p>Both, but it is especially useful when the original material is long, repetitive, or poorly organized.</p>
-            <h3>Should I trust AI notes without checking them?</h3>
-            <p>No. Review them against your slides, reading, or syllabus before relying on them for exams.</p>
-            <h3>What should I do after generating notes?</h3>
-            <p>Turn the strongest sections into questions, flashcards, or review prompts in AI Study.</p>
-            <h3>Can I reuse AI notes in writing?</h3>
-            <p>Yes, but review the tone first. AI Detector and AI Humanizer help prevent generic final wording.</p>
-          </>
-        ),
+        title: "Better bridge to studying",
+        description:
+          "Cleaner notes are easier to turn into flashcards, quiz prompts, and review sets inside AI Study without another full round of editing.",
+      },
+      {
+        title: "Reusable across workflows",
+        description:
+          "The same notes can support exam prep, class discussion, revision sheets, and early assignment planning when they are structured well enough.",
+      },
+    ],
+    limitations: [
+      {
+        title: "AI notes can feel more complete than they are",
+        description:
+          "A polished note set may still miss course emphasis or subtle distinctions from the original lecture, so review against source material is still important.",
+      },
+      {
+        title: "Passive reading is still a risk",
+        description:
+          "If you only reread the notes without turning them into active review, the time savings may not translate into stronger recall.",
+      },
+    ],
+    useCasesIntro:
+      "AI Note works best when the input is messy and the next step is clear, whether that means studying, outlining, or follow-up writing.",
+    useCases: [
+      {
+        title: "Lecture review after class",
+        description:
+          "Turn recordings or transcript-heavy lectures into cleaner notes before the details disappear and before you forget what the instructor emphasized.",
+      },
+      {
+        title: "Reading-heavy courses",
+        description:
+          "Compress long textbook sections or journal articles into a note base that is easier to compare across units and easier to study from later.",
+      },
+      {
+        title: "Meeting or seminar summaries",
+        description:
+          "Organize spoken content into structured follow-up notes that make action items, themes, and examples easier to find.",
+      },
+    ],
+    faqs: [
+      {
+        question: "Is AI Note better for audio or text?",
+        answer: "It can handle both, but the biggest value usually appears when the source material is long, repetitive, or poorly organized.",
+      },
+      {
+        question: "Should I trust AI-generated notes without checking them?",
+        answer: "No. Review them against your slides, reading, or instructor priorities before relying on them for exams or assignments.",
+      },
+      {
+        question: "What should I do after generating notes?",
+        answer: "Move the strongest sections into AI Study for flashcards, quizzes, or guided review instead of stopping at passive reading.",
+      },
+      {
+        question: "Can AI Note help with reading packets?",
+        answer: "Yes. It is useful for compressing dense reading material into a clearer outline before revision or class discussion.",
+      },
+      {
+        question: "Will it remove important detail?",
+        answer: "It can if the source is weak or too broad, which is why students should verify emphasis and regenerate when needed.",
+      },
+      {
+        question: "How does it connect with the other tools?",
+        answer: "AI Note is often the front door. It organizes source material that later becomes study assets, writing drafts, or review checkpoints in the rest of NexusDesk.",
       },
     ],
   },
@@ -273,125 +348,148 @@ export const toolPageContent: Record<"detector" | "note" | "study" | "humanizer"
     heroTitle: "AI Study Tool for Flashcards, Quizzes, and Faster Revision",
     heroSubtitle:
       "Upload documents, extract the core ideas, and turn them into revision-ready notes, flashcards, and quiz sets without leaving the workspace.",
+    guideLabel: "AI STUDY TOOL GUIDE",
     seoTitle: "AI Study Tool Guide",
-    sections: [
+    productName: "AI Study",
+    overviewIntro:
+      "This page pairs the live study generator with a more product-like landing layer underneath, so students can understand how the tool fits into active recall, exam prep, and document-based revision.",
+    whatIs: [
+      "An AI study tool is useful when your source material is available but your revision materials are not. Students often have slides, PDFs, reading packets, or copied notes, yet still do not have flashcards, quizzes, or clean concept checks to study from. AI Study closes that gap.",
+      "The value is not just that it generates text. It turns documents into active review outputs. That means notes can become flashcards, key points can become quiz questions, and a long chapter can become a more realistic exam-prep set without hours of manual setup.",
+    ],
+    howItWorks: [
+      "The tool extracts core content from documents and lets you generate different study formats based on what you need right now: notes for compression, flashcards for memorization, or quizzes for retrieval. That turns passive source material into something more useful for actual revision.",
+      <>
+        Most students get stronger results when they first organize their messiest inputs in <Link href="/ai-note">AI Note</Link>,
+        then use AI Study to create review assets. If those results later influence submitted writing,{" "}
+        <Link href="/ai-detector">AI Detector</Link> and <Link href="/ai-humanizer">AI Humanizer</Link> help on the quality
+        side, while <Link href="/converter">Converter</Link> keeps your files in the right format.
+      </>,
+    ],
+    audienceTitle: "Who uses AI Study?",
+    audiences: [
       {
-        heading: "What is AI Study?",
-        content: (
-          <>
-            <p>
-              An AI study tool helps students turn source material into active review assets instead of leaving everything as
-              passive notes. That distinction matters. Clean information alone does not guarantee recall. Students usually remember
-              more when they work from flashcards, self-test prompts, and comparison questions than when they only reread summaries.
-            </p>
-            <p>
-              <Link href="/ai-study">AI Study</Link> is designed around that second step. It takes cleaned input from your own
-              files or from earlier note work and turns it into materials you can actually revise from on a deadline.
-            </p>
-          </>
-        ),
+        title: "Students",
+        subtitle: "Turn class material into flashcards, quizzes, and review-ready notes before exams and weekly check-ins.",
+        bullets: ["Build revision assets from documents", "Create quick active-recall workflows", "Study from cleaner material instead of raw files"],
       },
       {
-        heading: "How does it work?",
-        content: (
-          <>
-            <p>
-              The tool accepts documents such as PDFs, DOCX files, and slide decks, extracts the important content, and lets you
-              generate outputs like notes, flashcards, and quizzes. That means you do not have to manually build study sets every
-              time a class gives you another packet or presentation.
-            </p>
-            <p>
-              The best results usually come when the source material is already organized. Many students first clean raw lecture
-              material in <Link href="/ai-note">AI Note</Link>, then use this page for retrieval-focused review. If the final
-              answers later become written assignments, <Link href="/ai-detector">AI Detector</Link> and{" "}
-              <Link href="/ai-humanizer">AI Humanizer</Link> keep the tone from sounding too generic. If source files need cleanup
-              first, <Link href="/converter">Converter</Link> helps there too.
-            </p>
-          </>
-        ),
+        title: "Tutors",
+        subtitle: "Generate targeted practice sets from lesson material and use them to structure review sessions more efficiently.",
+        bullets: ["Create guided question sets", "Turn source packets into short assessments", "Reuse material across multiple learners"],
       },
       {
-        heading: "How to use it (step-by-step)",
-        content: (
-          <>
-            <ol>
-              <li>Upload a document or bring in cleaned content from your earlier notes.</li>
-              <li>Select the study outputs you actually need, such as notes, flashcards, or quizzes.</li>
-              <li>Generate one focused set rather than every possible format at once.</li>
-              <li>Answer the questions without looking to test weak spots honestly.</li>
-              <li>Only revisit the concepts you missed instead of rereading everything.</li>
-            </ol>
-            <p>
-              This is where the tool moves beyond summarization. It is not just producing text. It is helping you reach the part
-              of studying that improves recall.
-            </p>
-          </>
-        ),
+        title: "Training teams",
+        subtitle: "Transform internal documents into lighter knowledge checks and study-style review assets for onboarding or learning.",
+        bullets: ["Create notes from documentation", "Generate simple quiz sets", "Keep training material easier to revisit"],
+      },
+    ],
+    stepsIntro:
+      "The fastest study workflow is not about generating everything. It is about creating the exact revision format you need, then testing yourself before rereading.",
+    steps: [
+      {
+        title: "Paste or upload your content",
+        description:
+          "Bring in a document, cleaned note set, or chapter source that has enough structure to generate useful study outputs from.",
       },
       {
-        heading: "Key benefits",
-        content: (
-          <>
-            <ul>
-              <li>Turns long documents into usable revision material much faster than manual prep.</li>
-              <li>Supports active recall instead of passive rereading.</li>
-              <li>Works well for exam cram sessions and structured weekly review.</li>
-              <li>Pairs naturally with note cleanup and writing review tools.</li>
-            </ul>
-            <p>
-              The major benefit is leverage. You spend less time formatting study resources and more time actually testing your
-              memory.
-            </p>
-          </>
-        ),
+        title: "Run the tool",
+        description:
+          "Choose notes, flashcards, quizzes, or a focused combination instead of trying to generate every format at once.",
       },
       {
-        heading: "Limitations",
-        content: (
-          <>
-            <p>
-              AI Study does not replace learning discipline. If you generate too many outputs and never use them, the workflow
-              becomes busy rather than effective. The tool also depends on the quality of the source material. Weak inputs still
-              require review.
-            </p>
-            <p>
-              Students get the most value when they keep the scope tight: one chapter, one lecture, one problem set, then test,
-              revise, and move on.
-            </p>
-          </>
-        ),
+        title: "Review results and improve your work",
+        description:
+          "Answer the prompts without looking first, then return only to the concepts you missed. That is where the AI setup time starts paying off.",
+      },
+    ],
+    trustTitle: "Speed matters, but recall matters more",
+    trustParagraphs: [
+      "AI Study is strongest when it gets you to active recall faster. That means the tool should reduce setup time, not turn studying into another passive reading exercise. If the generated outputs become one more pile of text you never use, the workflow becomes decorative instead of effective.",
+      <>
+        NexusDesk keeps the study flow grounded by linking it to the other products. You can clean source material in{" "}
+        <Link href="/ai-note">AI Note</Link>, study here, inspect any note-based writing in{" "}
+        <Link href="/ai-detector">AI Detector</Link>, refine awkward phrasing in <Link href="/ai-humanizer">AI Humanizer</Link>,
+        and handle document prep in <Link href="/converter">Converter</Link> when needed.
+      </>,
+    ],
+    benefits: [
+      {
+        title: "Faster exam setup",
+        description:
+          "You can turn a chapter, slide deck, or study packet into revision outputs without manually rebuilding the material from zero.",
       },
       {
-        heading: "Use cases (students, developers, etc.)",
-        content: (
-          <>
-            <p>
-              Students use AI Study for midterm review, weekly reading checks, language memorization, and fast conversion of slide
-              decks into flashcards. Tutors can use it to create guided practice sets. Training teams and documentation owners can
-              also use the same structure for internal learning materials when they need lightweight knowledge checks.
-            </p>
-            <p>
-              When that workflow starts with better notes in <Link href="/ai-note">AI Note</Link> and ends with cleaner
-              explanation quality in <Link href="/ai-detector">AI Detector</Link> or{" "}
-              <Link href="/ai-humanizer">AI Humanizer</Link>, the result is much more reliable than depending on one tool alone.
-            </p>
-          </>
-        ),
+        title: "Active review formats",
+        description:
+          "Flashcards and quiz prompts help push students beyond passive recognition and into actual retrieval before an exam exposes weak areas.",
       },
       {
-        heading: "FAQ",
-        content: (
-          <>
-            <h3>Is AI Study better than reading notes?</h3>
-            <p>It is better for recall because it helps you retrieve information instead of just recognizing it.</p>
-            <h3>What files work best?</h3>
-            <p>Clean PDFs, DOCX files, and slide decks usually work well, especially when the source is already organized.</p>
-            <h3>Should I use AI Note before AI Study?</h3>
-            <p>Often yes. Cleaner source notes usually lead to stronger flashcards and better quiz outputs.</p>
-            <h3>Can I use the results in assignments?</h3>
-            <p>Yes, but review the tone before submitting. AI Detector and AI Humanizer help with that final step.</p>
-          </>
-        ),
+        title: "Flexible study outputs",
+        description:
+          "Different classes need different review modes. AI Study lets you choose the output that fits the subject instead of forcing one universal format.",
+      },
+      {
+        title: "Works with existing material",
+        description:
+          "You do not need a perfect note system first. The tool can work from uploaded documents or from cleaned notes already created elsewhere in NexusDesk.",
+      },
+    ],
+    limitations: [
+      {
+        title: "Generated review still needs real use",
+        description:
+          "If you never answer the questions or test yourself honestly, the output is just formatted information instead of real studying.",
+      },
+      {
+        title: "Weak inputs still weaken outputs",
+        description:
+          "Confusing or incomplete source material can lead to shallow quiz items or missed concepts, so source quality still matters.",
+      },
+    ],
+    useCasesIntro:
+      "AI Study works best when you know the class material you need to review and want to spend your time answering questions instead of building them.",
+    useCases: [
+      {
+        title: "Midterm and final prep",
+        description:
+          "Turn units, readings, and slide decks into revision sets that are faster to review under real deadline pressure.",
+      },
+      {
+        title: "Weekly study cycles",
+        description:
+          "Generate smaller sets after each lecture or reading so revision does not pile up into one huge cram session later.",
+      },
+      {
+        title: "Document-based tutoring",
+        description:
+          "Create guided notes or practice questions from the same source packet so a tutoring session can focus on understanding instead of setup.",
+      },
+    ],
+    faqs: [
+      {
+        question: "Is AI Study better than rereading notes?",
+        answer: "It is better for retrieval because it helps turn material into active review instead of recognition-only study.",
+      },
+      {
+        question: "What files work best with AI Study?",
+        answer: "Clean PDFs, DOCX files, and slide decks usually work well, especially when the source is already reasonably organized.",
+      },
+      {
+        question: "Should I use AI Note before AI Study?",
+        answer: "Often yes. Cleaner notes usually lead to more accurate flashcards, better quiz prompts, and less confusing outputs.",
+      },
+      {
+        question: "Can AI Study replace actual studying?",
+        answer: "No. It helps generate the structure for studying, but memory still improves through recall, correction, and repetition.",
+      },
+      {
+        question: "What output should I choose first?",
+        answer: "Start with the format you will actually use right away, usually flashcards or quiz-style prompts for active review.",
+      },
+      {
+        question: "Can the results feed into writing?",
+        answer: "Yes, but review the final tone before submitting anything. AI Detector and AI Humanizer help with that later step.",
       },
     ],
   },
@@ -400,127 +498,149 @@ export const toolPageContent: Record<"detector" | "note" | "study" | "humanizer"
     heroTitle: "AI Humanizer for Smoother, More Natural Student Writing",
     heroSubtitle:
       "Paste stiff or overly polished text, keep the meaning intact, and make the final wording sound more like a real person wrote it.",
+    guideLabel: "AI WRITING HUMANIZER GUIDE",
     seoTitle: "AI Humanizer Guide",
-    sections: [
+    productName: "AI Humanizer",
+    overviewIntro:
+      "This page keeps the rewrite tool at the top and turns the space below it into a more polished product landing section, with clearer use cases, rewrite steps, and FAQs around natural-sounding writing.",
+    whatIs: [
+      "An AI humanizer is a rewrite tool for text that already contains the right idea but still sounds too stiff, too smooth, or too obviously generated. Students often need this after using AI for brainstorming, summaries, or early draft assistance when the final wording no longer feels like something they would naturally write.",
+      "The important point is that humanizing is not the same as random paraphrasing. A good tool should improve rhythm, readability, and tone while keeping the original meaning stable. That makes it more useful for final polish than for first-draft invention.",
+    ],
+    howItWorks: [
+      "The tool rewrites phrasing to sound more natural by reducing repetitive structure, smoothing transitions, and adding more believable sentence flow. The best result is usually not dramatic. It is a version of the paragraph that sounds more human without sounding over-edited.",
+      <>
+        This works best at the end of a chain that started with better source material. If the notes were messy, start in{" "}
+        <Link href="/ai-note">AI Note</Link>. If the topic is still unclear, strengthen understanding in{" "}
+        <Link href="/ai-study">AI Study</Link>. If you want one more review layer before publishing, use{" "}
+        <Link href="/ai-detector">AI Detector</Link>. If the source documents are awkward,{" "}
+        <Link href="/converter">Converter</Link> helps earlier in the process.
+      </>,
+    ],
+    audienceTitle: "Who uses AI Humanizer?",
+    audiences: [
       {
-        heading: "What is AI Humanizer?",
-        content: (
-          <>
-            <p>
-              An AI humanizer is a rewrite tool designed to improve robotic wording without changing the core meaning. Students
-              usually need this when a paragraph is technically correct but still sounds overly smooth, generic, or obviously
-              machine-assisted.
-            </p>
-            <p>
-              The point is not disguise. The point is clarity. <Link href="/ai-humanizer">AI Humanizer</Link> is most useful when
-              the idea is already yours but the phrasing has become stiff through rushed drafting, copied note language, or too
-              much generic AI output.
-            </p>
-          </>
-        ),
+        title: "Students",
+        subtitle: "Improve draft tone when AI-assisted paragraphs sound too generic, too polished, or disconnected from your voice.",
+        bullets: ["Make discussion posts feel more natural", "Refine scholarship or reflection drafts", "Smooth note-based writing before submission"],
       },
       {
-        heading: "How does it work?",
-        content: (
-          <>
-            <p>
-              The tool rewrites tone, rhythm, and structure while trying to keep the original meaning stable. That usually means
-              reducing repetitive transitions, adding more natural sentence variation, and smoothing sections that feel too formal
-              or templated.
-            </p>
-            <p>
-              It works best at the end of a workflow that already has decent source material. If the paragraph was built from weak
-              notes, start in <Link href="/ai-note">AI Note</Link>. If the topic is still shaky, review it in{" "}
-              <Link href="/ai-study">AI Study</Link>. Then inspect suspicious sections in <Link href="/ai-detector">AI Detector</Link>{" "}
-              before using the humanizer. If your files need prep first, <Link href="/converter">Converter</Link> belongs upstream
-              in the process.
-            </p>
-          </>
-        ),
+        title: "Educators",
+        subtitle: "Demonstrate how robotic phrasing can be revised into clearer, more natural language without changing the idea itself.",
+        bullets: ["Model stronger tone choices", "Show revision over replacement", "Use it as a writing-support example"],
       },
       {
-        heading: "How to use it (step-by-step)",
-        content: (
-          <>
-            <ol>
-              <li>Paste the paragraph or draft section that sounds too stiff.</li>
-              <li>Review whether the meaning is already correct before rewriting.</li>
-              <li>Run the humanizer and compare the new version to the original.</li>
-              <li>Read the result aloud to make sure the flow feels natural.</li>
-              <li>Use AI Detector afterward if you want one more quality pass.</li>
-            </ol>
-            <p>
-              Students get better results by revising selected sections rather than running an entire paper through the tool
-              blindly. Target the parts that feel too polished or too flat, not everything at once.
-            </p>
-          </>
-        ),
+        title: "Content creators",
+        subtitle: "Take AI-assisted copy and make it read more like a real person wrote it before publishing or sending.",
+        bullets: ["Fix generic marketing phrasing", "Improve flow in product drafts", "Reduce the flat tone of generated copy"],
+      },
+    ],
+    stepsIntro:
+      "A stronger rewrite workflow starts by identifying which parts actually sound off, then revises those sections intentionally instead of processing the whole draft blindly.",
+    steps: [
+      {
+        title: "Paste or upload your content",
+        description:
+          "Start with the section that sounds too robotic, too repetitive, or too formally polished for the way you actually write.",
       },
       {
-        heading: "Key benefits",
-        content: (
-          <>
-            <ul>
-              <li>Improves tone and readability without requiring a full redraft.</li>
-              <li>Helps note-based writing sound less copied from a generic summary.</li>
-              <li>Useful for reflections, discussion posts, essays, and statements.</li>
-              <li>Fits well into a broader workflow with detector and study tools.</li>
-            </ul>
-            <p>
-              The biggest benefit is control. You keep the core idea while fixing the wording that makes the draft feel less like
-              you.
-            </p>
-          </>
-        ),
+        title: "Run the tool",
+        description:
+          "Let the humanizer smooth tone, rhythm, and phrasing while preserving the original meaning so you can compare before and after clearly.",
       },
       {
-        heading: "Limitations",
-        content: (
-          <>
-            <p>
-              Humanizing does not fix weak reasoning. If the paragraph is generic because the underlying idea is shallow, better
-              phrasing will only go so far. It also should not be used as a substitute for understanding or as a way to cover
-              borrowed arguments.
-            </p>
-            <p>
-              The strongest drafts still come from better notes, stronger study habits, and honest revision before the rewrite
-              layer is added.
-            </p>
-          </>
-        ),
+        title: "Review results and improve your work",
+        description:
+          "Read the revision out loud, keep the parts that sound natural, and run the final version through AI Detector if you want one more quality check.",
+      },
+    ],
+    trustTitle: "Natural writing still needs real ideas behind it",
+    trustParagraphs: [
+      "AI Humanizer works best when the paragraph already contains your actual thinking. It can improve flow, soften template-like phrasing, and make the draft feel more believable, but it cannot turn weak reasoning into strong writing by itself. That part still depends on understanding and revision.",
+      <>
+        That is why NexusDesk works as a stack rather than a single box. You can build cleaner source material with{" "}
+        <Link href="/ai-note">AI Note</Link>, understand the content better with <Link href="/ai-study">AI Study</Link>, use{" "}
+        <Link href="/ai-detector">AI Detector</Link> to identify passages that still sound machine-like, and rely on{" "}
+        <Link href="/converter">Converter</Link> when the raw materials need prep before any writing begins.
+      </>,
+    ],
+    benefits: [
+      {
+        title: "More natural rhythm",
+        description:
+          "The tool helps reduce repetitive sentence patterns and obvious template transitions that make AI-assisted text stand out too easily.",
       },
       {
-        heading: "Use cases (students, developers, etc.)",
-        content: (
-          <>
-            <p>
-              Students use AI Humanizer for scholarship essays, personal reflections, lab responses, and discussion posts that
-              sound too generic after an AI-assisted first pass. Editors and content teams can use it to reduce templated language
-              in generated copy. Product teams can also use it to make internal drafts sound less robotic before review.
-            </p>
-            <p>
-              In all those cases, the rewrite works better when it follows stronger source prep in{" "}
-              <Link href="/ai-note">AI Note</Link>, better understanding from <Link href="/ai-study">AI Study</Link>, and a final
-              pass from <Link href="/ai-detector">AI Detector</Link>. If the supporting material needs conversion first,{" "}
-              <Link href="/converter">Converter</Link> keeps the setup clean.
-            </p>
-          </>
-        ),
+        title: "Better readability",
+        description:
+          "Students can keep the core idea while making the final paragraph easier to read, smoother to follow, and less awkward to submit.",
       },
       {
-        heading: "FAQ",
-        content: (
-          <>
-            <h3>Will AI Humanizer change my meaning?</h3>
-            <p>It should preserve the core meaning, but you should still review important passages manually.</p>
-            <h3>When should I use it?</h3>
-            <p>Use it after the ideas are correct but the wording still sounds stiff, flat, or too machine-like.</p>
-            <h3>Should I humanize an entire essay at once?</h3>
-            <p>Usually no. Target the sections that actually need tone repair.</p>
-            <h3>What tool should I use before this one?</h3>
-            <p>AI Note and AI Study usually strengthen the source material, while AI Detector helps identify which lines need revision.</p>
-          </>
-        ),
+        title: "Useful for revision-heavy writing",
+        description:
+          "Discussion posts, scholarship essays, reflections, and short reports all benefit when stiff language gets one more human pass.",
+      },
+      {
+        title: "Fits quality-control workflows",
+        description:
+          "Used alongside AI Detector, the humanizer gives you a practical way to improve flagged passages instead of only measuring them.",
+      },
+    ],
+    limitations: [
+      {
+        title: "It cannot fix weak meaning",
+        description:
+          "If the argument is generic or the idea is still unclear, better wording will only improve the surface. The thinking still has to come from you.",
+      },
+      {
+        title: "Full-document rewrites can go too far",
+        description:
+          "Students usually get better results by targeting the sections that need tone repair instead of processing an entire essay blindly.",
+      },
+    ],
+    useCasesIntro:
+      "The strongest use cases are the ones where the idea is right but the language still sounds too machine-assisted for comfort.",
+    useCases: [
+      {
+        title: "Discussion posts and short responses",
+        description:
+          "Clean up flat or generic classroom writing so the final response sounds closer to your own natural explanation style.",
+      },
+      {
+        title: "Scholarship and application drafts",
+        description:
+          "Refine reflective writing where tone matters and where overly polished generic language can weaken the credibility of your answer.",
+      },
+      {
+        title: "Content and documentation polish",
+        description:
+          "Make generated product copy, internal drafts, or support content sound more human before publishing or handing it off.",
+      },
+    ],
+    faqs: [
+      {
+        question: "Will AI Humanizer change the meaning of my writing?",
+        answer: "It aims to preserve meaning, but you should still review important passages manually before using them in final work.",
+      },
+      {
+        question: "When should I use the humanizer?",
+        answer: "Use it after the ideas are correct but the wording still sounds too stiff, too smooth, or too obviously generated.",
+      },
+      {
+        question: "Should I rewrite an entire essay at once?",
+        answer: "Usually no. The stronger workflow is to revise only the sections that actually need tone repair.",
+      },
+      {
+        question: "Can this help with note-based writing?",
+        answer: "Yes. It is especially useful when paragraphs built from summaries or notes feel too generic in final assignment language.",
+      },
+      {
+        question: "What tool should I use before this one?",
+        answer: "AI Note and AI Study often strengthen the source material first, while AI Detector helps identify which passages need humanizing most.",
+      },
+      {
+        question: "Is this only for students?",
+        answer: "No. Writers, editors, and teams can also use it when AI-assisted text needs a more natural final tone.",
       },
     ],
   },
@@ -529,126 +649,149 @@ export const toolPageContent: Record<"detector" | "note" | "study" | "humanizer"
     heroTitle: "File Converter for PDFs, Images, Audio, and Quick Format Changes",
     heroSubtitle:
       "Convert common files without leaving the NexusDesk workspace, then keep moving through notes, study prep, or writing review.",
+    guideLabel: "FILE CONVERSION GUIDE",
     seoTitle: "File Converter Guide",
-    sections: [
+    productName: "Converter",
+    overviewIntro:
+      "This page keeps the actual converter in front and upgrades the lower SEO layer into a more visual product explanation, built around school and work file tasks instead of one long wall of text.",
+    whatIs: [
+      "A file converter solves one of the most common workflow problems: the file you have is not the format you need. Students run into this with PDFs, images, scanned worksheets, slide exports, and upload portals all the time. A clean converter keeps that small technical issue from turning into a deadline problem.",
+      "The reason it belongs inside NexusDesk is simple. Conversion is rarely the end goal. It is usually the step that lets you move into notes, study prep, or writing without leaving the workspace to solve a basic format issue somewhere else.",
+    ],
+    howItWorks: [
+      "You choose a source format, pick a supported target format, upload the file, and run the conversion directly in the tool. That gives you a cleaner handoff to whatever comes next, whether that is sending the file, uploading it, embedding it, or reusing its content elsewhere.",
+      <>
+        A converted document may become notes inside <Link href="/ai-note">AI Note</Link>, study material inside{" "}
+        <Link href="/ai-study">AI Study</Link>, or source content for writing you later inspect with{" "}
+        <Link href="/ai-detector">AI Detector</Link> and smooth in <Link href="/ai-humanizer">AI Humanizer</Link>. The utility
+        value rises because the next step is already nearby.
+      </>,
+    ],
+    audienceTitle: "Who uses Converter?",
+    audiences: [
       {
-        heading: "What is Converter?",
-        content: (
-          <>
-            <p>
-              A file converter solves one of the least glamorous but most common workflow problems: the format you have is not the
-              format you need. Students run into this with PDFs, image files, audio exports, and assignment uploads all the time.
-              A clean converter keeps that small problem from becoming a deadline problem.
-            </p>
-            <p>
-              In NexusDesk, <Link href="/converter">Converter</Link> sits next to the content tools for a reason. A format change
-              is rarely the final goal. It is usually the step that lets you move on to notes, studying, or writing.
-            </p>
-          </>
-        ),
+        title: "Students",
+        subtitle: "Handle PDF-to-image, JPG-to-PDF, and other class file tasks quickly before submission windows close.",
+        bullets: ["Convert lecture and worksheet files faster", "Prepare uploads for class platforms", "Fix simple format issues without another app"],
       },
       {
-        heading: "How does it work?",
-        content: (
-          <>
-            <p>
-              You choose a source format, pick a compatible target format, upload the file, and run the conversion directly in the
-              workspace. The value is speed and convenience. You are not leaving the product ecosystem just to solve a routine file
-              task.
-            </p>
-            <p>
-              That matters because converted files often feed the next step. A PDF may become notes in <Link href="/ai-note">AI Note</Link>.
-              A document may become revision material in <Link href="/ai-study">AI Study</Link>. A converted excerpt may later be
-              described in writing that you inspect with <Link href="/ai-detector">AI Detector</Link> and smooth in{" "}
-              <Link href="/ai-humanizer">AI Humanizer</Link>.
-            </p>
-          </>
-        ),
+        title: "Educators",
+        subtitle: "Standardize teaching materials and convert pages or assets into formats that are easier to distribute and reuse.",
+        bullets: ["Prepare slides and worksheets for sharing", "Extract usable pages from source packets", "Simplify resource formatting for students"],
       },
       {
-        heading: "How to use it (step-by-step)",
-        content: (
-          <>
-            <ol>
-              <li>Select the source format and the target format you need.</li>
-              <li>Upload the file and confirm the pair is supported.</li>
-              <li>Run the conversion and preview the result if needed.</li>
-              <li>Download the output and check readability, especially for images or slides.</li>
-              <li>Move the converted content into notes, study, or writing tools if that is your next step.</li>
-            </ol>
-            <p>
-              This keeps the converter in its proper role. It solves the format problem quickly so you can continue working instead
-              of context-switching across random utility sites.
-            </p>
-          </>
-        ),
+        title: "Professionals",
+        subtitle: "Resolve routine file-format problems quickly so content and workflow decisions do not stall on technical friction.",
+        bullets: ["Convert documents for handoff", "Normalize assets across teams", "Reduce last-minute format cleanup work"],
+      },
+    ],
+    stepsIntro:
+      "The cleanest conversion workflow is quick, deliberate, and immediately connected to the next task rather than becoming a separate tool hunt.",
+    steps: [
+      {
+        title: "Paste or upload your content",
+        description:
+          "Start with the file you actually need to change, whether that is a PDF page set, an image, a document, or another supported format.",
       },
       {
-        heading: "Key benefits",
-        content: (
-          <>
-            <ul>
-              <li>Fast file-format changes without another app or download step.</li>
-              <li>Useful for assignment uploads, slide prep, screenshots, and document handling.</li>
-              <li>Keeps file tasks inside the same workspace as your other academic tools.</li>
-              <li>Reduces last-minute friction right before deadlines.</li>
-            </ul>
-            <p>
-              The benefit is not glamour. It is momentum. You solve the format issue and keep the rest of the workflow moving.
-            </p>
-          </>
-        ),
+        title: "Run the tool",
+        description:
+          "Select the target format, confirm the pair is supported, and process the file directly inside the workspace.",
       },
       {
-        heading: "Limitations",
-        content: (
-          <>
-            <p>
-              Conversion does not improve the substance of the content. A blurry or badly formatted source file may still produce a
-              mediocre result. Students should also verify readability after conversion, especially when small text or diagrams are
-              involved.
-            </p>
-            <p>
-              It is also not a study tool by itself. Once the file is usable, you still need to decide whether the next step is
-              note cleanup, revision, or writing review.
-            </p>
-          </>
-        ),
+        title: "Review results and improve your work",
+        description:
+          "Preview the output for readability and then move it into the next step, such as class upload, notes, study material, or related writing work.",
+      },
+    ],
+    trustTitle: "Simple utility, real productivity value",
+    trustParagraphs: [
+      "A converter does not need to be dramatic to be useful. It only needs to solve format friction quickly and predictably. For students and busy teams, that can be the difference between spending five minutes on a file task and losing focus while searching for another tool.",
+      <>
+        The bigger value comes from what happens next. Converted content can become notes in <Link href="/ai-note">AI Note</Link>,
+        review assets in <Link href="/ai-study">AI Study</Link>, or source material for writing that you later check in{" "}
+        <Link href="/ai-detector">AI Detector</Link> and polish in <Link href="/ai-humanizer">AI Humanizer</Link>. The workflow
+        stays connected instead of splintered.
+      </>,
+    ],
+    benefits: [
+      {
+        title: "Faster file turnaround",
+        description:
+          "Handle common conversion tasks in one workspace instead of bouncing to unrelated utilities every time an upload or file share goes wrong.",
       },
       {
-        heading: "Use cases (students, developers, etc.)",
-        content: (
-          <>
-            <p>
-              Students use Converter for turning PDFs into images, preparing files for LMS uploads, extracting usable assets from
-              lecture materials, and standardizing class documents. Developers and operations teams can use it for quick asset
-              normalization when they need lightweight browser-side conversion instead of opening heavier desktop tools.
-            </p>
-            <p>
-              The value increases when the next step stays nearby. Convert the file here, build notes in{" "}
-              <Link href="/ai-note">AI Note</Link>, generate review material in <Link href="/ai-study">AI Study</Link>, and clean
-              up any related text with <Link href="/ai-detector">AI Detector</Link> and{" "}
-              <Link href="/ai-humanizer">AI Humanizer</Link>.
-            </p>
-          </>
-        ),
+        title: "Useful for school and work",
+        description:
+          "PDF to JPG, JPG to PDF, and image optimization tasks show up constantly in academic and professional workflows alike.",
       },
       {
-        heading: "FAQ",
-        content: (
-          <>
-            <h3>When should I use Converter instead of another tool?</h3>
-            <p>Use it whenever the main problem is file format, not content quality or study structure.</p>
-            <h3>Can converted files feed into other NexusDesk tools?</h3>
-            <p>Yes. Converted content often becomes the source for AI Note or AI Study next.</p>
-            <h3>Will conversion fix a bad source file?</h3>
-            <p>No. It changes the format, but poor readability or low resolution can still carry over.</p>
-            <h3>Why keep conversion in the same workspace?</h3>
-            <p>Because students usually need the file for another task immediately after converting it.</p>
-          </>
-        ),
+        title: "Better downstream workflow",
+        description:
+          "Once the file is in the right format, it becomes easier to reuse it for notes, study assets, or written explanations inside NexusDesk.",
+      },
+      {
+        title: "Less deadline friction",
+        description:
+          "Format problems tend to appear late. A built-in converter keeps them from blocking assignment submission or handoff at the worst moment.",
+      },
+    ],
+    limitations: [
+      {
+        title: "Conversion does not improve bad source material",
+        description:
+          "If the original file is blurry, badly formatted, or low quality, the new format may still carry those same limitations forward.",
+      },
+      {
+        title: "It solves format, not substance",
+        description:
+          "Once the file is converted, you still need to decide whether the next step is notes, revision, document review, or writing cleanup.",
+      },
+    ],
+    useCasesIntro:
+      "Converter works best when the obstacle is technical rather than conceptual. It clears the format problem so the real work can continue.",
+    useCases: [
+      {
+        title: "PDF to JPG for class uploads",
+        description:
+          "Extract pages from reading packets, assignments, or slide PDFs when the destination platform handles images more easily than documents.",
+      },
+      {
+        title: "JPG to PDF for submission",
+        description:
+          "Combine image-based work into a PDF when instructors or forms require a more standard document format.",
+      },
+      {
+        title: "Document and asset prep for reuse",
+        description:
+          "Standardize files before moving them into notes, study materials, presentations, or documentation workflows.",
+      },
+    ],
+    faqs: [
+      {
+        question: "When should I use Converter instead of another NexusDesk tool?",
+        answer: "Use it when the main problem is file format. Once the format is fixed, move into notes, study prep, or writing tools if needed.",
+      },
+      {
+        question: "Can converted files feed into AI Note or AI Study?",
+        answer: "Yes. That is one of the most practical reasons to keep conversion inside the same workspace.",
+      },
+      {
+        question: "Does conversion improve readability automatically?",
+        answer: "Not always. You should still preview the result, especially for small text, diagrams, or scanned source material.",
+      },
+      {
+        question: "What are common student use cases?",
+        answer: "PDF to JPG, JPG to PDF, worksheet exports, class portal uploads, and image optimization are some of the most common ones.",
+      },
+      {
+        question: "Can I use Converter for professional workflows too?",
+        answer: "Yes. It is useful anywhere quick format changes are needed before sharing, reviewing, or reusing files.",
+      },
+      {
+        question: "Why does a converter belong on an AI tools site?",
+        answer: "Because real productivity workflows include utility steps. A strong stack handles both the intelligent work and the file friction around it.",
       },
     ],
   },
 };
-
